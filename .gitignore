@@ -1,0 +1,26 @@
+# Build artifacts
+bin/
+obj/
+
+# IDE / local tooling
+.vs/
+.agent/
+
+# Local outputs
+publish_output/
+old_versions/
+
+# Runtime/local data
+folder_settings.json
+debug_*.log
+build_warnings*.log
+
+# Keep repository clean from icon scratch assets
+Icons/*
+!Icons/IconHelper.cs
+!Icons/app_icon_2.ico
+!Icons/SpeedExplorer_UI_small.jpg
+
+# OS
+Thumbs.db
+.DS_Store
