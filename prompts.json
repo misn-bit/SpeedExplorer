@@ -1,0 +1,8 @@
+{
+  "BatchPrompts": {
+    "Describe Image": "Describe this image in detail and save the description to a text file.",
+    "Tag Image": "Analyze this image and apply tags with most defining features of the image using the \u0027tag_selected\u0027 command. Be explicit if explicit tags are well defining the image or if explicit tags would describe prominent parts of the image. 20 tags or less.",
+    "Renamer": "Rename this file based on its visual content. Keep the extension.",
+    "Analyze Tech Stack": "Analyze this code file and explain the technology stack used."
+  }
+}
