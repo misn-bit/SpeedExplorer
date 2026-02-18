@@ -127,6 +127,12 @@ public partial class MainForm : Form
     private PictureBox? _navigationFreezeOverlay;
     private bool _navigationFreezeActive = false;
     private static readonly object SearchProgressRowTag = new object();
+    private string? _pendingTabTopRestorePath;
+    private int _pendingTabTopRestoreIndex = -1;
+    private string? _pendingTabCachePath;
+    private List<FileItem>? _pendingTabCacheItems;
+    private List<FileItem>? _pendingTabCacheAllItems;
+    private bool _pendingTabCacheIsSearchMode;
     
     private bool _suppressColumnMetaUpdate = false;
 

@@ -100,6 +100,16 @@ public partial class MainForm
                 return;
             }
 
+            if (paths.Length > 3)
+            {
+                MessageBox.Show(
+                    string.Format(Localization.T("properties_multi_not_supported"), 3),
+                    Localization.T("properties"),
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+                return;
+            }
+
             try
             {
                 // Open properties per item to avoid Shell data-object issues.

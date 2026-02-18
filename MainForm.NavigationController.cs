@@ -233,6 +233,7 @@ public partial class MainForm
             }
 
             _currentPath = path;
+            UpdateWatcher(path);
             if (!isShellPath &&
                 path != ThisPcPath &&
                 !string.Equals(path, previousPath, StringComparison.OrdinalIgnoreCase))
@@ -264,6 +265,23 @@ public partial class MainForm
             await Task.Yield();
 
             _tileViewController.ApplyViewModeForNavigation();
+
+            bool cacheIsSearchSnapshot = _pendingTabCacheIsSearchMode;
+            if (TryTakePendingTabCache(path, out var cachedItems, out var cachedAllItems))
+            {
+                NavigationDebugLogger.Log($"NAV#{navTraceId} CACHE_HIT count={cachedItems.Count} all={cachedAllItems.Count}");
+
+                _allItems = cachedAllItems;
+                _items = cachedItems;
+
+                if (path == ThisPcPath)
+                    SetupDriveColumns(_listView);
+                else
+                    SetupFileColumns(_listView);
+
+                BindItemsToListView(navTraceId, cacheIsSearchSnapshot ? "NAVCACHE_SEARCH" : "NAVCACHE", path, pathsToSelect, totalSw, gcStart);
+                return;
+            }
 
             // Fix: Immediately clear items if we are switching context (e.g. from This PC to a folder)
             // This prevents the "stuck" look where Drives are shown with File columns if load fails or takes time.
@@ -576,6 +594,27 @@ public partial class MainForm
                     _listView.SelectedIndices.Add(0);
                     FocusAndAnchorListIndex(0);
                 }
+
+                // Apply tab-specific top-item restore in the same bind pass to avoid delayed visual jumps.
+                if (!string.IsNullOrEmpty(_pendingTabTopRestorePath) &&
+                    string.Equals(_pendingTabTopRestorePath, path, StringComparison.OrdinalIgnoreCase) &&
+                    _pendingTabTopRestoreIndex >= 0 &&
+                    _pendingTabTopRestoreIndex < _items.Count)
+                {
+                    try
+                    {
+                        if (!IsTileView && _pendingTabTopRestoreIndex < _listView.Items.Count)
+                            _listView.TopItem = _listView.Items[_pendingTabTopRestoreIndex];
+                        else
+                            _listView.EnsureVisible(_pendingTabTopRestoreIndex);
+                    }
+                    catch { }
+                    finally
+                    {
+                        _pendingTabTopRestorePath = null;
+                        _pendingTabTopRestoreIndex = -1;
+                    }
+                }
             }
         }
         finally
@@ -608,6 +647,11 @@ public partial class MainForm
         LogUiQueueDelayAsync(navTraceId, scope, "post-bind");
         StartPostBindProbe(navTraceId, scope);
         LogGcDelta(navTraceId, scope, gcStart);
+
+        if (!IsSearchMode &&
+            !IsShellPath(path) &&
+            !string.Equals(scope, "NAVCACHE_SEARCH", StringComparison.Ordinal))
+            _tabsController.SyncPathSnapshot(path, _items, _allItems);
 
         _statusLabel.Text = string.Format(Localization.T("status_loaded"), totalSw.ElapsedMilliseconds, _items.Count);
         EnsureListViewportAndPaint($"{scope}-post");
@@ -996,5 +1040,26 @@ public partial class MainForm
 
         if (s.ShowThumbnails)
             _iconLoadService.EnsureGenericIcon($"{prefix}image", ".jpg", false, s.UseSystemIcons);
+    }
+
+    private bool TryTakePendingTabCache(string path, out List<FileItem> items, out List<FileItem> allItems)
+    {
+        items = null!;
+        allItems = null!;
+
+        if (string.IsNullOrWhiteSpace(_pendingTabCachePath))
+            return false;
+        if (!string.Equals(_pendingTabCachePath, path, StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (_pendingTabCacheItems == null || _pendingTabCacheAllItems == null)
+            return false;
+
+        items = _pendingTabCacheItems;
+        allItems = _pendingTabCacheAllItems;
+        _pendingTabCachePath = null;
+        _pendingTabCacheItems = null;
+        _pendingTabCacheAllItems = null;
+        _pendingTabCacheIsSearchMode = false;
+        return true;
     }
 }

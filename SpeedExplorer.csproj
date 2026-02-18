@@ -12,6 +12,21 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Remove="SpeedExplorer.Core\**" />
+    <Compile Remove="SpeedExplorer.Linux\**" />
+    <Compile Remove="SpeedExplorer.Avalonia\**" />
+    <Compile Remove="SpeedExplorer.Windows\**" />
+    <EmbeddedResource Remove="SpeedExplorer.Core\**" />
+    <EmbeddedResource Remove="SpeedExplorer.Linux\**" />
+    <EmbeddedResource Remove="SpeedExplorer.Avalonia\**" />
+    <EmbeddedResource Remove="SpeedExplorer.Windows\**" />
+    <None Remove="SpeedExplorer.Core\**" />
+    <None Remove="SpeedExplorer.Linux\**" />
+    <None Remove="SpeedExplorer.Avalonia\**" />
+    <None Remove="SpeedExplorer.Windows\**" />
+  </ItemGroup>
+
+  <ItemGroup>
     <None Update="LICENSE;README.md">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>

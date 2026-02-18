@@ -14,6 +14,8 @@ old_versions/
 folder_settings.json
 debug_*.log
 build_warnings*.log
+build_*.txt
+avalonia_*.log
 
 # Keep repository clean from icon scratch assets
 Icons/*
@@ -24,3 +26,9 @@ Icons/*
 # OS
 Thumbs.db
 .DS_Store
+
+# Avalonia branch plus Linux version
+SpeedExplorer.Avalonia/
+SpeedExplorer.Core/
+SpeedExplorer.Linux/
+SpeedExplorer.Windows/

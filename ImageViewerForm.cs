@@ -72,7 +72,7 @@ public class ImageViewerForm : Form
         _titleBar = new Panel
         {
             Dock = DockStyle.Top,
-            Height = Scale(40),
+            Height = Scale(30),
             BackColor = TitleBarColor,
             Padding = Scale(new Padding(10, 0, 0, 0))
         };
@@ -173,7 +173,7 @@ public class ImageViewerForm : Form
         _controlPanel = new Panel
         {
             Dock = DockStyle.Bottom,
-            Height = Scale(60),
+            Height = Scale(40),
             BackColor = ControlPanelColor,
             Padding = Scale(new Padding(10))
         };

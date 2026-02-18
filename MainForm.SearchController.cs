@@ -107,6 +107,27 @@ public partial class MainForm
             _ = PerformSearchAsync(query);
         }
 
+        public void RestoreCachedSearchState(string query)
+        {
+            CancelActive();
+            _cts = null;
+            IsSearchMode = true;
+            IsSearchInProgress = false;
+            StopStatusSpinner();
+
+            if (_owner._listView != null && !_owner._listView.IsDisposed)
+            {
+                int target = _owner._items.Count;
+                if (_owner._listView.VirtualListSize != target)
+                    _owner._listView.VirtualListSize = target;
+                _owner._listView.Invalidate();
+            }
+
+            int scanned = Math.Max(_owner._items.Count, _owner._allItems.Count);
+            _owner._statusLabel.Text = string.Format(Localization.T("status_search_done"), _owner._items.Count, scanned);
+            _owner.RefreshSearchOverlayVisibility();
+        }
+
         public bool TryBuildProgressVirtualItem(int index, out ListViewItem item)
         {
             item = null!;

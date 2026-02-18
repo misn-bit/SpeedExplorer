@@ -100,11 +100,21 @@ public partial class MainForm
             // Determine operation type (Copy vs Move)
             DragDropEffects effect = GetDragDropEffect(e, destination);
             bool isCopy = effect == DragDropEffects.Copy;
+            string normalizedDestination = Path.TrimEndingDirectorySeparator(destination);
 
             // Prevent moving/copying into itself
             foreach (var path in paths)
             {
-                if (string.Equals(Path.GetDirectoryName(path), destination, StringComparison.OrdinalIgnoreCase))
+                string normalizedPath = Path.TrimEndingDirectorySeparator(path);
+                string normalizedParent = Path.TrimEndingDirectorySeparator(Path.GetDirectoryName(path) ?? "");
+
+                // Dragging folder and dropping onto the same folder should do nothing.
+                if (string.Equals(normalizedPath, normalizedDestination, StringComparison.OrdinalIgnoreCase))
+                {
+                    return;
+                }
+
+                if (string.Equals(normalizedParent, normalizedDestination, StringComparison.OrdinalIgnoreCase))
                 {
                     // Source dir = Dest dir. Nothing to do.
                     return;

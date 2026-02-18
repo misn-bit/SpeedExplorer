@@ -19,5 +19,10 @@ internal sealed class TabState
     public Stack<string> ForwardHistory { get; set; } = new();
     public bool IsShellMode { get; set; }
     public string CurrentShellId { get; set; } = "";
+    public List<string> SelectedPaths { get; set; } = new();
+    public int TopItemIndex { get; set; } = -1;
+    public bool HasCachedSnapshot { get; set; }
+    public string CachedPath { get; set; } = "";
+    public List<FileItem>? CachedItems { get; set; }
+    public List<FileItem>? CachedAllItems { get; set; }
 }
-

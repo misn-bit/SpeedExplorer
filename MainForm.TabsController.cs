@@ -260,6 +260,11 @@ public partial class MainForm
             tab.IsShellMode = _owner._isShellMode;
             tab.CurrentShellId = ShellNavigationController.IsShellIdPath(_owner._currentPath) ? _owner._currentPath : "";
             tab.Title = GetTabTitleForPath(_owner._currentPath);
+            tab.CachedPath = _owner._currentPath;
+            tab.CachedItems = _owner._items;
+            tab.CachedAllItems = _owner._allItems;
+            tab.HasCachedSnapshot = true;
+            CaptureListState(tab);
         }
 
         public void LoadTabState(TabState tab)
@@ -277,15 +282,60 @@ public partial class MainForm
             _owner._nav.ForwardHistory = CloneStack(tab.ForwardHistory);
             _owner._sortColumn = tab.SortColumn;
             _owner._sortDirection = tab.SortDirection;
+            List<string>? restoreSelection = null;
+            if (!tab.IsSearchMode && tab.SelectedPaths.Count > 0)
+            {
+                restoreSelection = new List<string>(tab.SelectedPaths);
+            }
+
+            bool useCachedSnapshot =
+                !IsShellPath(tab.CurrentPath) &&
+                tab.HasCachedSnapshot &&
+                !string.IsNullOrWhiteSpace(tab.CachedPath) &&
+                string.Equals(tab.CachedPath, tab.CurrentPath, StringComparison.OrdinalIgnoreCase) &&
+                tab.CachedItems != null &&
+                tab.CachedAllItems != null;
+
+            if (useCachedSnapshot)
+            {
+                _owner._pendingTabCachePath = tab.CurrentPath;
+                _owner._pendingTabCacheItems = tab.CachedItems;
+                _owner._pendingTabCacheAllItems = tab.CachedAllItems;
+                _owner._pendingTabCacheIsSearchMode = tab.IsSearchMode;
+            }
+            else
+            {
+                _owner._pendingTabCachePath = null;
+                _owner._pendingTabCacheItems = null;
+                _owner._pendingTabCacheAllItems = null;
+                _owner._pendingTabCacheIsSearchMode = false;
+            }
+
+            if (!tab.IsSearchMode && tab.TopItemIndex >= 0)
+            {
+                _owner._pendingTabTopRestorePath = tab.CurrentPath;
+                _owner._pendingTabTopRestoreIndex = tab.TopItemIndex;
+            }
+            else
+            {
+                _owner._pendingTabTopRestorePath = null;
+                _owner._pendingTabTopRestoreIndex = -1;
+            }
 
             _owner._suppressHistoryUpdate = true;
             try
             {
-                await _owner.NavigateTo(tab.CurrentPath);
+                await _owner.NavigateTo(tab.CurrentPath, restoreSelection);
             }
             finally
             {
                 _owner._suppressHistoryUpdate = false;
+                _owner._pendingTabTopRestorePath = null;
+                _owner._pendingTabTopRestoreIndex = -1;
+                _owner._pendingTabCachePath = null;
+                _owner._pendingTabCacheItems = null;
+                _owner._pendingTabCacheAllItems = null;
+                _owner._pendingTabCacheIsSearchMode = false;
             }
 
             if (requestId != _tabLoadRequestId)
@@ -304,16 +354,26 @@ public partial class MainForm
                 try
                 {
                     _owner._searchBox.Text = tab.SearchText;
+                    _owner._searchBox.ForeColor = ForeColor_Dark;
                 }
                 finally
                 {
                     _owner._suppressSearchTextChanged = false;
                 }
-                _owner._searchController.StartSearch(tab.SearchText);
-                _owner.LogListViewState("TAB", $"load-after-search-start req={requestId}");
+
+                if (useCachedSnapshot)
+                {
+                    _owner._searchController.RestoreCachedSearchState(tab.SearchText);
+                    _owner.LogListViewState("TAB", $"load-after-search-cache req={requestId}");
+                }
+                else
+                {
+                    _owner._searchController.StartSearch(tab.SearchText);
+                    _owner.LogListViewState("TAB", $"load-after-search-start req={requestId}");
+                }
             }
 
-            // Force a clean repaint after restore to avoid stale virtual list viewport artifacts.
+            // Force a clean repaint to avoid stale virtual list viewport artifacts.
             _owner.BeginInvoke((Action)(() =>
             {
                 if (_owner._listView == null || _owner._listView.IsDisposed || !_owner._listView.IsHandleCreated)
@@ -351,6 +411,74 @@ public partial class MainForm
         }
 
         private Stack<string> CloneStack(Stack<string> source) => new Stack<string>(source.Reverse());
+
+        private void CaptureListState(TabState tab)
+        {
+            tab.SelectedPaths.Clear();
+            tab.TopItemIndex = -1;
+
+            if (_owner._listView == null || _owner._listView.IsDisposed)
+                return;
+            if (_owner._items.Count == 0)
+                return;
+
+            try
+            {
+                foreach (int idx in _owner._listView.SelectedIndices)
+                {
+                    if (idx >= 0 && idx < _owner._items.Count)
+                    {
+                        var p = _owner._items[idx].FullPath;
+                        if (!string.IsNullOrWhiteSpace(p))
+                            tab.SelectedPaths.Add(p);
+                    }
+                }
+            }
+            catch { }
+
+            try
+            {
+                if (_owner._listView.TopItem != null)
+                    tab.TopItemIndex = _owner._listView.TopItem.Index;
+            }
+            catch { }
+
+            if (tab.TopItemIndex < 0 && _owner._listView.SelectedIndices.Count > 0)
+            {
+                try { tab.TopItemIndex = _owner._listView.SelectedIndices[0]; } catch { }
+            }
+        }
+
+        public void SyncPathSnapshot(string path, List<FileItem> items, List<FileItem> allItems)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+                return;
+            if (items == null || allItems == null)
+                return;
+
+            for (int i = 0; i < _tabs.Count; i++)
+            {
+                var tab = _tabs[i];
+                if (tab.IsSearchMode)
+                    continue;
+                if (!string.Equals(tab.CurrentPath, path, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                tab.CachedPath = path;
+                tab.CachedAllItems = allItems;
+                tab.HasCachedSnapshot = true;
+
+                if (tab.SortColumn == _owner._sortColumn && tab.SortDirection == _owner._sortDirection)
+                {
+                    tab.CachedItems = items;
+                    continue;
+                }
+
+                var sorted = new List<FileItem>(allItems);
+                FileSystemService.SortItems(sorted, tab.SortColumn, tab.SortDirection);
+                tab.CachedItems = sorted;
+            }
+        }
 
         private void RebuildTabStrip()
         {

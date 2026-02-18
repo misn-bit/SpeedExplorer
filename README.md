@@ -7,11 +7,13 @@
 
 **SpeedExplorer** is a purely vibe-coded Windows file manager replacement. As in, it’s fully written by AI agents under my guidance.
 
-The initial idea was simply: “Hmmm. What can I do with these AI agents? Well, I kind of hate the Windows File Explorer because it’s slow at times. Sure, why not - let’s vibe-code a file explorer.”
+The app is focused on enabling you to navigate and perform simple file operations quickly and frictionlessly.
 
-So here we are. The app is focused on enabling you to navigate and perform simple file operations quickly and frictionlessly.
+The initial idea was simply: “Hmmm. What can I do with these AI agents? Well, I kind of hate the Windows File Explorer because it’s slow at times. Sure, why not - let’s vibe-code a file explorer.” So here we are.
 
-## Features
+If you're wondering if i even use the app myself - yes, i do. I've been using it by default for a little bit now. It's fleshed out enough to not make me want to go back to the windows file explorer.
+
+## Main Features
 
 *   **Fast Navigation:** Optimized for speed and low friction.
 *   **Tabbed Interface:** Manage multiple folders in one window.

@@ -72,6 +72,7 @@ public partial class MainForm
 
                 _owner._sortColumn = SortColumn.DriveNumber;
                 _owner._sortDirection = SortDirection.Ascending;
+                _owner._tabsController.SyncPathSnapshot(ThisPcPath, _owner._items, _owner._allItems);
             }
             catch (Exception ex)
             {
