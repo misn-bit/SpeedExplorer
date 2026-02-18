@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using System.Windows.Forms;
 using System.Collections.Generic;
 using System.Text.Json;
+using System.ComponentModel;
 
 namespace SpeedExplorer;
 
@@ -47,8 +48,14 @@ public class LlmChatPanel : Panel
     private readonly CheckBox _searchToggle;
     private readonly CheckBox _thinkingToggle;
     
+    [Browsable(false)]
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public Func<string>? GetCurrentDirectory { get; set; }
+    [Browsable(false)]
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public Func<IntPtr>? GetOwnerHandle { get; set; }
+    [Browsable(false)]
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public Action? OnOperationsComplete { get; set; }
 
     public bool IsInputFocused => _inputBox.Focused || (_historyBox != null && _historyBox.Focused);

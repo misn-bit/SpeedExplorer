@@ -5,6 +5,7 @@ obj/
 # IDE / local tooling
 .vs/
 .agent/
+.dotnet_cli/
 
 # Local outputs
 publish_output/

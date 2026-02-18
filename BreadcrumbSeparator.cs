@@ -1,10 +1,13 @@
 using System.Drawing;
+using System.ComponentModel;
 using System.Windows.Forms;
 
 namespace SpeedExplorer;
 
 internal sealed class BreadcrumbSeparator : Control
 {
+    [Browsable(false)]
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public int YOffset { get; set; }
 
     public BreadcrumbSeparator()

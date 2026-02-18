@@ -1,6 +1,7 @@
 using System;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.ComponentModel;
 using System.Windows.Forms;
 
 namespace SpeedExplorer;
@@ -163,6 +164,8 @@ public partial class MainForm
             private static readonly IntPtr HTTRANSPARENT = new IntPtr(-1);
             private int _previewSize = MinIconSize;
 
+            [Browsable(false)]
+            [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
             public int PreviewSize
             {
                 get => _previewSize;
