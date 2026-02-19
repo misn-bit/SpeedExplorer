@@ -90,9 +90,8 @@ public class QuickLookForm : Form
         _richTextBox.Visible = false;
         _infoLabel.Text = item.Name + " (" + FileItem.FormatSize(item.Size) + ")";
 
-        string ext = item.Extension.ToLowerInvariant();
         bool isImage = FileSystemService.IsImageFile(item.FullPath);
-        bool isText = ext == ".txt" || ext == ".cs" || ext == ".py" || ext == ".js" || ext == ".ts" || ext == ".json" || ext == ".xml" || ext == ".md" || ext == ".yaml" || ext == ".yml" || ext == ".log";
+        bool isText = FileSystemService.IsLikelyTextFile(item.FullPath);
 
         if (isImage)
         {

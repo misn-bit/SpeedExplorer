@@ -49,9 +49,127 @@ public class FileSystemService
         ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".ico", ".tiff", ".tif"
     };
 
+    private static readonly HashSet<string> TextExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".txt", ".text", ".log", ".md", ".markdown", ".rst", ".adoc",
+        ".ini", ".cfg", ".conf", ".config", ".properties", ".props", ".targets",
+        ".json", ".jsonc", ".json5", ".xml", ".xaml", ".svg", ".yaml", ".yml", ".toml",
+        ".csv", ".tsv", ".sql",
+        ".html", ".htm", ".css", ".scss", ".sass", ".less",
+        ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".vue", ".svelte",
+        ".cs", ".csx", ".vb", ".fs", ".fsx",
+        ".c", ".h", ".cpp", ".hpp", ".cc", ".hh", ".cxx", ".hxx",
+        ".java", ".kt", ".kts", ".swift", ".go", ".rs",
+        ".py", ".pyw", ".rb", ".php", ".pl", ".pm", ".lua", ".r",
+        ".ps1", ".psm1", ".psd1", ".cmd", ".bat", ".sh", ".bash", ".zsh", ".fish",
+        ".env", ".gitignore", ".gitattributes", ".gitmodules",
+        ".editorconfig", ".sln", ".csproj", ".vbproj", ".fsproj", ".vcxproj", ".filters", ".user",
+        ".reg", ".inf", ".url", ".map"
+    };
+
+    private static readonly HashSet<string> TextFileNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "dockerfile", "makefile", "license", "copying", "readme", "changelog",
+        ".editorconfig", ".gitignore", ".gitattributes", ".gitmodules",
+        ".npmrc", ".yarnrc", ".bashrc", ".zshrc", ".profile"
+    };
+
+    private static readonly byte[][] TextFileBoms =
+    {
+        new byte[] { 0xEF, 0xBB, 0xBF },             // UTF-8
+        new byte[] { 0xFF, 0xFE },                   // UTF-16 LE
+        new byte[] { 0xFE, 0xFF },                   // UTF-16 BE
+        new byte[] { 0xFF, 0xFE, 0x00, 0x00 },       // UTF-32 LE
+        new byte[] { 0x00, 0x00, 0xFE, 0xFF }        // UTF-32 BE
+    };
+
     public static bool IsImageFile(string path)
     {
         return ImageExtensions.Contains(Path.GetExtension(path));
+    }
+
+    public static bool IsLikelyTextFile(string path)
+    {
+        const int sampleSize = 4096;
+        var buffer = new byte[sampleSize];
+
+        if (string.IsNullOrWhiteSpace(path) || Directory.Exists(path))
+            return false;
+
+        string extension = Path.GetExtension(path);
+        if (!string.IsNullOrEmpty(extension) && TextExtensions.Contains(extension))
+            return true;
+
+        string fileName = Path.GetFileName(path);
+        if (!string.IsNullOrEmpty(fileName) && TextFileNames.Contains(fileName))
+            return true;
+
+        try
+        {
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            int bytesRead = stream.Read(buffer, 0, sampleSize);
+            if (bytesRead == 0)
+                return true;
+
+            if (HasTextBom(buffer, bytesRead))
+                return true;
+
+            int controlCount = 0;
+            int allowedControl = Math.Max(1, (int)(bytesRead * 0.1));
+
+            for (int i = 0; i < bytesRead; i++)
+            {
+                byte b = buffer[i];
+
+                if (b == 0)
+                    return false;
+
+                if (b < 0x09 || (b > 0x7E && b < 0xA0))
+                {
+                    controlCount++;
+                    if (controlCount > allowedControl)
+                        return false;
+                }
+            }
+
+            return true;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return false;
+        }
+        catch (IOException)
+        {
+            return false;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool HasTextBom(byte[] buffer, int length)
+    {
+        foreach (var bom in TextFileBoms)
+        {
+            if (length < bom.Length)
+                continue;
+
+            bool matches = true;
+            for (int i = 0; i < bom.Length; i++)
+            {
+                if (buffer[i] != bom[i])
+                {
+                    matches = false;
+                    break;
+                }
+            }
+
+            if (matches)
+                return true;
+        }
+
+        return false;
     }
 
     public static bool IsAccessible(string path)

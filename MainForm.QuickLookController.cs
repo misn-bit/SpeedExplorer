@@ -97,10 +97,7 @@ public partial class MainForm
             if (item.IsDirectory) return false;
             if (item.IsShellItem) return false;
             if (FileSystemService.IsImageFile(item.FullPath)) return true;
-
-            string ext = item.Extension.ToLowerInvariant();
-            return (ext == ".txt" || ext == ".cs" || ext == ".py" || ext == ".js" || ext == ".ts" ||
-                    ext == ".json" || ext == ".xml" || ext == ".md" || ext == ".yaml" || ext == ".yml" || ext == ".log");
+            return FileSystemService.IsLikelyTextFile(item.FullPath);
         }
     }
 }
