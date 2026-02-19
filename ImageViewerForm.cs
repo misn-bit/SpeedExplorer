@@ -463,8 +463,7 @@ public class ImageViewerForm : Form
         try
         {
             _currentImage?.Dispose();
-            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
-            _currentImage = Image.FromStream(fs);
+            _currentImage = ImageSharpViewerService.LoadBitmap(path);
             
             _fileNameLabel.Text = Path.GetFileName(path);
             _indexLabel.Text = $"{_currentIndex + 1} / {_imagePaths.Count}";
@@ -473,17 +472,15 @@ public class ImageViewerForm : Form
             UpdateTags(path);
             FitToWindow();
         }
+        catch (SixLabors.ImageSharp.UnknownImageFormatException)
+        {
+            _currentImage = null;
+            _fileNameLabel.Text = "Error: Format not supported";
+        }
         catch (Exception ex)
         {
             _currentImage = null;
-            if (ex.Message.Contains("Parameter is not valid"))
-            {
-                 _fileNameLabel.Text = $"Error: Format not supported (e.g. WebP/WebM)";
-            }
-            else 
-            {
-                 _fileNameLabel.Text = $"Error: {ex.Message}";
-            }
+            _fileNameLabel.Text = $"Error: {ex.Message}";
         }
         _pictureBox.Invalidate();
     }

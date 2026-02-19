@@ -7,6 +7,9 @@ obj/
 .agent/
 .dotnet_cli/
 
+# ImageSharp library
+ImageSharp-3.1.12/
+
 # Local outputs
 publish_output/
 old_versions/

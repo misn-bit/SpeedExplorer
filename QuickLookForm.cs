@@ -3,24 +3,37 @@ using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Windows.Forms;
-using System.Runtime.InteropServices;
 
 namespace SpeedExplorer;
 
 public class QuickLookForm : Form
 {
+    private const int BasePadding = 10;
+    private const int BaseInfoHeight = 30;
+    private const int BaseImageMaxWidth = 1280;
+    private const int BaseImageMaxHeight = 720;
+    private const int BaseTextWidth = 1600;
+    private const int BaseTextHeight = 900;
+    private const int BaseMinWidth = 280;
+    private const int BaseMinHeight = 200;
+    private const double MaxWorkingAreaUsage = 0.90;
+
     private PictureBox _pictureBox;
     private RichTextBox _richTextBox;
     private Label _infoLabel;
 
+    private int EffectiveDpi => IsHandleCreated ? DeviceDpi : (Owner?.DeviceDpi ?? 96);
+    private int Scale(int pixels) => (int)Math.Round(pixels * (EffectiveDpi / 96.0));
+
     public QuickLookForm()
     {
+        AutoScaleMode = AutoScaleMode.Dpi;
         this.FormBorderStyle = FormBorderStyle.None;
         this.BackColor = Color.FromArgb(30, 30, 30);
         this.ShowInTaskbar = false;
         this.StartPosition = FormStartPosition.Manual;
         this.TopMost = true;
-        this.Padding = new Padding(10);
+        this.Padding = new Padding(BasePadding);
 
         _pictureBox = new PictureBox
         {
@@ -58,6 +71,15 @@ public class QuickLookForm : Form
 
     public void ShowPreview(FileItem item)
     {
+        ApplyDpiLayout();
+        Rectangle workingArea = GetWorkingArea();
+        int minFormWidth = Scale(BaseMinWidth);
+        int minFormHeight = Scale(BaseMinHeight);
+        int maxFormWidth = Math.Max(minFormWidth, (int)(workingArea.Width * MaxWorkingAreaUsage));
+        int maxFormHeight = Math.Max(minFormHeight, (int)(workingArea.Height * MaxWorkingAreaUsage));
+        int maxContentWidth = Math.Max(Scale(120), maxFormWidth - Padding.Horizontal);
+        int maxContentHeight = Math.Max(Scale(120), maxFormHeight - Padding.Vertical - _infoLabel.Height);
+
         _pictureBox.Visible = false;
         _richTextBox.Visible = false;
         _infoLabel.Text = item.Name + " (" + FileItem.FormatSize(item.Size) + ")";
@@ -70,24 +92,18 @@ public class QuickLookForm : Form
         {
             try
             {
-                // Load without locking the file
+                int maxW = Math.Min(Scale(BaseImageMaxWidth), maxContentWidth);
+                int maxH = Math.Min(Scale(BaseImageMaxHeight), maxContentHeight);
+
                 _pictureBox.Image?.Dispose();
-                using (var stream = new FileStream(item.FullPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
-                {
-                    using (var img = Image.FromStream(stream))
-                    {
-                        _pictureBox.Image = new Bitmap(img);
-                    }
-                }
+                _pictureBox.Image = ImageSharpViewerService.LoadBitmap(item.FullPath, maxW, maxH);
                 _pictureBox.Visible = true;
-                
-                int maxW = 1280;
-                int maxH = 720;
-                float ratio = (float)_pictureBox.Image.Width / _pictureBox.Image.Height;
-                int w, h;
-                if (ratio > 1) { w = maxW; h = (int)(maxW / ratio); }
-                else { h = maxH; w = (int)(maxH * ratio); }
-                this.Size = new Size(w + 20, h + 50);
+
+                int targetWidth = _pictureBox.Image.Width + Padding.Horizontal;
+                int targetHeight = _pictureBox.Image.Height + Padding.Vertical + _infoLabel.Height;
+                this.Size = new Size(
+                    Math.Clamp(targetWidth, minFormWidth, maxFormWidth),
+                    Math.Clamp(targetHeight, minFormHeight, maxFormHeight));
             }
             catch { this.Hide(); return; }
         }
@@ -98,17 +114,18 @@ public class QuickLookForm : Form
                 var lines = File.ReadLines(item.FullPath).Take(100);
                 _richTextBox.Text = string.Join(Environment.NewLine, lines);
                 _richTextBox.Visible = true;
-                this.Size = new Size(1600, 900);
+
+                int targetWidth = Math.Min(Scale(BaseTextWidth), maxFormWidth);
+                int targetHeight = Math.Min(Scale(BaseTextHeight), maxFormHeight);
+                this.Size = new Size(
+                    Math.Max(minFormWidth, targetWidth),
+                    Math.Max(minFormHeight, targetHeight));
             }
             catch { this.Hide(); return; }
         }
         else { this.Hide(); return; }
 
-        if (Owner != null)
-        {
-            this.Left = Owner.Left + (Owner.Width - this.Width) / 2;
-            this.Top = Owner.Top + (Owner.Height - this.Height) / 2;
-        }
+        CenterAndClampToWorkingArea(workingArea);
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)
@@ -121,5 +138,42 @@ public class QuickLookForm : Form
         }
         _pictureBox.Image?.Dispose();
         base.OnFormClosing(e);
+    }
+
+    private void ApplyDpiLayout()
+    {
+        Padding = new Padding(Scale(BasePadding));
+        _infoLabel.Height = Scale(BaseInfoHeight);
+    }
+
+    private Rectangle GetWorkingArea()
+    {
+        if (Owner != null && !Owner.IsDisposed)
+            return Screen.FromControl(Owner).WorkingArea;
+
+        if (IsHandleCreated)
+            return Screen.FromControl(this).WorkingArea;
+
+        return Screen.FromPoint(Cursor.Position).WorkingArea;
+    }
+
+    private void CenterAndClampToWorkingArea(Rectangle workingArea)
+    {
+        int targetLeft;
+        int targetTop;
+
+        if (Owner != null && !Owner.IsDisposed)
+        {
+            targetLeft = Owner.Left + (Owner.Width - Width) / 2;
+            targetTop = Owner.Top + (Owner.Height - Height) / 2;
+        }
+        else
+        {
+            targetLeft = workingArea.Left + (workingArea.Width - Width) / 2;
+            targetTop = workingArea.Top + (workingArea.Height - Height) / 2;
+        }
+
+        Left = Math.Max(workingArea.Left, Math.Min(targetLeft, workingArea.Right - Width));
+        Top = Math.Max(workingArea.Top, Math.Min(targetTop, workingArea.Bottom - Height));
     }
 }

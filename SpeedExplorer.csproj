@@ -16,18 +16,25 @@
     <Compile Remove="SpeedExplorer.Linux\**" />
     <Compile Remove="SpeedExplorer.Avalonia\**" />
     <Compile Remove="SpeedExplorer.Windows\**" />
+    <Compile Remove="ImageSharp-3.1.12\**" />
     <EmbeddedResource Remove="SpeedExplorer.Core\**" />
     <EmbeddedResource Remove="SpeedExplorer.Linux\**" />
     <EmbeddedResource Remove="SpeedExplorer.Avalonia\**" />
     <EmbeddedResource Remove="SpeedExplorer.Windows\**" />
+    <EmbeddedResource Remove="ImageSharp-3.1.12\**" />
     <None Remove="SpeedExplorer.Core\**" />
     <None Remove="SpeedExplorer.Linux\**" />
     <None Remove="SpeedExplorer.Avalonia\**" />
     <None Remove="SpeedExplorer.Windows\**" />
+    <None Remove="ImageSharp-3.1.12\**" />
   </ItemGroup>
 
   <ItemGroup>
-    <None Update="LICENSE;README.md">
+    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="LICENSE;README.md;ThirdPartyLicenses.txt">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>
