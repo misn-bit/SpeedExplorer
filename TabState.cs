@@ -13,6 +13,7 @@ internal sealed class TabState
     public string SearchText { get; set; } = "";
     public SortColumn SortColumn { get; set; } = SortColumn.Name;
     public SortDirection SortDirection { get; set; } = SortDirection.Ascending;
+    public bool TaggedFilesOnTop { get; set; }
     public Dictionary<string, string> LastSelection { get; set; } = new();
     public Dictionary<string, (SortColumn Column, SortDirection Direction)> FolderSortSettings { get; set; } = new();
     public Stack<string> BackHistory { get; set; } = new();

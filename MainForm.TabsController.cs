@@ -71,11 +71,15 @@ public partial class MainForm
             _tabStrip.Controls.Clear();
 
             var startPath = initialPath ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            var initialSort = ResolveInitialSortForPath(startPath);
             var tab = new TabState
             {
                 CurrentPath = startPath,
                 CurrentDisplayPath = startPath,
-                Title = GetTabTitleForPath(startPath)
+                Title = GetTabTitleForPath(startPath),
+                SortColumn = initialSort.Column,
+                SortDirection = initialSort.Direction,
+                TaggedFilesOnTop = initialSort.TaggedOnTop
             };
             _tabs.Add(tab);
             _activeTabIndex = 0;
@@ -140,11 +144,15 @@ public partial class MainForm
             if (useNewTab)
             {
                 SaveCurrentTabState();
+                var initialSort = ResolveInitialSortForPath(normalized);
                 var tab = new TabState
                 {
                     CurrentPath = normalized,
                     CurrentDisplayPath = normalized,
-                    Title = GetTabTitleForPath(normalized)
+                    Title = GetTabTitleForPath(normalized),
+                    SortColumn = initialSort.Column,
+                    SortDirection = initialSort.Direction,
+                    TaggedFilesOnTop = initialSort.TaggedOnTop
                 };
                 _tabs.Add(tab);
                 int newIndex = _tabs.Count - 1;
@@ -163,11 +171,15 @@ public partial class MainForm
         {
             SaveCurrentTabState();
             var startPath = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            var initialSort = ResolveInitialSortForPath(startPath);
             var tab = new TabState
             {
                 CurrentPath = startPath,
                 CurrentDisplayPath = startPath,
-                Title = GetTabTitleForPath(startPath)
+                Title = GetTabTitleForPath(startPath),
+                SortColumn = initialSort.Column,
+                SortDirection = initialSort.Direction,
+                TaggedFilesOnTop = initialSort.TaggedOnTop
             };
             _tabs.Add(tab);
             int newIndex = _tabs.Count - 1;
@@ -179,11 +191,15 @@ public partial class MainForm
         public void OpenPathInNewTab(string path, bool activate = true)
         {
             SaveCurrentTabState();
+            var initialSort = ResolveInitialSortForPath(path);
             var tab = new TabState
             {
                 CurrentPath = path,
                 CurrentDisplayPath = path,
-                Title = GetTabTitleForPath(path)
+                Title = GetTabTitleForPath(path),
+                SortColumn = initialSort.Column,
+                SortDirection = initialSort.Direction,
+                TaggedFilesOnTop = initialSort.TaggedOnTop
             };
             _tabs.Add(tab);
             int newIndex = _tabs.Count - 1;
@@ -253,6 +269,7 @@ public partial class MainForm
             tab.SearchText = _owner._searchBox.Text;
             tab.SortColumn = _owner._sortColumn;
             tab.SortDirection = _owner._sortDirection;
+            tab.TaggedFilesOnTop = _owner._taggedFilesOnTop;
             tab.LastSelection = new Dictionary<string, string>(_owner._nav.LastSelection);
             tab.FolderSortSettings = new Dictionary<string, (SortColumn Column, SortDirection Direction)>(_owner._nav.FolderSortSettings);
             tab.BackHistory = CloneStack(_owner._nav.BackHistory);
@@ -277,11 +294,8 @@ public partial class MainForm
         {
             _owner.LogListViewState("TAB", $"load-begin req={requestId} path=\"{TraceText(tab.CurrentPath)}\" search={tab.IsSearchMode}");
             _owner._nav.LastSelection = new Dictionary<string, string>(tab.LastSelection);
-            _owner._nav.FolderSortSettings = new Dictionary<string, (SortColumn Column, SortDirection Direction)>(tab.FolderSortSettings);
             _owner._nav.BackHistory = CloneStack(tab.BackHistory);
             _owner._nav.ForwardHistory = CloneStack(tab.ForwardHistory);
-            _owner._sortColumn = tab.SortColumn;
-            _owner._sortDirection = tab.SortDirection;
             List<string>? restoreSelection = null;
             if (!tab.IsSearchMode && tab.SelectedPaths.Count > 0)
             {
@@ -325,7 +339,12 @@ public partial class MainForm
             _owner._suppressHistoryUpdate = true;
             try
             {
-                await _owner.NavigateTo(tab.CurrentPath, restoreSelection);
+                await _owner.NavigateTo(
+                    tab.CurrentPath,
+                    restoreSelection,
+                    tab.SortColumn,
+                    tab.SortDirection,
+                    tab.TaggedFilesOnTop);
             }
             finally
             {
@@ -412,6 +431,20 @@ public partial class MainForm
 
         private Stack<string> CloneStack(Stack<string> source) => new Stack<string>(source.Reverse());
 
+        private (SortColumn Column, SortDirection Direction, bool TaggedOnTop) ResolveInitialSortForPath(string path)
+        {
+            if (string.Equals(path, ThisPcPath, StringComparison.OrdinalIgnoreCase))
+                return (SortColumn.DriveNumber, SortDirection.Ascending, false);
+
+            if (!IsShellPath(path) &&
+                _owner._nav.FolderSortSettings.TryGetValue(path, out var saved))
+            {
+                return (saved.Column, saved.Direction, saved.Column == SortColumn.Tags);
+            }
+
+            return (SortColumn.Name, SortDirection.Ascending, false);
+        }
+
         private void CaptureListState(TabState tab)
         {
             tab.SelectedPaths.Clear();
@@ -468,14 +501,16 @@ public partial class MainForm
                 tab.CachedAllItems = allItems;
                 tab.HasCachedSnapshot = true;
 
-                if (tab.SortColumn == _owner._sortColumn && tab.SortDirection == _owner._sortDirection)
+                if (tab.SortColumn == _owner._sortColumn &&
+                    tab.SortDirection == _owner._sortDirection &&
+                    tab.TaggedFilesOnTop == _owner._taggedFilesOnTop)
                 {
                     tab.CachedItems = items;
                     continue;
                 }
 
                 var sorted = new List<FileItem>(allItems);
-                FileSystemService.SortItems(sorted, tab.SortColumn, tab.SortDirection);
+                FileSystemService.SortItems(sorted, tab.SortColumn, tab.SortDirection, tab.TaggedFilesOnTop);
                 tab.CachedItems = sorted;
             }
         }

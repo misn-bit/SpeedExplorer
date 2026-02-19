@@ -168,7 +168,7 @@ public partial class MainForm
                 _owner.SetupFileColumns(_owner._listView);
 
             _owner._items = new List<FileItem>(_owner._allItems);
-            FileSystemService.SortItems(_owner._items, _owner._sortColumn, _owner._sortDirection);
+            FileSystemService.SortItems(_owner._items, _owner._sortColumn, _owner._sortDirection, _owner._taggedFilesOnTop);
 
             _owner._listView.BeginUpdate();
             try
@@ -366,7 +366,7 @@ public partial class MainForm
 
                 if (!IsCurrentSearch(cts)) return;
 
-                FileSystemService.SortItems(results, _owner._sortColumn, _owner._sortDirection);
+                FileSystemService.SortItems(results, _owner._sortColumn, _owner._sortDirection, _owner._taggedFilesOnTop);
                 _owner._items = results;
                 IsSearchInProgress = false;
 
@@ -402,7 +402,7 @@ public partial class MainForm
                     {
                         if (IsCurrentSearch(cts))
                         {
-                            FileSystemService.SortItems(results, _owner._sortColumn, _owner._sortDirection);
+                            FileSystemService.SortItems(results, _owner._sortColumn, _owner._sortDirection, _owner._taggedFilesOnTop);
                             _owner._items = results;
                             IsSearchInProgress = false;
                             _owner._listView.VirtualListSize = _owner._items.Count;

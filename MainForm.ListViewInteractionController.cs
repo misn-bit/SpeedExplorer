@@ -186,8 +186,7 @@ public partial class MainForm
             }
 
             // Persist current folder sort immediately so it survives app close without navigation.
-            if (!_owner.IsSearchMode &&
-                !string.IsNullOrWhiteSpace(_owner._currentPath) &&
+            if (!string.IsNullOrWhiteSpace(_owner._currentPath) &&
                 _owner._currentPath != ThisPcPath &&
                 !ShellNavigationController.IsShellPath(_owner._currentPath))
             {

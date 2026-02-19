@@ -25,11 +25,18 @@ public partial class MainForm
         return await task;
     }
 
-    public async Task NavigateTo(string path, List<string>? pathsToSelect = null)
+    public async Task NavigateTo(
+        string path,
+        List<string>? pathsToSelect = null,
+        SortColumn? overrideSortColumn = null,
+        SortDirection? overrideSortDirection = null,
+        bool? overrideTaggedFilesOnTop = null)
     {
         long navTraceId = Interlocked.Increment(ref _navigationTraceSeq);
         var totalSw = Stopwatch.StartNew();
-        var gcStart = AppSettings.Current.DebugNavigationGcStats ? CaptureGcSnapshot() : ((int, int, int, long)?)null;
+        var gcStart = (AppSettings.Current.DebugNavigationLogging && AppSettings.Current.DebugNavigationGcStats)
+            ? CaptureGcSnapshot()
+            : ((int, int, int, long)?)null;
         var previousPath = _currentPath;
         NavigationDebugLogger.Log($"NAV#{navTraceId} START path=\"{TraceText(path)}\" current=\"{TraceText(_currentPath)}\" selectCount={pathsToSelect?.Count ?? 0}");
 
@@ -130,17 +137,21 @@ public partial class MainForm
                 _nav.ForwardHistory.Clear();
             }
 
-            // Save sort settings for previous folder
-            if (!string.IsNullOrEmpty(_currentPath))
+            // Restore sort settings for new path, or default.
+            // Persisting sort is handled immediately on user sort changes (column clicks),
+            // so tab switches and plain navigation do not overwrite that state.
+            if (overrideSortColumn.HasValue && overrideSortDirection.HasValue)
             {
-                _nav.FolderSortSettings[_currentPath] = (_sortColumn, _sortDirection);
+                _sortColumn = overrideSortColumn.Value;
+                _sortDirection = overrideSortDirection.Value;
+                _taggedFilesOnTop = overrideTaggedFilesOnTop ?? (_sortColumn == SortColumn.Tags);
             }
-
-            // Restore sort settings for new path, or default
-            if (_nav.FolderSortSettings.TryGetValue(path, out var savedSort))
+            else if (_nav.FolderSortSettings.TryGetValue(path, out var savedSort))
             {
                 _sortColumn = savedSort.Column;
                 _sortDirection = savedSort.Direction;
+                if (_sortColumn == SortColumn.Tags)
+                    _taggedFilesOnTop = true;
             }
             else
             {
@@ -352,7 +363,7 @@ public partial class MainForm
                 var swSort = Stopwatch.StartNew();
                 _items = await Task.Factory.StartNew(() =>
                 {
-                    FileSystemService.SortItems(_allItems, _sortColumn, _sortDirection);
+                    FileSystemService.SortItems(_allItems, _sortColumn, _sortDirection, _taggedFilesOnTop);
                     return new List<FileItem>(_allItems);
                 }, _loadCts.Token, TaskCreationOptions.LongRunning, TaskScheduler.Default);
                 swSort.Stop();
@@ -455,7 +466,9 @@ public partial class MainForm
     {
         long navTraceId = Interlocked.Increment(ref _navigationTraceSeq);
         var totalSw = Stopwatch.StartNew();
-        var gcStart = AppSettings.Current.DebugNavigationGcStats ? CaptureGcSnapshot() : ((int, int, int, long)?)null;
+        var gcStart = (AppSettings.Current.DebugNavigationLogging && AppSettings.Current.DebugNavigationGcStats)
+            ? CaptureGcSnapshot()
+            : ((int, int, int, long)?)null;
         NavigationDebugLogger.Log($"SHELL#{navTraceId} START path=\"{TraceText(shellPath)}\"");
 
         // Cancel previous load
@@ -473,7 +486,7 @@ public partial class MainForm
             var swSort = Stopwatch.StartNew();
             _items = await Task.Run(() =>
             {
-                FileSystemService.SortItems(_allItems, _sortColumn, _sortDirection);
+                FileSystemService.SortItems(_allItems, _sortColumn, _sortDirection, _taggedFilesOnTop);
                 return new List<FileItem>(_allItems);
             }, _loadCts.Token);
             swSort.Stop();

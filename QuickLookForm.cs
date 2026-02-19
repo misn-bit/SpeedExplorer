@@ -21,6 +21,9 @@ public class QuickLookForm : Form
     private PictureBox _pictureBox;
     private RichTextBox _richTextBox;
     private Label _infoLabel;
+    private AnimatedImageSequence? _imageSequence;
+    private readonly System.Windows.Forms.Timer _animationTimer;
+    private int _animationFrameIndex;
 
     private int EffectiveDpi => IsHandleCreated ? DeviceDpi : (Owner?.DeviceDpi ?? 96);
     private int Scale(int pixels) => (int)Math.Round(pixels * (EffectiveDpi / 96.0));
@@ -65,6 +68,9 @@ public class QuickLookForm : Form
         Controls.Add(_pictureBox);
         Controls.Add(_richTextBox);
         Controls.Add(_infoLabel);
+
+        _animationTimer = new System.Windows.Forms.Timer();
+        _animationTimer.Tick += AnimationTimer_Tick;
     }
 
     protected override bool ShowWithoutActivation => true;
@@ -95,12 +101,15 @@ public class QuickLookForm : Form
                 int maxW = Math.Min(Scale(BaseImageMaxWidth), maxContentWidth);
                 int maxH = Math.Min(Scale(BaseImageMaxHeight), maxContentHeight);
 
-                _pictureBox.Image?.Dispose();
-                _pictureBox.Image = ImageSharpViewerService.LoadBitmap(item.FullPath, maxW, maxH);
+                ClearImagePreview();
+                _imageSequence = ImageSharpViewerService.LoadAnimation(item.FullPath, maxW, maxH);
+                _animationFrameIndex = 0;
+                _pictureBox.Image = _imageSequence.GetFrame(_animationFrameIndex);
+                StartAnimationIfNeeded();
                 _pictureBox.Visible = true;
 
-                int targetWidth = _pictureBox.Image.Width + Padding.Horizontal;
-                int targetHeight = _pictureBox.Image.Height + Padding.Vertical + _infoLabel.Height;
+                int targetWidth = _imageSequence.Width + Padding.Horizontal;
+                int targetHeight = _imageSequence.Height + Padding.Vertical + _infoLabel.Height;
                 this.Size = new Size(
                     Math.Clamp(targetWidth, minFormWidth, maxFormWidth),
                     Math.Clamp(targetHeight, minFormHeight, maxFormHeight));
@@ -111,6 +120,7 @@ public class QuickLookForm : Form
         {
             try
             {
+                ClearImagePreview();
                 var lines = File.ReadLines(item.FullPath).Take(100);
                 _richTextBox.Text = string.Join(Environment.NewLine, lines);
                 _richTextBox.Visible = true;
@@ -123,7 +133,12 @@ public class QuickLookForm : Form
             }
             catch { this.Hide(); return; }
         }
-        else { this.Hide(); return; }
+        else
+        {
+            ClearImagePreview();
+            this.Hide();
+            return;
+        }
 
         CenterAndClampToWorkingArea(workingArea);
     }
@@ -133,11 +148,36 @@ public class QuickLookForm : Form
         if (e.CloseReason == CloseReason.UserClosing)
         {
             e.Cancel = true;
+            _animationTimer.Stop();
             this.Hide();
             return;
         }
-        _pictureBox.Image?.Dispose();
+        ClearImagePreview();
         base.OnFormClosing(e);
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            ClearImagePreview();
+            _animationTimer.Dispose();
+        }
+
+        base.Dispose(disposing);
+    }
+
+    protected override void OnVisibleChanged(EventArgs e)
+    {
+        base.OnVisibleChanged(e);
+        if (Visible)
+        {
+            StartAnimationIfNeeded();
+        }
+        else
+        {
+            _animationTimer.Stop();
+        }
     }
 
     private void ApplyDpiLayout()
@@ -175,5 +215,39 @@ public class QuickLookForm : Form
 
         Left = Math.Max(workingArea.Left, Math.Min(targetLeft, workingArea.Right - Width));
         Top = Math.Max(workingArea.Top, Math.Min(targetTop, workingArea.Bottom - Height));
+    }
+
+    private void AnimationTimer_Tick(object? sender, EventArgs e)
+    {
+        if (_imageSequence == null || !_imageSequence.IsAnimated)
+        {
+            _animationTimer.Stop();
+            return;
+        }
+
+        _animationFrameIndex = (_animationFrameIndex + 1) % _imageSequence.FrameCount;
+        _pictureBox.Image = _imageSequence.GetFrame(_animationFrameIndex);
+        _animationTimer.Interval = _imageSequence.GetFrameDelayMs(_animationFrameIndex);
+    }
+
+    private void StartAnimationIfNeeded()
+    {
+        if (_imageSequence == null || !_imageSequence.IsAnimated || !Visible)
+        {
+            _animationTimer.Stop();
+            return;
+        }
+
+        _animationTimer.Interval = _imageSequence.GetFrameDelayMs(_animationFrameIndex);
+        _animationTimer.Start();
+    }
+
+    private void ClearImagePreview()
+    {
+        _animationTimer.Stop();
+        _animationFrameIndex = 0;
+        _pictureBox.Image = null;
+        _imageSequence?.Dispose();
+        _imageSequence = null;
     }
 }

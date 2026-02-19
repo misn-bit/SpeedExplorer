@@ -208,6 +208,40 @@ public class TagManager
             return new HashSet<string>();
         }
     }
+
+    public bool HasTags(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return false;
+
+        path = NormalizePath(path);
+        lock (_lock)
+        {
+            return _tags.TryGetValue(path, out var tags) && tags.Count > 0;
+        }
+    }
+
+    public string GetPrimaryTagForSort(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return string.Empty;
+
+        path = NormalizePath(path);
+        lock (_lock)
+        {
+            if (!_tags.TryGetValue(path, out var tags) || tags.Count == 0)
+                return string.Empty;
+
+            string? best = null;
+            foreach (var tag in tags)
+            {
+                if (best == null || string.Compare(tag, best, StringComparison.OrdinalIgnoreCase) < 0)
+                    best = tag;
+            }
+
+            return best ?? string.Empty;
+        }
+    }
     
     // For auto-complete or suggestions
     public IEnumerable<string> GetAllKnownTags()

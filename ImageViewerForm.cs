@@ -19,6 +19,9 @@ public class ImageViewerForm : Form
     private readonly List<string> _imagePaths;
     private int _currentIndex;
     private Image? _currentImage;
+    private AnimatedImageSequence? _currentAnimation;
+    private readonly System.Windows.Forms.Timer _animationTimer;
+    private int _animationFrameIndex;
     
     private readonly PictureBox _pictureBox;
     private readonly Panel _controlPanel;
@@ -49,11 +52,17 @@ public class ImageViewerForm : Form
 
     private int Scale(int pixels) => (int)(pixels * (this.DeviceDpi / 96.0));
     private Padding Scale(Padding p) => new Padding(Scale(p.Left), Scale(p.Top), Scale(p.Right), Scale(p.Bottom));
+    private int TitleBarHeight => Scale(32);
+    private int ControlPanelHeight => Scale(50);
+    private int ControlButtonHeight => Scale(24);
+    private int ZoomSliderVisualOffsetY => Scale(2);
 
     public ImageViewerForm(List<string> imagePaths, int startIndex)
     {
         _imagePaths = imagePaths;
         _currentIndex = Math.Clamp(startIndex, 0, imagePaths.Count - 1);
+        _animationTimer = new System.Windows.Forms.Timer();
+        _animationTimer.Tick += AnimationTimer_Tick;
 
         // Form setup
         Text = "Speed Explorer"; // Generic title for taskbar
@@ -72,9 +81,9 @@ public class ImageViewerForm : Form
         _titleBar = new Panel
         {
             Dock = DockStyle.Top,
-            Height = Scale(30),
+            Height = TitleBarHeight,
             BackColor = TitleBarColor,
-            Padding = Scale(new Padding(10, 0, 0, 0))
+            Padding = Scale(new Padding(8, 0, 0, 0))
         };
         // Manual double-click handling matching MainForm
         DateTime lastTitleBarClick = DateTime.MinValue;
@@ -101,12 +110,12 @@ public class ImageViewerForm : Form
         {
             Text = "Image Viewer",
             ForeColor = ForeColor_Dark,
-            Font = new Font("Segoe UI", 10, FontStyle.Bold),
+            Font = new Font("Segoe UI", 9, FontStyle.Bold),
             AutoSize = false,
             AutoEllipsis = true,
             TextAlign = ContentAlignment.MiddleLeft,
-            Location = new Point(Scale(15), 0),
-            Height = Scale(40)
+            Location = new Point(Scale(12), 0),
+            Height = TitleBarHeight
         };
         // Manual double-click handling matching MainForm
         DateTime lastTitleLabelClick = DateTime.MinValue;
@@ -145,10 +154,10 @@ public class ImageViewerForm : Form
         // Manual positioning to match MainForm exactly
         _titleBar.Resize += (s, e) =>
         {
-            closeBtn.Location = new Point(_titleBar.Width - Scale(46), 0);
-            maxBtn.Location = new Point(_titleBar.Width - Scale(92), 0);
-            minBtn.Location = new Point(_titleBar.Width - Scale(138), 0);
-            _titleLabel.Width = _titleBar.Width - Scale(150); // Ensure it doesn't overlap buttons
+            closeBtn.Location = new Point(_titleBar.Width - closeBtn.Width, 0);
+            maxBtn.Location = new Point(closeBtn.Left - maxBtn.Width, 0);
+            minBtn.Location = new Point(maxBtn.Left - minBtn.Width, 0);
+            _titleLabel.Width = Math.Max(Scale(80), minBtn.Left - Scale(12));
         };
         
         // Add buttons
@@ -173,42 +182,43 @@ public class ImageViewerForm : Form
         _controlPanel = new Panel
         {
             Dock = DockStyle.Bottom,
-            Height = Scale(40),
+            Height = ControlPanelHeight,
             BackColor = ControlPanelColor,
-            Padding = Scale(new Padding(10))
+            Padding = Scale(new Padding(8, 6, 8, 6))
         };
 
         // Navigation
         var prevBtn = CreateButton("◀", Scale(50));
         prevBtn.Click += (s, e) => ShowPrevious();
-        prevBtn.Location = new Point(Scale(10), Scale(15));
+        prevBtn.Location = new Point(Scale(8), Scale(15));
 
         var nextBtn = CreateButton("▶", Scale(50));
         nextBtn.Click += (s, e) => ShowNext();
-        nextBtn.Location = new Point(Scale(70), Scale(15));
+        nextBtn.Location = new Point(Scale(64), Scale(15));
 
         // Info container to handle layout better
         _infoContainer = new Panel
         {
-            Location = new Point(Scale(130), 0),
-            Height = Scale(60),
+            Location = new Point(Scale(120), 0),
+            Height = ControlPanelHeight,
             Width = Scale(400),
             BackColor = Color.Transparent
         };
+        _infoContainer.Resize += (s, e) => LayoutInfoControls();
 
         _fileNameLabel = new Label
         {
             AutoSize = true,
-            Location = new Point(Scale(10), Scale(8)),
+            Location = new Point(Scale(8), Scale(4)),
             ForeColor = ForeColor_Dark,
-            Font = new Font("Segoe UI", 11, FontStyle.Bold),
+            Font = new Font("Segoe UI", 9, FontStyle.Bold),
             TextAlign = ContentAlignment.MiddleLeft
         };
 
         _tagsPanel = new FlowLayoutPanel
         {
-            Location = new Point(Scale(10), Scale(32)),
-            Size = new Size(Scale(380), Scale(24)),
+            Location = new Point(Scale(8), Scale(24)),
+            Size = new Size(Scale(380), Scale(18)),
             FlowDirection = FlowDirection.LeftToRight,
             WrapContents = false,
             BackColor = Color.Transparent
@@ -218,11 +228,10 @@ public class ImageViewerForm : Form
         {
             AutoSize = true,
             ForeColor = Color.Gray,
-            Font = new Font("Segoe UI", 9),
+            Font = new Font("Segoe UI", 8),
             TextAlign = ContentAlignment.MiddleLeft
         };
-        // Position index label to the right of filename label dynamically
-        _fileNameLabel.TextChanged += (s, e) => { _indexLabel.Location = new Point(_fileNameLabel.Right + Scale(10), _fileNameLabel.Top + Scale(2)); };
+        _fileNameLabel.TextChanged += (s, e) => LayoutInfoControls();
 
         _infoContainer.Controls.Add(_fileNameLabel);
         _infoContainer.Controls.Add(_indexLabel);
@@ -232,9 +241,9 @@ public class ImageViewerForm : Form
         var zoomOutBtn = CreateButton("−", Scale(35));
         zoomOutBtn.Click += (s, e) => AdjustZoom(-0.1f);
 
-        _zoomLabel = new Label { Text = "100%", AutoSize = false, Size = new Size(Scale(50), Scale(20)), ForeColor = ForeColor_Dark, Font = new Font("Segoe UI", 9), TextAlign = ContentAlignment.MiddleCenter };
+        _zoomLabel = new Label { Text = "100%", AutoSize = false, Size = new Size(Scale(48), ControlButtonHeight), ForeColor = ForeColor_Dark, Font = new Font("Segoe UI", 8), TextAlign = ContentAlignment.MiddleCenter };
         
-        _zoomSlider = new TrackBar { Minimum = 10, Maximum = 500, Value = 100, Width = Scale(150), TickFrequency = 50, BackColor = ControlPanelColor };
+        _zoomSlider = new TrackBar { Minimum = 10, Maximum = 500, Value = 100, Width = Scale(150), TickStyle = TickStyle.None, AutoSize = true, TickFrequency = 50, BackColor = ControlPanelColor };
         _zoomSlider.ValueChanged += (s, e) =>
         {
             if (_suppressZoomSliderEvent)
@@ -341,11 +350,11 @@ public class ImageViewerForm : Form
         var btn = new Button
         {
             Text = text,
-            Size = new Size(Scale(46), Scale(40)),
+            Size = new Size(Scale(46), TitleBarHeight),
             FlatStyle = FlatStyle.Flat,
             BackColor = Color.Transparent,
             ForeColor = ForeColor_Dark,
-            Font = new Font("Segoe UI", 10),
+            Font = new Font("Segoe UI", 9),
             Cursor = Cursors.Hand,
             Margin = new Padding(0)
         };
@@ -418,25 +427,52 @@ public class ImageViewerForm : Form
     private void LayoutControls()
     {
         if (_controlPanel == null || _controlPanel.Controls.Count < 10) return;
-        var w = _controlPanel.ClientSize.Width;
-        
-        // Fullscreen btn
-        _controlPanel.Controls[9].Location = new Point(w - Scale(50), Scale(15));
-        // 1:1 btn
-        _controlPanel.Controls[8].Location = new Point(w - Scale(105), Scale(15));
-        // Fit btn
-        _controlPanel.Controls[7].Location = new Point(w - Scale(160), Scale(15));
-        
-        _zoomLabel.Location = new Point(w - Scale(215), Scale(20));
-        // Zoom in btn
-        _controlPanel.Controls[5].Location = new Point(w - Scale(260), Scale(15));
-        _zoomSlider.Location = new Point(w - Scale(420), Scale(12));
-        // Zoom out btn
-        _controlPanel.Controls[3].Location = new Point(w - Scale(460), Scale(15));
+        int w = _controlPanel.ClientSize.Width;
+        int centerButtonY = Math.Max(Scale(1), (_controlPanel.ClientSize.Height - ControlButtonHeight) / 2);
+        int sliderHeight = _zoomSlider.PreferredSize.Height;
+        int sliderY = ((_controlPanel.ClientSize.Height - sliderHeight) / 2) + ZoomSliderVisualOffsetY;
+        sliderY = Math.Clamp(sliderY, Scale(1), Math.Max(Scale(1), _controlPanel.ClientSize.Height - _zoomSlider.Height - Scale(1)));
+        int spacing = Scale(6);
 
-        // Info container width should adapt
-        _infoContainer.Width = Math.Max(Scale(100), w - Scale(460) - Scale(130) - Scale(10));
-        _tagsPanel.Width = _infoContainer.Width - Scale(20);
+        var fullscreenBtn = _controlPanel.Controls[9];
+        var actualBtn = _controlPanel.Controls[8];
+        var fitBtn = _controlPanel.Controls[7];
+        var zoomInBtn = _controlPanel.Controls[5];
+        var zoomOutBtn = _controlPanel.Controls[3];
+        var prevBtn = _controlPanel.Controls[0];
+        var nextBtn = _controlPanel.Controls[1];
+
+        int right = w - Scale(8);
+
+        fullscreenBtn.Location = new Point(right - fullscreenBtn.Width, centerButtonY);
+        right = fullscreenBtn.Left - spacing;
+
+        actualBtn.Location = new Point(right - actualBtn.Width, centerButtonY);
+        right = actualBtn.Left - spacing;
+
+        fitBtn.Location = new Point(right - fitBtn.Width, centerButtonY);
+        right = fitBtn.Left - spacing;
+
+        _zoomLabel.Location = new Point(right - _zoomLabel.Width, centerButtonY);
+        right = _zoomLabel.Left - spacing;
+
+        zoomInBtn.Location = new Point(right - zoomInBtn.Width, centerButtonY);
+        right = zoomInBtn.Left - spacing;
+
+        _zoomSlider.Location = new Point(right - _zoomSlider.Width, sliderY);
+        right = _zoomSlider.Left - spacing;
+
+        zoomOutBtn.Location = new Point(right - zoomOutBtn.Width, centerButtonY);
+        right = zoomOutBtn.Left - spacing;
+
+        prevBtn.Location = new Point(Scale(8), centerButtonY);
+        nextBtn.Location = new Point(prevBtn.Right + spacing, centerButtonY);
+
+        int infoX = nextBtn.Right + Scale(8);
+        int infoWidth = Math.Max(Scale(100), right - infoX - Scale(8));
+        _infoContainer.Location = new Point(infoX, 0);
+        _infoContainer.Size = new Size(infoWidth, _controlPanel.ClientSize.Height);
+        LayoutInfoControls();
     }
 
     private Button CreateButton(string text, int width)
@@ -444,14 +480,29 @@ public class ImageViewerForm : Form
         return new Button
         {
             Text = text,
-            Size = new Size(width, 30),
+            Size = new Size(width, ControlButtonHeight),
             FlatStyle = FlatStyle.Flat,
             BackColor = Color.FromArgb(60, 60, 60),
             ForeColor = ForeColor_Dark,
-            Font = new Font("Segoe UI", 10),
+            Font = new Font("Segoe UI", 8),
             Cursor = Cursors.Hand,
             FlatAppearance = { BorderSize = 0 }
         };
+    }
+
+    private void LayoutInfoControls()
+    {
+        if (_infoContainer.Width <= 0 || _infoContainer.Height <= 0)
+            return;
+
+        int left = Scale(8);
+        _fileNameLabel.Location = new Point(left, Scale(4));
+        _indexLabel.Location = new Point(_fileNameLabel.Right + Scale(8), _fileNameLabel.Top + Scale(1));
+
+        int tagsY = _fileNameLabel.Bottom + Scale(2);
+        int tagsHeight = Math.Max(Scale(12), _infoContainer.Height - tagsY - Scale(4));
+        _tagsPanel.Location = new Point(left, tagsY);
+        _tagsPanel.Size = new Size(Math.Max(Scale(40), _infoContainer.Width - left * 2), tagsHeight);
     }
 
     private void LoadCurrentImage()
@@ -460,10 +511,13 @@ public class ImageViewerForm : Form
 
         var path = _imagePaths[_currentIndex];
         
+        ClearAnimationState();
         try
         {
-            _currentImage?.Dispose();
-            _currentImage = ImageSharpViewerService.LoadBitmap(path);
+            _currentAnimation = ImageSharpViewerService.LoadAnimation(path);
+            _animationFrameIndex = 0;
+            _currentImage = _currentAnimation.GetFrame(_animationFrameIndex);
+            StartAnimationIfNeeded();
             
             _fileNameLabel.Text = Path.GetFileName(path);
             _indexLabel.Text = $"{_currentIndex + 1} / {_imagePaths.Count}";
@@ -498,9 +552,9 @@ public class ImageViewerForm : Form
                 AutoSize = true,
                 BackColor = Color.FromArgb(60, 60, 60),
                 ForeColor = Color.LightGray,
-                Font = new Font("Segoe UI", 8),
-                Padding = Scale(new Padding(6, 2, 6, 2)),
-                Margin = Scale(new Padding(0, 2, 4, 0))
+                Font = new Font("Segoe UI", 7),
+                Padding = Scale(new Padding(5, 1, 5, 1)),
+                Margin = Scale(new Padding(0, 1, 4, 0))
             };
             
             // Standardizing pill look without full custom draw for now
@@ -518,16 +572,19 @@ public class ImageViewerForm : Form
     {
         if (_currentImage == null) return;
 
-        e.Graphics.InterpolationMode = _zoomLevel > 1 ? InterpolationMode.NearestNeighbor : InterpolationMode.HighQualityBicubic;
-        e.Graphics.PixelOffsetMode = PixelOffsetMode.Half;
+        bool isUpscaling = _zoomLevel > 1.0f;
+        e.Graphics.InterpolationMode = isUpscaling ? InterpolationMode.HighQualityBilinear : InterpolationMode.HighQualityBicubic;
+        e.Graphics.PixelOffsetMode = isUpscaling ? PixelOffsetMode.None : PixelOffsetMode.HighQuality;
+        e.Graphics.CompositingQuality = CompositingQuality.HighQuality;
+        e.Graphics.SmoothingMode = SmoothingMode.HighQuality;
 
-        var imgWidth = (int)(_currentImage.Width * _zoomLevel);
-        var imgHeight = (int)(_currentImage.Height * _zoomLevel);
+        float imgWidth = _currentImage.Width * _zoomLevel;
+        float imgHeight = _currentImage.Height * _zoomLevel;
 
-        var x = (_pictureBox.Width - imgWidth) / 2 + _panOffset.X;
-        var y = (_pictureBox.Height - imgHeight) / 2 + _panOffset.Y;
+        float x = (_pictureBox.Width - imgWidth) / 2f + _panOffset.X;
+        float y = (_pictureBox.Height - imgHeight) / 2f + _panOffset.Y;
 
-        e.Graphics.DrawImage(_currentImage, x, y, imgWidth, imgHeight);
+        e.Graphics.DrawImage(_currentImage, new RectangleF(x, y, imgWidth, imgHeight));
     }
 
     private void PictureBox_MouseDown(object? sender, MouseEventArgs e)
@@ -704,7 +761,8 @@ public class ImageViewerForm : Form
 
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
-        _currentImage?.Dispose();
+        ClearAnimationState();
+        _animationTimer.Dispose();
         base.OnFormClosed(e);
     }
 
@@ -740,5 +798,40 @@ public class ImageViewerForm : Form
         _zoomSlider.Value = Math.Clamp(value, _zoomSlider.Minimum, _zoomSlider.Maximum);
         _zoomLabel.Text = $"{_zoomSlider.Value}%";
         _suppressZoomSliderEvent = false;
+    }
+
+    private void AnimationTimer_Tick(object? sender, EventArgs e)
+    {
+        if (_currentAnimation == null || !_currentAnimation.IsAnimated)
+        {
+            _animationTimer.Stop();
+            return;
+        }
+
+        _animationFrameIndex = (_animationFrameIndex + 1) % _currentAnimation.FrameCount;
+        _currentImage = _currentAnimation.GetFrame(_animationFrameIndex);
+        _animationTimer.Interval = _currentAnimation.GetFrameDelayMs(_animationFrameIndex);
+        _pictureBox.Invalidate();
+    }
+
+    private void StartAnimationIfNeeded()
+    {
+        if (_currentAnimation == null || !_currentAnimation.IsAnimated)
+        {
+            _animationTimer.Stop();
+            return;
+        }
+
+        _animationTimer.Interval = _currentAnimation.GetFrameDelayMs(_animationFrameIndex);
+        _animationTimer.Start();
+    }
+
+    private void ClearAnimationState()
+    {
+        _animationTimer.Stop();
+        _animationFrameIndex = 0;
+        _currentImage = null;
+        _currentAnimation?.Dispose();
+        _currentAnimation = null;
     }
 }

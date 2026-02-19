@@ -14,7 +14,7 @@ public partial class MainForm
 
     private static void LogGcDelta(long navTraceId, string scope, (int Gen0, int Gen1, int Gen2, long MemoryBytes)? startSnapshot)
     {
-        if (!AppSettings.Current.DebugNavigationGcStats || startSnapshot == null) return;
+        if (!AppSettings.Current.DebugNavigationLogging || !AppSettings.Current.DebugNavigationGcStats || startSnapshot == null) return;
         var end = CaptureGcSnapshot();
         var start = startSnapshot.Value;
         NavigationDebugLogger.Log(
@@ -23,7 +23,7 @@ public partial class MainForm
 
     private void LogUiQueueDelayAsync(long navTraceId, string scope, string stage)
     {
-        if (!AppSettings.Current.DebugNavigationUiQueue) return;
+        if (!AppSettings.Current.DebugNavigationLogging || !AppSettings.Current.DebugNavigationUiQueue) return;
         if (!IsHandleCreated || IsDisposed) return;
 
         try
@@ -41,7 +41,7 @@ public partial class MainForm
 
     private void StartPostBindProbe(long navTraceId, string scope)
     {
-        if (!AppSettings.Current.DebugNavigationPostBind || _iconLoadService == null) return;
+        if (!AppSettings.Current.DebugNavigationLogging || !AppSettings.Current.DebugNavigationPostBind || _iconLoadService == null) return;
 
         int pendingStart = _iconLoadService.PendingCount;
         int queueStart = _iconLoadService.QueueCount;

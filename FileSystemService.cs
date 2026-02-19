@@ -360,9 +360,19 @@ public class FileSystemService
 
     public static void SortItems(List<FileItem> items, SortColumn column, SortDirection direction, bool taggedOnTop = false)
     {
+        if (items == null || items.Count <= 1)
+            return;
+
         // Always keep directories at top
-        var dirs = items.Where(x => x.IsDirectory).ToList();
-        var files = items.Where(x => !x.IsDirectory).ToList();
+        var dirs = new List<FileItem>(items.Count);
+        var files = new List<FileItem>(items.Count);
+        foreach (var item in items)
+        {
+            if (item.IsDirectory)
+                dirs.Add(item);
+            else
+                files.Add(item);
+        }
 
         // Sort directories (always standard sort)
         SortList(dirs, column, direction);
@@ -370,8 +380,15 @@ public class FileSystemService
         if (taggedOnTop)
         {
             // Partition files into Tagged and Untagged
-            var taggedFiles = files.Where(x => !x.IsShellItem && TagManager.Instance.GetTags(x.FullPath).Count > 0).ToList();
-            var untaggedFiles = files.Where(x => x.IsShellItem || TagManager.Instance.GetTags(x.FullPath).Count == 0).ToList();
+            var taggedFiles = new List<FileItem>(files.Count);
+            var untaggedFiles = new List<FileItem>(files.Count);
+            foreach (var file in files)
+            {
+                if (!file.IsShellItem && TagManager.Instance.HasTags(file.FullPath))
+                    taggedFiles.Add(file);
+                else
+                    untaggedFiles.Add(file);
+            }
 
             // Sort each group independently using the selected column
             SortList(taggedFiles, column, direction);
@@ -395,6 +412,17 @@ public class FileSystemService
 
     private static void SortList(List<FileItem> items, SortColumn column, SortDirection direction)
     {
+        Dictionary<FileItem, string>? tagSortKeys = null;
+        if (column == SortColumn.Tags && items.Count > 0)
+        {
+            tagSortKeys = new Dictionary<FileItem, string>(items.Count);
+            foreach (var item in items)
+            {
+                string key = item.IsShellItem ? "" : TagManager.Instance.GetPrimaryTagForSort(item.FullPath);
+                tagSortKeys[item] = key;
+            }
+        }
+
         Comparison<FileItem> comparison = column switch
         {
             SortColumn.Name => (a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase),
@@ -402,14 +430,14 @@ public class FileSystemService
             SortColumn.DateModified => (a, b) => a.DateModified.CompareTo(b.DateModified),
             SortColumn.DateCreated => (a, b) => a.DateCreated.CompareTo(b.DateCreated),
             SortColumn.Type => (a, b) => string.Compare(a.Extension, b.Extension, StringComparison.OrdinalIgnoreCase),
-            SortColumn.Tags => (a, b) => 
+            SortColumn.Tags => (a, b) =>
             {
-                // When sorting by Tags specifically, we sort by the Tag Name text
-                var tagsA = a.IsShellItem ? new HashSet<string>() : TagManager.Instance.GetTags(a.FullPath);
-                var tagsB = b.IsShellItem ? new HashSet<string>() : TagManager.Instance.GetTags(b.FullPath);
-                var tagA = tagsA.OrderBy(t => t).FirstOrDefault() ?? "";
-                var tagB = tagsB.OrderBy(t => t).FirstOrDefault() ?? "";
-                return string.Compare(tagA, tagB, StringComparison.OrdinalIgnoreCase);
+                // Precomputed keys avoid repeated path normalization + tag set allocations.
+                string tagA = tagSortKeys != null && tagSortKeys.TryGetValue(a, out var v1) ? v1 : "";
+                string tagB = tagSortKeys != null && tagSortKeys.TryGetValue(b, out var v2) ? v2 : "";
+                int byTag = string.Compare(tagA, tagB, StringComparison.OrdinalIgnoreCase);
+                if (byTag != 0) return byTag;
+                return string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase);
             },
             SortColumn.Format => (a, b) => string.Compare(a.DriveFormat, b.DriveFormat, StringComparison.OrdinalIgnoreCase),
             SortColumn.FreeSpace => (a, b) => a.FreeSpace.CompareTo(b.FreeSpace),
