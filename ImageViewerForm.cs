@@ -2,7 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Drawing.Text;
 using System.IO;
+using System.Linq;
+using System.Text;
 using System.Windows.Forms;
 using System.Runtime.InteropServices;
 
@@ -24,6 +27,7 @@ public class ImageViewerForm : Form
     private int _animationFrameIndex;
     
     private readonly PictureBox _pictureBox;
+    private readonly Panel _contentPanel;
     private readonly Panel _controlPanel;
     private readonly Panel _titleBar;
     private readonly Label _titleLabel;
@@ -34,7 +38,26 @@ public class ImageViewerForm : Form
     private readonly FlowLayoutPanel _tagsPanel;
     private readonly TrackBar _zoomSlider;
     private readonly Label _zoomLabel;
-    
+    private readonly Panel _aiPanel;
+    private readonly RichTextBox _aiOutputBox;
+    private readonly Label _aiStatusLabel;
+    private readonly TextBox _targetLanguageBox;
+    private readonly CheckBox _overlayToggle;
+    private readonly Button _prevBtn;
+    private readonly Button _nextBtn;
+    private readonly Button _zoomOutBtn;
+    private readonly Button _zoomInBtn;
+    private readonly Button _fitBtn;
+    private readonly Button _actualBtn;
+    private readonly Button _fullscreenBtn;
+    private readonly Button _aiToggleBtn;
+    private readonly Button _ocrBtn;
+    private readonly Button _translateBtn;
+    private readonly Button _tagBtn;
+    private readonly Button _clearOverlayBtn;
+    private readonly Button _copyResultBtn;
+    private readonly LlmService _llmService = new();
+
     private float _zoomLevel = 1.0f;
     private Point _panOffset = Point.Empty;
     private Point _lastMousePos;
@@ -44,6 +67,19 @@ public class ImageViewerForm : Form
     private FormWindowState _previousWindowState;
     private bool _autoFitEnabled = true;
     private bool _suppressZoomSliderEvent;
+    private bool _aiBusy;
+    private string? _ocrImagePath;
+    private LlmImageTextResult? _lastOcrResult;
+    private List<string> _lastTranslations = new();
+    private readonly List<OverlayTextBlock> _overlayBlocks = new();
+
+    private sealed class OverlayTextBlock
+    {
+        public string SourceText { get; set; } = "";
+        public string DisplayText { get; set; } = "";
+        public RectangleF NormalizedRect { get; set; }
+        public float NormalizedFontSize { get; set; }
+    }
     
     private static readonly Color BackColor_Dark = Color.FromArgb(20, 20, 20);
     private static readonly Color ControlPanelColor = Color.FromArgb(40, 40, 40);
@@ -170,13 +206,150 @@ public class ImageViewerForm : Form
         {
             Dock = DockStyle.Fill,
             BackColor = BackColor_Dark,
-            SizeMode = PictureBoxSizeMode.Zoom 
+            SizeMode = PictureBoxSizeMode.Zoom
         };
         _pictureBox.Paint += PictureBox_Paint;
         _pictureBox.MouseDown += PictureBox_MouseDown;
         _pictureBox.MouseMove += PictureBox_MouseMove;
         _pictureBox.MouseUp += PictureBox_MouseUp;
         _pictureBox.MouseWheel += PictureBox_MouseWheel;
+
+        _contentPanel = new Panel
+        {
+            Dock = DockStyle.Fill,
+            BackColor = BackColor_Dark
+        };
+
+        // --- AI Panel (Image Viewer) ---
+        _aiPanel = new Panel
+        {
+            Dock = DockStyle.Right,
+            Width = Scale(360),
+            BackColor = Color.FromArgb(28, 28, 28),
+            Padding = Scale(new Padding(8)),
+            Visible = false
+        };
+
+        var aiActionRow = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            Height = Scale(30),
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false,
+            BackColor = Color.Transparent,
+            Margin = Padding.Empty
+        };
+        _ocrBtn = CreateButton("OCR", Scale(58));
+        _translateBtn = CreateButton("Translate", Scale(82));
+        _tagBtn = CreateButton("Tag", Scale(58));
+        aiActionRow.Controls.Add(_ocrBtn);
+        aiActionRow.Controls.Add(_translateBtn);
+        aiActionRow.Controls.Add(_tagBtn);
+
+        var langRow = new Panel
+        {
+            Dock = DockStyle.Top,
+            Height = Scale(28),
+            BackColor = Color.Transparent
+        };
+        var langLabel = new Label
+        {
+            AutoSize = true,
+            Text = "Translate to:",
+            ForeColor = Color.FromArgb(220, 220, 220),
+            Font = new Font("Segoe UI", 8),
+            Location = new Point(Scale(2), Scale(6))
+        };
+        _targetLanguageBox = new TextBox
+        {
+            BorderStyle = BorderStyle.FixedSingle,
+            BackColor = Color.FromArgb(45, 45, 45),
+            ForeColor = Color.Gainsboro,
+            Font = new Font("Segoe UI", 8),
+            Text = "English",
+            Location = new Point(Scale(86), Scale(3)),
+            Width = Scale(248)
+        };
+        langRow.Controls.Add(langLabel);
+        langRow.Controls.Add(_targetLanguageBox);
+
+        var aiToolsRow = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            Height = Scale(28),
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false,
+            BackColor = Color.Transparent,
+            Margin = Padding.Empty
+        };
+        _overlayToggle = new CheckBox
+        {
+            AutoSize = true,
+            Text = "Show boxes",
+            Checked = true,
+            ForeColor = ForeColor_Dark,
+            Font = new Font("Segoe UI", 8),
+            BackColor = Color.Transparent,
+            Margin = Scale(new Padding(0, 5, 8, 0))
+        };
+        _copyResultBtn = CreateButton("Copy", Scale(56));
+        _clearOverlayBtn = CreateButton("Clear", Scale(56));
+        aiToolsRow.Controls.Add(_overlayToggle);
+        aiToolsRow.Controls.Add(_copyResultBtn);
+        aiToolsRow.Controls.Add(_clearOverlayBtn);
+
+        _aiStatusLabel = new Label
+        {
+            Dock = DockStyle.Top,
+            Height = Scale(20),
+            ForeColor = Color.FromArgb(180, 180, 180),
+            Font = new Font("Segoe UI", 8),
+            Text = "AI ready",
+            TextAlign = ContentAlignment.MiddleLeft,
+            Padding = new Padding(0, 0, 0, Scale(2))
+        };
+
+        _aiOutputBox = new RichTextBox
+        {
+            Dock = DockStyle.Fill,
+            ReadOnly = true,
+            DetectUrls = false,
+            WordWrap = true,
+            BorderStyle = BorderStyle.FixedSingle,
+            BackColor = Color.FromArgb(35, 35, 35),
+            ForeColor = Color.FromArgb(230, 230, 230),
+            Font = new Font("Segoe UI", 9),
+            HideSelection = false
+        };
+
+        _aiPanel.Controls.Add(_aiOutputBox);
+        _aiPanel.Controls.Add(_aiStatusLabel);
+        _aiPanel.Controls.Add(aiToolsRow);
+        _aiPanel.Controls.Add(langRow);
+        _aiPanel.Controls.Add(aiActionRow);
+
+        _ocrBtn.Click += async (s, e) => await RunViewerOcrAsync(false);
+        _translateBtn.Click += async (s, e) => await RunViewerOcrAsync(true);
+        _tagBtn.Click += async (s, e) => await RunViewerTaggingAsync();
+        _overlayToggle.CheckedChanged += (s, e) => _pictureBox.Invalidate();
+        _clearOverlayBtn.Click += (s, e) =>
+        {
+            _overlayBlocks.Clear();
+            _lastTranslations = new List<string>();
+            _pictureBox.Invalidate();
+            _aiStatusLabel.Text = "Overlay cleared";
+        };
+        _copyResultBtn.Click += (s, e) =>
+        {
+            if (!string.IsNullOrWhiteSpace(_aiOutputBox.Text))
+            {
+                Clipboard.SetText(_aiOutputBox.Text);
+                _aiStatusLabel.Text = "Copied to clipboard";
+            }
+        };
+
+        _contentPanel.Controls.Add(_pictureBox);
+        _contentPanel.Controls.Add(_aiPanel);
 
         // --- Control Panel ---
         _controlPanel = new Panel
@@ -188,13 +361,13 @@ public class ImageViewerForm : Form
         };
 
         // Navigation
-        var prevBtn = CreateButton("◀", Scale(50));
-        prevBtn.Click += (s, e) => ShowPrevious();
-        prevBtn.Location = new Point(Scale(8), Scale(15));
+        _prevBtn = CreateButton("◀", Scale(50));
+        _prevBtn.Click += (s, e) => ShowPrevious();
+        _prevBtn.Location = new Point(Scale(8), Scale(15));
 
-        var nextBtn = CreateButton("▶", Scale(50));
-        nextBtn.Click += (s, e) => ShowNext();
-        nextBtn.Location = new Point(Scale(64), Scale(15));
+        _nextBtn = CreateButton("▶", Scale(50));
+        _nextBtn.Click += (s, e) => ShowNext();
+        _nextBtn.Location = new Point(Scale(64), Scale(15));
 
         // Info container to handle layout better
         _infoContainer = new Panel
@@ -238,8 +411,8 @@ public class ImageViewerForm : Form
         _infoContainer.Controls.Add(_tagsPanel);
 
         // Zoom
-        var zoomOutBtn = CreateButton("−", Scale(35));
-        zoomOutBtn.Click += (s, e) => AdjustZoom(-0.1f);
+        _zoomOutBtn = CreateButton("−", Scale(35));
+        _zoomOutBtn.Click += (s, e) => AdjustZoom(-0.1f);
 
         _zoomLabel = new Label { Text = "100%", AutoSize = false, Size = new Size(Scale(48), ControlButtonHeight), ForeColor = ForeColor_Dark, Font = new Font("Segoe UI", 8), TextAlign = ContentAlignment.MiddleCenter };
         
@@ -254,25 +427,28 @@ public class ImageViewerForm : Form
             _pictureBox.Invalidate();
         };
 
-        var zoomInBtn = CreateButton("+", Scale(35));
-        zoomInBtn.Click += (s, e) => AdjustZoom(0.1f);
+        _zoomInBtn = CreateButton("+", Scale(35));
+        _zoomInBtn.Click += (s, e) => AdjustZoom(0.1f);
 
-        var fitBtn = CreateButton("Fit", Scale(50));
-        fitBtn.Click += (s, e) => FitToWindow();
+        _fitBtn = CreateButton("Fit", Scale(50));
+        _fitBtn.Click += (s, e) => FitToWindow();
 
-        var actualBtn = CreateButton("1:1", Scale(50));
-        actualBtn.Click += (s, e) => ActualSize();
+        _actualBtn = CreateButton("1:1", Scale(50));
+        _actualBtn.Click += (s, e) => ActualSize();
 
-        var fullscreenBtn = CreateButton("⛶", Scale(40));
-        fullscreenBtn.Click += (s, e) => ToggleFullscreen();
+        _fullscreenBtn = CreateButton("⛶", Scale(40));
+        _fullscreenBtn.Click += (s, e) => ToggleFullscreen();
+
+        _aiToggleBtn = CreateButton("AI", Scale(42));
+        _aiToggleBtn.Click += (s, e) => ToggleAiPanel();
 
         // Add controls
-        _controlPanel.Controls.AddRange(new Control[] { prevBtn, nextBtn, _infoContainer, zoomOutBtn, _zoomSlider, zoomInBtn, _zoomLabel, fitBtn, actualBtn, fullscreenBtn });
-        _controlPanel.Resize += (s, e) => LayoutControls(); 
+        _controlPanel.Controls.AddRange(new Control[] { _prevBtn, _nextBtn, _infoContainer, _zoomOutBtn, _zoomSlider, _zoomInBtn, _zoomLabel, _fitBtn, _actualBtn, _fullscreenBtn, _aiToggleBtn });
+        _controlPanel.Resize += (s, e) => LayoutControls();
 
-        Controls.Add(_pictureBox);
+        Controls.Add(_contentPanel);
         Controls.Add(_controlPanel);
-        Controls.Add(_titleBar); 
+        Controls.Add(_titleBar);
 
         // Custom Paint for Border
         Paint += (s, e) => { using var p = new Pen(Color.FromArgb(60, 60, 60)); e.Graphics.DrawRectangle(p, 0, 0, Width - 1, Height - 1); };
@@ -284,6 +460,10 @@ public class ImageViewerForm : Form
 
     protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
     {
+        // Do not trigger viewer hotkeys while target-language input is focused.
+        if (_targetLanguageBox.Focused)
+            return base.ProcessCmdKey(ref msg, keyData);
+
         // Handle specific keys and combinations
         if (keyData == Keys.Left || keyData == Keys.A)
         {
@@ -426,7 +606,9 @@ public class ImageViewerForm : Form
 
     private void LayoutControls()
     {
-        if (_controlPanel == null || _controlPanel.Controls.Count < 10) return;
+        if (_controlPanel == null)
+            return;
+
         int w = _controlPanel.ClientSize.Width;
         int centerButtonY = Math.Max(Scale(1), (_controlPanel.ClientSize.Height - ControlButtonHeight) / 2);
         int sliderHeight = _zoomSlider.PreferredSize.Height;
@@ -434,41 +616,36 @@ public class ImageViewerForm : Form
         sliderY = Math.Clamp(sliderY, Scale(1), Math.Max(Scale(1), _controlPanel.ClientSize.Height - _zoomSlider.Height - Scale(1)));
         int spacing = Scale(6);
 
-        var fullscreenBtn = _controlPanel.Controls[9];
-        var actualBtn = _controlPanel.Controls[8];
-        var fitBtn = _controlPanel.Controls[7];
-        var zoomInBtn = _controlPanel.Controls[5];
-        var zoomOutBtn = _controlPanel.Controls[3];
-        var prevBtn = _controlPanel.Controls[0];
-        var nextBtn = _controlPanel.Controls[1];
-
         int right = w - Scale(8);
 
-        fullscreenBtn.Location = new Point(right - fullscreenBtn.Width, centerButtonY);
-        right = fullscreenBtn.Left - spacing;
+        _aiToggleBtn.Location = new Point(right - _aiToggleBtn.Width, centerButtonY);
+        right = _aiToggleBtn.Left - spacing;
 
-        actualBtn.Location = new Point(right - actualBtn.Width, centerButtonY);
-        right = actualBtn.Left - spacing;
+        _fullscreenBtn.Location = new Point(right - _fullscreenBtn.Width, centerButtonY);
+        right = _fullscreenBtn.Left - spacing;
 
-        fitBtn.Location = new Point(right - fitBtn.Width, centerButtonY);
-        right = fitBtn.Left - spacing;
+        _actualBtn.Location = new Point(right - _actualBtn.Width, centerButtonY);
+        right = _actualBtn.Left - spacing;
+
+        _fitBtn.Location = new Point(right - _fitBtn.Width, centerButtonY);
+        right = _fitBtn.Left - spacing;
 
         _zoomLabel.Location = new Point(right - _zoomLabel.Width, centerButtonY);
         right = _zoomLabel.Left - spacing;
 
-        zoomInBtn.Location = new Point(right - zoomInBtn.Width, centerButtonY);
-        right = zoomInBtn.Left - spacing;
+        _zoomInBtn.Location = new Point(right - _zoomInBtn.Width, centerButtonY);
+        right = _zoomInBtn.Left - spacing;
 
         _zoomSlider.Location = new Point(right - _zoomSlider.Width, sliderY);
         right = _zoomSlider.Left - spacing;
 
-        zoomOutBtn.Location = new Point(right - zoomOutBtn.Width, centerButtonY);
-        right = zoomOutBtn.Left - spacing;
+        _zoomOutBtn.Location = new Point(right - _zoomOutBtn.Width, centerButtonY);
+        right = _zoomOutBtn.Left - spacing;
 
-        prevBtn.Location = new Point(Scale(8), centerButtonY);
-        nextBtn.Location = new Point(prevBtn.Right + spacing, centerButtonY);
+        _prevBtn.Location = new Point(Scale(8), centerButtonY);
+        _nextBtn.Location = new Point(_prevBtn.Right + spacing, centerButtonY);
 
-        int infoX = nextBtn.Right + Scale(8);
+        int infoX = _nextBtn.Right + Scale(8);
         int infoWidth = Math.Max(Scale(100), right - infoX - Scale(8));
         _infoContainer.Location = new Point(infoX, 0);
         _infoContainer.Size = new Size(infoWidth, _controlPanel.ClientSize.Height);
@@ -505,11 +682,387 @@ public class ImageViewerForm : Form
         _tagsPanel.Size = new Size(Math.Max(Scale(40), _infoContainer.Width - left * 2), tagsHeight);
     }
 
+    private string? GetCurrentImagePath()
+    {
+        if (_currentIndex < 0 || _currentIndex >= _imagePaths.Count)
+            return null;
+        return _imagePaths[_currentIndex];
+    }
+
+    private void ToggleAiPanel()
+    {
+        _aiPanel.Visible = !_aiPanel.Visible;
+        _aiToggleBtn.BackColor = _aiPanel.Visible ? Color.FromArgb(78, 78, 78) : Color.FromArgb(60, 60, 60);
+        _aiToggleBtn.ForeColor = _aiPanel.Visible ? Color.White : ForeColor_Dark;
+        _contentPanel.PerformLayout();
+        LayoutControls();
+        _pictureBox.Invalidate();
+    }
+
+    private void SetAiBusy(bool busy, string statusText)
+    {
+        _aiBusy = busy;
+        _ocrBtn.Enabled = !busy;
+        _translateBtn.Enabled = !busy;
+        _tagBtn.Enabled = !busy;
+        _targetLanguageBox.Enabled = !busy;
+        _overlayToggle.Enabled = !busy;
+        _clearOverlayBtn.Enabled = !busy;
+        _copyResultBtn.Enabled = !busy;
+        _aiStatusLabel.Text = statusText;
+        Cursor = busy ? Cursors.WaitCursor : Cursors.Default;
+    }
+
+    private async Task<string?> EnsureVisionModelAsync()
+    {
+        _llmService.ApiUrl = LlmService.GetCompletionsApiUrl(_settings.LlmApiUrl, null);
+        return await _llmService.ResolveModelForTaskAsync(LlmUsageKind.Assistant, LlmTaskKind.Vision, this);
+    }
+
+    private async Task RunViewerOcrAsync(bool withTranslation)
+    {
+        if (_aiBusy)
+            return;
+
+        string? imagePath = GetCurrentImagePath();
+        if (string.IsNullOrWhiteSpace(imagePath) || !File.Exists(imagePath))
+            return;
+
+        try
+        {
+            SetAiBusy(true, "Resolving model...");
+            string? model = await EnsureVisionModelAsync();
+            if (string.IsNullOrWhiteSpace(model))
+            {
+                SetAiBusy(false, "Model selection cancelled");
+                return;
+            }
+
+            LlmImageTextResult? ocr = null;
+            bool hasCachedOcr = withTranslation &&
+                _lastOcrResult != null &&
+                string.Equals(_ocrImagePath, imagePath, StringComparison.OrdinalIgnoreCase);
+
+            if (hasCachedOcr)
+            {
+                ocr = _lastOcrResult;
+                _aiStatusLabel.Text = "Using cached OCR...";
+            }
+            else
+            {
+                SetAiBusy(true, "Extracting text...");
+                ocr = await _llmService.ExtractImageTextAsync(imagePath, model);
+            }
+
+            if (ocr == null)
+            {
+                SetAiBusy(false, "OCR failed");
+                _aiOutputBox.Text = "Failed to extract text from the image.";
+                return;
+            }
+
+            _ocrImagePath = imagePath;
+            _lastOcrResult = ocr;
+            if (!hasCachedOcr)
+            {
+                _lastTranslations = new List<string>();
+                SetOverlayFromOcrResult(ocr, null);
+                _aiOutputBox.Text = RenderOcrResult(ocr);
+            }
+
+            if (!withTranslation)
+            {
+                SetAiBusy(false, $"OCR complete ({ocr.Blocks.Count} blocks)");
+                return;
+            }
+
+            SetAiBusy(true, "Translating...");
+            string targetLanguage = string.IsNullOrWhiteSpace(_targetLanguageBox.Text) ? "English" : _targetLanguageBox.Text.Trim();
+            var sourceBlocks = ocr.Blocks.Select(b => b.Text).Where(t => !string.IsNullOrWhiteSpace(t)).ToList();
+            if (sourceBlocks.Count == 0 && !string.IsNullOrWhiteSpace(ocr.FullText))
+                sourceBlocks.Add(ocr.FullText);
+
+            var translation = await _llmService.TranslateTextBlocksAsync(sourceBlocks, targetLanguage, ocr.DetectedLanguage, model);
+            if (translation == null)
+            {
+                SetAiBusy(false, "Translation failed");
+                return;
+            }
+
+            _lastTranslations = translation.Translations;
+            ApplyTranslationsToOverlay(_lastTranslations);
+            _aiOutputBox.Text = RenderTranslatedResult(ocr, translation);
+            SetAiBusy(false, $"Translated to {translation.TargetLanguage}");
+        }
+        catch (Exception ex)
+        {
+            SetAiBusy(false, $"AI error: {ex.Message}");
+            LlmDebugLogger.LogError($"Image viewer OCR/translate failed: {ex}");
+        }
+    }
+
+    private async Task RunViewerTaggingAsync()
+    {
+        if (_aiBusy)
+            return;
+
+        string? imagePath = GetCurrentImagePath();
+        if (string.IsNullOrWhiteSpace(imagePath) || !File.Exists(imagePath))
+            return;
+
+        try
+        {
+            SetAiBusy(true, "Resolving model...");
+            string? model = await EnsureVisionModelAsync();
+            if (string.IsNullOrWhiteSpace(model))
+            {
+                SetAiBusy(false, "Model selection cancelled");
+                return;
+            }
+
+            SetAiBusy(true, "Generating tags...");
+            var tags = await _llmService.GetImageTagsAsync(
+                "Analyze this image and return concise descriptive tags only. Prefer 8 to 20 tags.",
+                imagePath,
+                model);
+
+            if (tags.Count == 0)
+            {
+                SetAiBusy(false, "No tags generated");
+                _aiOutputBox.Text = "No tags were returned for this image.";
+                return;
+            }
+
+            var normalized = tags
+                .Select(t => t.Trim())
+                .Where(t => !string.IsNullOrWhiteSpace(t))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            TagManager.Instance.UpdateTagsBatch(new[] { imagePath }, normalized, Enumerable.Empty<string>());
+            UpdateTags(imagePath);
+
+            _aiOutputBox.Text = "Applied tags:" + Environment.NewLine + string.Join(", ", normalized);
+            SetAiBusy(false, $"Applied {normalized.Count} tags");
+        }
+        catch (Exception ex)
+        {
+            SetAiBusy(false, $"Tagging error: {ex.Message}");
+            LlmDebugLogger.LogError($"Image viewer tagging failed: {ex}");
+        }
+    }
+
+    private static RectangleF ClampNormalizedRect(float x, float y, float w, float h)
+    {
+        float nx = Math.Clamp(x, 0f, 1f);
+        float ny = Math.Clamp(y, 0f, 1f);
+        float nw = Math.Clamp(w, 0f, 1f);
+        float nh = Math.Clamp(h, 0f, 1f);
+
+        if (nx + nw > 1f)
+            nw = 1f - nx;
+        if (ny + nh > 1f)
+            nh = 1f - ny;
+        if (nw < 0f) nw = 0f;
+        if (nh < 0f) nh = 0f;
+
+        return new RectangleF(nx, ny, nw, nh);
+    }
+
+    private void SetOverlayFromOcrResult(LlmImageTextResult ocr, IReadOnlyList<string>? translatedLines)
+    {
+        _overlayBlocks.Clear();
+
+        bool hasPixelCoordinates = ocr.Blocks.Any(b => b.X > 1.5f || b.Y > 1.5f || b.W > 1.5f || b.H > 1.5f);
+        float minX = hasPixelCoordinates ? ocr.Blocks.Min(b => b.X) : 0f;
+        float minY = hasPixelCoordinates ? ocr.Blocks.Min(b => b.Y) : 0f;
+        float maxRight = hasPixelCoordinates ? ocr.Blocks.Max(b => b.X + b.W) : 1f;
+        float maxBottom = hasPixelCoordinates ? ocr.Blocks.Max(b => b.Y + b.H) : 1f;
+
+        float sourceW = _currentImage?.Width ?? 0f;
+        float sourceH = _currentImage?.Height ?? 0f;
+
+        float denomW = hasPixelCoordinates ? Math.Max(sourceW, maxRight) : 1f;
+        float denomH = hasPixelCoordinates ? Math.Max(sourceH, maxBottom) : 1f;
+        if (denomW <= 1f) denomW = Math.Max(1f, maxRight);
+        if (denomH <= 1f) denomH = Math.Max(1f, maxBottom);
+
+        // Some models return coordinates in a cropped/top-left canvas; stretch to extents when coverage is clearly compressed.
+        float extentW = Math.Max(1f, maxRight - minX);
+        float extentH = Math.Max(1f, maxBottom - minY);
+        float coverW = sourceW > 1f ? (maxRight / sourceW) : 1f;
+        float coverH = sourceH > 1f ? (maxBottom / sourceH) : 1f;
+        bool stretchX = hasPixelCoordinates && sourceW > 1f && coverW < 0.90f;
+        bool stretchY = hasPixelCoordinates && sourceH > 1f && coverH < 0.90f;
+
+        for (int i = 0; i < ocr.Blocks.Count; i++)
+        {
+            var block = ocr.Blocks[i];
+            float x;
+            float y;
+            float w;
+            float h;
+
+            if (hasPixelCoordinates)
+            {
+                x = stretchX ? ((block.X - minX) / extentW) : (block.X / denomW);
+                y = stretchY ? ((block.Y - minY) / extentH) : (block.Y / denomH);
+                w = stretchX ? (block.W / extentW) : (block.W / denomW);
+                h = stretchY ? (block.H / extentH) : (block.H / denomH);
+            }
+            else
+            {
+                x = block.X;
+                y = block.Y;
+                w = block.W;
+                h = block.H;
+            }
+
+            var rect = ClampNormalizedRect(x, y, w, h);
+            if (rect.Width <= 0f || rect.Height <= 0f)
+                continue;
+
+            float normalizedFontSize = 0f;
+            if (block.FontSize > 0f)
+            {
+                if (hasPixelCoordinates)
+                {
+                    float fontDenom = stretchY ? extentH : denomH;
+                    if (fontDenom > 1f)
+                        normalizedFontSize = block.FontSize / fontDenom;
+                }
+                else if (block.FontSize <= 1f)
+                {
+                    normalizedFontSize = block.FontSize;
+                }
+                else if (sourceH > 1f)
+                {
+                    normalizedFontSize = block.FontSize / sourceH;
+                }
+
+                normalizedFontSize = Math.Clamp(normalizedFontSize, 0f, 0.5f);
+            }
+
+            string translated = translatedLines != null && i < translatedLines.Count && !string.IsNullOrWhiteSpace(translatedLines[i])
+                ? StripOrderedPrefix(translatedLines[i])
+                : block.Text;
+
+            _overlayBlocks.Add(new OverlayTextBlock
+            {
+                SourceText = block.Text,
+                DisplayText = translated,
+                NormalizedRect = rect,
+                NormalizedFontSize = normalizedFontSize
+            });
+        }
+
+        _pictureBox.Invalidate();
+    }
+
+    private void ApplyTranslationsToOverlay(IReadOnlyList<string> translatedLines)
+    {
+        if (_overlayBlocks.Count == 0)
+            return;
+
+        for (int i = 0; i < _overlayBlocks.Count; i++)
+        {
+            if (i < translatedLines.Count && !string.IsNullOrWhiteSpace(translatedLines[i]))
+                _overlayBlocks[i].DisplayText = StripOrderedPrefix(translatedLines[i]);
+        }
+
+        _pictureBox.Invalidate();
+    }
+
+    private static string StripOrderedPrefix(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return text;
+
+        string trimmed = text.Trim();
+        int i = 0;
+        while (i < trimmed.Length && char.IsDigit(trimmed[i]))
+            i++;
+
+        if (i > 0 && i < trimmed.Length)
+        {
+            char marker = trimmed[i];
+            if (marker == '.' || marker == ')' || marker == ':' || marker == '-')
+            {
+                i++;
+                while (i < trimmed.Length && char.IsWhiteSpace(trimmed[i]))
+                    i++;
+                if (i < trimmed.Length)
+                    return trimmed.Substring(i);
+            }
+        }
+
+        return trimmed;
+    }
+
+    private static string RenderOcrResult(LlmImageTextResult ocr)
+    {
+        var sb = new StringBuilder();
+        if (!string.IsNullOrWhiteSpace(ocr.DetectedLanguage))
+            sb.AppendLine($"Detected language: {ocr.DetectedLanguage}");
+        sb.AppendLine($"Blocks: {ocr.Blocks.Count}");
+        sb.AppendLine();
+        sb.AppendLine("Extracted text:");
+        sb.AppendLine(string.IsNullOrWhiteSpace(ocr.FullText) ? "(no text)" : ocr.FullText.Trim());
+
+        if (ocr.Blocks.Count > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine("Blocks:");
+            for (int i = 0; i < ocr.Blocks.Count; i++)
+            {
+                sb.AppendLine($"{i + 1}. {ocr.Blocks[i].Text}");
+            }
+        }
+
+        return sb.ToString().TrimEnd();
+    }
+
+    private static string RenderTranslatedResult(LlmImageTextResult ocr, LlmTextTranslationResult translation)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine($"Detected language: {(string.IsNullOrWhiteSpace(ocr.DetectedLanguage) ? "unknown" : ocr.DetectedLanguage)}");
+        sb.AppendLine($"Target language: {translation.TargetLanguage}");
+        sb.AppendLine();
+        sb.AppendLine("Translated text:");
+        sb.AppendLine(string.IsNullOrWhiteSpace(translation.TranslatedFullText) ? "(empty)" : translation.TranslatedFullText.Trim());
+
+        if (translation.Translations.Count > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine("Block mapping:");
+            int count = Math.Max(ocr.Blocks.Count, translation.Translations.Count);
+            for (int i = 0; i < count; i++)
+            {
+                string src = i < ocr.Blocks.Count ? ocr.Blocks[i].Text : "";
+                string dst = i < translation.Translations.Count ? translation.Translations[i] : "";
+                sb.AppendLine($"{i + 1}. {src}");
+                sb.AppendLine($"   -> {dst}");
+            }
+        }
+
+        return sb.ToString().TrimEnd();
+    }
+
     private void LoadCurrentImage()
     {
         if (_currentIndex < 0 || _currentIndex >= _imagePaths.Count) return;
 
         var path = _imagePaths[_currentIndex];
+        if (!string.Equals(_ocrImagePath, path, StringComparison.OrdinalIgnoreCase))
+        {
+            _ocrImagePath = null;
+            _lastOcrResult = null;
+            _lastTranslations = new List<string>();
+            _overlayBlocks.Clear();
+            _aiOutputBox.Clear();
+            if (!_aiBusy)
+                _aiStatusLabel.Text = "AI ready";
+        }
         
         ClearAnimationState();
         try
@@ -584,7 +1137,268 @@ public class ImageViewerForm : Form
         float x = (_pictureBox.Width - imgWidth) / 2f + _panOffset.X;
         float y = (_pictureBox.Height - imgHeight) / 2f + _panOffset.Y;
 
-        e.Graphics.DrawImage(_currentImage, new RectangleF(x, y, imgWidth, imgHeight));
+        var imageRect = new RectangleF(x, y, imgWidth, imgHeight);
+        e.Graphics.DrawImage(_currentImage, imageRect);
+        DrawOverlayBlocks(e.Graphics, imageRect);
+    }
+
+    private void DrawOverlayBlocks(Graphics g, RectangleF imageRect)
+    {
+        if (!_overlayToggle.Checked || _overlayBlocks.Count == 0)
+            return;
+
+        var priorHint = g.TextRenderingHint;
+        g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
+        try
+        {
+            using var fillBrush = new SolidBrush(Color.FromArgb(120, 7, 19, 36));
+            using var borderPen = new Pen(Color.FromArgb(220, 125, 198, 255), 1.2f);
+            using var badgeBrush = new SolidBrush(Color.FromArgb(220, 20, 20, 20));
+            using var badgeBorder = new Pen(Color.FromArgb(220, 125, 198, 255), 1f);
+            using var textBrush = new SolidBrush(Color.FromArgb(250, 250, 250));
+            using var textBackBrush = new SolidBrush(Color.FromArgb(185, 0, 0, 0));
+            float badgeFontPx = Math.Clamp(9f * _zoomLevel, 8f, 16f);
+            using var badgeFont = new Font("Segoe UI", badgeFontPx, FontStyle.Bold, GraphicsUnit.Pixel);
+            using var textFormat = new StringFormat
+            {
+                Alignment = StringAlignment.Near,
+                LineAlignment = StringAlignment.Near,
+                Trimming = StringTrimming.Word,
+                FormatFlags = StringFormatFlags.LineLimit
+            };
+
+            const float textInsetX = 4f;
+            const float textInsetY = 3f;
+            const float minTextFontPx = 10f;
+            const float maxTextFontPx = 34f;
+            const float modelFontScale = 1.25f;
+            const float maxGrowWidthFactor = 1.60f;
+            const float maxGrowHeightFactor = 2.00f;
+            int maxShrinkSteps = _overlayBlocks.Count > 120 ? 12 : 40;
+            int maxWidenSteps = _overlayBlocks.Count > 120 ? 3 : 8;
+            int maxFinalShrinkSteps = _overlayBlocks.Count > 120 ? 8 : 24;
+            var placedRects = new List<RectangleF>(_overlayBlocks.Count);
+
+            for (int i = 0; i < _overlayBlocks.Count; i++)
+            {
+                var block = _overlayBlocks[i];
+                float x = imageRect.X + (block.NormalizedRect.X * imageRect.Width);
+                float y = imageRect.Y + (block.NormalizedRect.Y * imageRect.Height);
+                float w = block.NormalizedRect.Width * imageRect.Width;
+                float h = block.NormalizedRect.Height * imageRect.Height;
+
+                if (w < 2f || h < 2f)
+                    continue;
+
+                var rect = new RectangleF(x, y, w, h);
+                var drawRect = rect;
+                string? text = string.IsNullOrWhiteSpace(block.DisplayText) ? null : block.DisplayText.Trim();
+                RectangleF textRect = RectangleF.Empty;
+                float textFontPx = minTextFontPx;
+
+                if (!string.IsNullOrWhiteSpace(text))
+                {
+                    textRect = RectangleF.Inflate(rect, -textInsetX, -textInsetY);
+                    if (textRect.Width >= 8f && textRect.Height >= 8f)
+                    {
+                        float modelFontPx = block.NormalizedFontSize > 0f ? block.NormalizedFontSize * imageRect.Height : 0f;
+                        float autoFontPx = textRect.Height * 0.42f;
+                        float baseFont = modelFontPx > 0f
+                            ? Math.Clamp(modelFontPx * modelFontScale, minTextFontPx, maxTextFontPx)
+                            : Math.Clamp(autoFontPx, minTextFontPx, maxTextFontPx);
+                        textFontPx = Math.Min(baseFont, Math.Max(minTextFontPx, textRect.Height * 0.80f));
+
+                        SizeF measured = MeasureTextForOverlay(g, text, textFontPx, textRect.Width, textFormat);
+
+                        // If OCR gave a huge source box relative to text, shrink box to content first.
+                        float compactTextW = Math.Clamp(measured.Width + 4f, 8f, textRect.Width);
+                        float compactTextH = Math.Clamp(measured.Height + 4f, 8f, textRect.Height);
+                        bool sourceBoxTooWide = textRect.Width > compactTextW * 1.35f;
+                        bool sourceBoxTooTall = textRect.Height > compactTextH * 1.50f;
+                        if (sourceBoxTooWide || sourceBoxTooTall)
+                        {
+                            textRect = new RectangleF(
+                                textRect.X,
+                                textRect.Y,
+                                sourceBoxTooWide ? compactTextW : textRect.Width,
+                                sourceBoxTooTall ? compactTextH : textRect.Height);
+                            drawRect = RectangleF.Inflate(textRect, textInsetX, textInsetY);
+                            measured = MeasureTextForOverlay(g, text, textFontPx, textRect.Width, textFormat);
+                        }
+
+                        // First shrink text toward min size.
+                        int shrinkSteps = 0;
+                        while (measured.Height > textRect.Height && textFontPx > minTextFontPx + 0.01f && shrinkSteps < maxShrinkSteps)
+                        {
+                            textFontPx = Math.Max(minTextFontPx, textFontPx - 0.75f);
+                            measured = MeasureTextForOverlay(g, text, textFontPx, textRect.Width, textFormat);
+                            shrinkSteps++;
+                        }
+
+                        // If still overflowing, widen text area to reduce wrapping.
+                        float sourceTextWidth = Math.Max(8f, rect.Width - (textInsetX * 2f));
+                        float maxTextWidth = Math.Min(
+                            imageRect.Right - (textRect.X + 1f),
+                            Math.Max(textRect.Width, sourceTextWidth * maxGrowWidthFactor));
+                        int widenSteps = 0;
+                        while (measured.Height > textRect.Height && textRect.Width < maxTextWidth - 0.5f && widenSteps < maxWidenSteps)
+                        {
+                            textRect.Width = Math.Min(maxTextWidth, textRect.Width * 1.20f);
+                            measured = MeasureTextForOverlay(g, text, textFontPx, textRect.Width, textFormat);
+                            widenSteps++;
+                        }
+
+                        // If text still does not fit, expand the box height.
+                        if (measured.Height > textRect.Height)
+                        {
+                            float sourceTextHeight = Math.Max(8f, rect.Height - (textInsetY * 2f));
+                            float maxTextHeight = Math.Min(
+                                imageRect.Bottom - (textRect.Y + 1f),
+                                Math.Max(textRect.Height, sourceTextHeight * maxGrowHeightFactor));
+                            textRect.Height = Math.Min(maxTextHeight, measured.Height + 2f);
+                        }
+
+                        var desiredDrawRect = RectangleF.Union(drawRect, RectangleF.Inflate(textRect, textInsetX, textInsetY));
+                        drawRect = ShiftRectIntoBounds(desiredDrawRect, imageRect);
+                        textRect = RectangleF.Inflate(drawRect, -textInsetX, -textInsetY);
+
+                        // One more safety pass after potential clamping/shift.
+                        measured = MeasureTextForOverlay(g, text, textFontPx, Math.Max(1f, textRect.Width), textFormat);
+                        int finalShrinkSteps = 0;
+                        while (measured.Height > textRect.Height && textFontPx > minTextFontPx + 0.01f && finalShrinkSteps < maxFinalShrinkSteps)
+                        {
+                            textFontPx = Math.Max(minTextFontPx, textFontPx - 0.75f);
+                            measured = MeasureTextForOverlay(g, text, textFontPx, Math.Max(1f, textRect.Width), textFormat);
+                            finalShrinkSteps++;
+                        }
+                    }
+                    else
+                    {
+                        text = null;
+                    }
+                }
+
+                drawRect = ResolveOverlayCollision(drawRect, imageRect, placedRects);
+                if (!string.IsNullOrWhiteSpace(text))
+                {
+                    textRect = RectangleF.Inflate(drawRect, -textInsetX, -textInsetY);
+                }
+
+                g.FillRectangle(fillBrush, drawRect);
+                g.DrawRectangle(borderPen, drawRect.X, drawRect.Y, drawRect.Width, drawRect.Height);
+
+                string badgeText = (i + 1).ToString();
+                var badgeSize = g.MeasureString(badgeText, badgeFont);
+                var badgeRect = new RectangleF(
+                    drawRect.X,
+                    Math.Max(imageRect.Top, drawRect.Y - badgeSize.Height - 2f),
+                    badgeSize.Width + 6f,
+                    badgeSize.Height + 2f);
+
+                g.FillRectangle(badgeBrush, badgeRect);
+                g.DrawRectangle(badgeBorder, badgeRect.X, badgeRect.Y, badgeRect.Width, badgeRect.Height);
+                g.DrawString(badgeText, badgeFont, textBrush, badgeRect.X + 3f, badgeRect.Y + 1f);
+
+                if (!string.IsNullOrWhiteSpace(text) && textRect.Width > 4f && textRect.Height > 4f)
+                {
+                    g.FillRectangle(textBackBrush, textRect);
+                    using var textFont = new Font("Segoe UI", textFontPx, FontStyle.Bold, GraphicsUnit.Pixel);
+                    g.DrawString(text, textFont, textBrush, textRect, textFormat);
+                }
+
+                placedRects.Add(drawRect);
+            }
+        }
+        finally
+        {
+            g.TextRenderingHint = priorHint;
+        }
+    }
+
+    private static SizeF MeasureTextForOverlay(Graphics g, string text, float fontPx, float maxWidth, StringFormat format)
+    {
+        using var font = new Font("Segoe UI", fontPx, FontStyle.Bold, GraphicsUnit.Pixel);
+        return g.MeasureString(text, font, new SizeF(Math.Max(1f, maxWidth), 10000f), format);
+    }
+
+    private static RectangleF ShiftRectIntoBounds(RectangleF rect, RectangleF bounds)
+    {
+        float width = Math.Min(rect.Width, bounds.Width);
+        float height = Math.Min(rect.Height, bounds.Height);
+        float x = rect.X;
+        float y = rect.Y;
+
+        if (x < bounds.X)
+            x = bounds.X;
+        if (y < bounds.Y)
+            y = bounds.Y;
+
+        if (x + width > bounds.Right)
+            x = bounds.Right - width;
+        if (y + height > bounds.Bottom)
+            y = bounds.Bottom - height;
+
+        return new RectangleF(x, y, width, height);
+    }
+
+    private static RectangleF ResolveOverlayCollision(RectangleF rect, RectangleF bounds, List<RectangleF> placedRects)
+    {
+        var baseRect = ShiftRectIntoBounds(rect, bounds);
+        if (!HasHeavyOverlayOverlap(baseRect, placedRects))
+            return baseRect;
+
+        float step = Math.Clamp(Math.Min(baseRect.Width, baseRect.Height) * 0.12f, 4f, 14f);
+        var directions = new (float dx, float dy)[]
+        {
+            (1f, 0f), (-1f, 0f), (0f, 1f), (0f, -1f),
+            (1f, 1f), (-1f, 1f), (1f, -1f), (-1f, -1f)
+        };
+
+        for (int ring = 1; ring <= 4; ring++)
+        {
+            foreach (var (dx, dy) in directions)
+            {
+                var shifted = new RectangleF(
+                    baseRect.X + (dx * step * ring),
+                    baseRect.Y + (dy * step * ring),
+                    baseRect.Width,
+                    baseRect.Height);
+                shifted = ShiftRectIntoBounds(shifted, bounds);
+                if (!HasHeavyOverlayOverlap(shifted, placedRects))
+                    return shifted;
+            }
+        }
+
+        return baseRect;
+    }
+
+    private static bool HasHeavyOverlayOverlap(RectangleF candidate, List<RectangleF> placedRects)
+    {
+        if (placedRects.Count == 0)
+            return false;
+
+        float candidateArea = Math.Max(1f, candidate.Width * candidate.Height);
+        int start = Math.Max(0, placedRects.Count - 80);
+
+        for (int i = start; i < placedRects.Count; i++)
+        {
+            var other = placedRects[i];
+            float overlapW = Math.Min(candidate.Right, other.Right) - Math.Max(candidate.Left, other.Left);
+            if (overlapW <= 0f)
+                continue;
+
+            float overlapH = Math.Min(candidate.Bottom, other.Bottom) - Math.Max(candidate.Top, other.Top);
+            if (overlapH <= 0f)
+                continue;
+
+            float overlapArea = overlapW * overlapH;
+            float otherArea = Math.Max(1f, other.Width * other.Height);
+            float overlapRatio = overlapArea / Math.Min(candidateArea, otherArea);
+            if (overlapRatio >= 0.42f)
+                return true;
+        }
+
+        return false;
     }
 
     private void PictureBox_MouseDown(object? sender, MouseEventArgs e)

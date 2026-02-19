@@ -1,96 +1,70 @@
 using System;
-using System.Drawing;
-using System.Drawing.Drawing2D;
-using System.Drawing.Imaging;
 using System.IO;
-using System.Linq;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Formats.Jpeg;
+using SixLabors.ImageSharp.PixelFormats;
+using SixLabors.ImageSharp.Processing;
+using ImageSharpImage = SixLabors.ImageSharp.Image;
+using ImageSharpSize = SixLabors.ImageSharp.Size;
 
 namespace SpeedExplorer;
 
 /// <summary>
 /// Handles image preparation for LLM vision models.
-/// Resizes large images to stay within pixel budget while maintaining aspect ratio.
+/// Always encodes output as JPEG to provide a consistent image payload.
 /// </summary>
 public static class LlmImageProcessor
 {
     /// <summary>
-    /// Resizes image for vision models to avoid 'payload too large' errors while maintaining visibility.
-    /// Targeted at ~2.36M pixels (equivalent to 1536x1536) while maintaining aspect ratio.
+    /// Resizes image for vision models to avoid payload issues while maintaining visibility.
+    /// Targeted at ~2.36M pixels (1536x1536 equivalent).
     /// </summary>
-    public static (byte[], LlmImageStats) PrepareImageForVision(string path)
+    public static (byte[], LlmImageStats) PrepareImageForVision(string path, long maxPixels = 1536L * 1536L, int jpegQuality = 85)
     {
         var stats = new LlmImageStats { Path = path };
+        if (maxPixels < 256L * 256L) maxPixels = 256L * 256L;
+        if (jpegQuality < 40) jpegQuality = 40;
+        if (jpegQuality > 95) jpegQuality = 95;
+
         try
         {
-            using (var img = Image.FromFile(path))
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using Image<Rgba32> image = ImageSharpImage.Load<Rgba32>(stream);
+            image.Mutate(static ctx => ctx.AutoOrient());
+
+            stats.OrigW = image.Width;
+            stats.OrigH = image.Height;
+
+            long currentPixels = (long)image.Width * image.Height;
+            if (currentPixels > maxPixels)
             {
-                stats.OrigW = img.Width;
-                stats.OrigH = img.Height;
-
-                const long maxPixels = 1536 * 1536;
-                long currentPixels = (long)img.Width * img.Height;
-                
-                // Only resize if exceeds pixel budget
-                if (currentPixels <= maxPixels)
-                {
-                    stats.NewW = img.Width;
-                    stats.NewH = img.Height;
-
-                    // Check if original is already a JPEG, otherwise re-encode to be sure it's optimized
-                    string ext = Path.GetExtension(path).ToLowerInvariant();
-                    if (ext == ".jpg" || ext == ".jpeg")
-                    {
-                        var bytes = File.ReadAllBytes(path);
-                        stats.Bytes = bytes.Length;
-                        return (bytes, stats);
-                    }
-                }
-
-                // Calculate scaling ratio based on total area
                 double ratio = Math.Sqrt((double)maxPixels / currentPixels);
-                if (ratio > 1.0) ratio = 1.0; // Never upscale
+                if (ratio > 1.0) ratio = 1.0;
 
-                int newWidth = (int)Math.Round(img.Width * ratio);
-                int newHeight = (int)Math.Round(img.Height * ratio);
-                
-                // Ensure we don't end up with 0 size due to rounding or extreme ratios
-                if (newWidth < 1) newWidth = 1;
-                if (newHeight < 1) newHeight = 1;
+                int newWidth = Math.Max(1, (int)Math.Round(image.Width * ratio));
+                int newHeight = Math.Max(1, (int)Math.Round(image.Height * ratio));
 
-                stats.NewW = newWidth;
-                stats.NewH = newHeight;
-
-                using (var newImg = new Bitmap(newWidth, newHeight))
-                using (var g = Graphics.FromImage(newImg))
+                image.Mutate(ctx => ctx.Resize(new ResizeOptions
                 {
-                    g.InterpolationMode = InterpolationMode.HighQualityBicubic;
-                    g.SmoothingMode = SmoothingMode.HighQuality;
-                    g.PixelOffsetMode = PixelOffsetMode.HighQuality;
-                    g.CompositingQuality = CompositingQuality.HighQuality;
-
-                    g.DrawImage(img, 0, 0, newWidth, newHeight);
-
-                    using (var ms = new MemoryStream())
-                    {
-                        // Save as high quality JPEG (OpenAI/LM Studio standard)
-                        var encoderParameters = new EncoderParameters(1);
-                        encoderParameters.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, 85L);
-                        var codec = ImageCodecInfo.GetImageEncoders().First(c => c.FormatID == ImageFormat.Jpeg.Guid);
-                        
-                        newImg.Save(ms, codec, encoderParameters);
-                        var bytes = ms.ToArray();
-                        stats.Bytes = bytes.Length;
-                        return (bytes, stats);
-                    }
-                }
+                    Size = new ImageSharpSize(newWidth, newHeight),
+                    Mode = ResizeMode.Max,
+                    Sampler = KnownResamplers.Lanczos3
+                }));
             }
+
+            stats.NewW = image.Width;
+            stats.NewH = image.Height;
+
+            using var ms = new MemoryStream();
+            image.Save(ms, new JpegEncoder { Quality = jpegQuality });
+            var bytes = ms.ToArray();
+            stats.Bytes = bytes.Length;
+            return (bytes, stats);
         }
         catch (Exception ex)
         {
             LlmDebugLogger.LogError($"Image preparation failed for {path}: {ex.Message}");
-            var bytes = File.ReadAllBytes(path);
-            stats.Bytes = bytes.Length;
-            return (bytes, stats);
+            throw new InvalidOperationException($"Image preparation failed for '{path}': {ex.Message}", ex);
         }
     }
 }

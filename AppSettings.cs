@@ -100,6 +100,7 @@ public class AppSettings
     public string LlmApiUrl { get; set; } = "http://localhost:1234/v1/chat/completions";
     public string LlmApiBaseUrl { get; set; } = "http://localhost:1234/api/v1/models"; // For /models
     public string LlmModelName { get; set; } = "qwen/qwen3-4b-thinking-2507";
+    public string LlmBatchVisionModelName { get; set; } = "";
     public int LlmMaxTokens { get; set; } = 4096;
     public double LlmTemperature { get; set; } = 0.3;
     
@@ -231,6 +232,10 @@ public class AppSettings
                     if (!settings.DriveColumnWidths.ContainsKey(kvp.Key) || settings.DriveColumnWidths[kvp.Key] < 50)
                         settings.DriveColumnWidths[kvp.Key] = kvp.Value;
                 }
+
+                // Migrate: new separate default model for batch vision tasks.
+                if (string.IsNullOrWhiteSpace(settings.LlmBatchVisionModelName))
+                    settings.LlmBatchVisionModelName = settings.LlmModelName;
                 
                 return settings;
             }

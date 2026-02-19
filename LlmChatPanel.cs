@@ -586,9 +586,19 @@ public class LlmChatPanel : Panel
 
         var currentDir = GetCurrentDirectory?.Invoke();
         bool chatMode = AppSettings.Current.ChatModeEnabled;
+        _llmService.ApiUrl = chatMode ? AppSettings.Current.LlmChatApiUrl : AppSettings.Current.LlmApiUrl;
 
         if (chatMode)
         {
+            IWin32Window ownerWindow = (IWin32Window?)FindForm() ?? this;
+            string? selectedModel = await _llmService.ResolveModelForTaskAsync(LlmUsageKind.Assistant, LlmTaskKind.Text, ownerWindow);
+            if (string.IsNullOrWhiteSpace(selectedModel))
+            {
+                _statusLabel.Text = "Model selection cancelled";
+                _statusLabel.ForeColor = Color.Orange;
+                return;
+            }
+
             // CHAT MODE
             _inputBox.Clear();
             AppendMessage("User", prompt, Color.SkyBlue);
@@ -611,7 +621,7 @@ public class LlmChatPanel : Panel
             var response = await _llmService.SendChatAsync(_chatHistory,
                 _taggingToggle.Checked, _searchToggle.Checked, 
                 _fullContextToggle.Checked, _thinkingToggle.Checked,
-                currentContext, currentDir);
+                currentContext, currentDir, selectedModel);
             
             _chatHistory.Add(new ChatMessage { Role = "assistant", Content = response });
 
@@ -683,6 +693,15 @@ public class LlmChatPanel : Panel
 
         try
         {
+            IWin32Window ownerWindow = (IWin32Window?)FindForm() ?? this;
+            string? selectedModel = await _llmService.ResolveModelForTaskAsync(LlmUsageKind.Assistant, LlmTaskKind.Text, ownerWindow);
+            if (string.IsNullOrWhiteSpace(selectedModel))
+            {
+                _statusLabel.Text = "Model selection cancelled";
+                _statusLabel.ForeColor = Color.Orange;
+                return;
+            }
+
             var files = new List<string>();
             try
             {
@@ -695,7 +714,7 @@ public class LlmChatPanel : Panel
 
             string jsonResponse = await _llmService.SendPromptAsync(prompt, fileContext, 
                 _fullContextToggle.Checked, _taggingToggle.Checked, 
-                _searchToggle.Checked, _thinkingToggle.Checked);
+                _searchToggle.Checked, _thinkingToggle.Checked, null, selectedModel);
                 
             var commands = LlmService.ParseCommands(jsonResponse);
 

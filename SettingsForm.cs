@@ -72,6 +72,7 @@ public class SettingsForm : Form
     private CheckBox _llmChatEnabledChk = null!; // New
     private TextBox _llmChatApiUrlBox = null!;   // New
     private ComboBox _llmModelComboBox = null!;
+    private ComboBox _llmBatchVisionModelComboBox = null!;
     private NumericUpDown _llmMaxTokensNum = null!;
     private NumericUpDown _llmTempNum = null!;
 
@@ -596,6 +597,21 @@ public class SettingsForm : Form
         
         panel.Controls.Add(modelPanel);
 
+        // Separate default model for batch image/vision work
+        var batchVisionModelPanel = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.LeftToRight, WrapContents = false };
+        batchVisionModelPanel.Controls.Add(CreateLabel(Localization.T("batch_vision_model_name"), new Point(0, Scale(5))));
+
+        _llmBatchVisionModelComboBox = new ComboBox
+        {
+            Width = Scale(200),
+            BackColor = Color.FromArgb(60, 60, 60),
+            ForeColor = Color.White,
+            FlatStyle = FlatStyle.Flat,
+            DropDownStyle = ComboBoxStyle.DropDown
+        };
+        batchVisionModelPanel.Controls.Add(_llmBatchVisionModelComboBox);
+        panel.Controls.Add(batchVisionModelPanel);
+
         // Max Tokens
         var tokenPanel = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.LeftToRight, WrapContents = false };
         tokenPanel.Controls.Add(CreateLabel(Localization.T("max_tokens"), new Point(0, Scale(5))));
@@ -958,6 +974,7 @@ public class SettingsForm : Form
         _llmChatEnabledChk.Checked = s.ChatModeEnabled;
         _llmChatApiUrlBox.Text = s.LlmChatApiUrl;
         _llmModelComboBox.Text = s.LlmModelName;
+        _llmBatchVisionModelComboBox.Text = s.LlmBatchVisionModelName;
         _llmMaxTokensNum.Value = Math.Clamp(s.LlmMaxTokens, 100, 32000);
         _llmTempNum.Value = (decimal)Math.Clamp(s.LlmTemperature, 0, 2.0);
 
@@ -1080,21 +1097,53 @@ public class SettingsForm : Form
         btn.Text = "Fetching...";
         try
         {
-            var service = new LlmService 
-            { 
-               ApiUrl = _llmApiUrlBox.Text.Trim() // Use current URL
-            };
-            
-            // Hacky parse of Base URL from chat URL if possible, strictly for models endpoint
-            // Usually http://localhost:1234/api/v0/chat/completions -> http://localhost:1234/api/v0
-            string baseUrl = service.ApiUrl.Replace("/chat/completions", "");
-            var models = await service.GetAvailableModelsAsync(baseUrl);
-            
+            var service = new LlmService { ApiUrl = _llmApiUrlBox.Text.Trim() };
+            var catalog = await service.GetModelCatalogAsync(_llmApiUrlBox.Text.Trim());
+            var models = catalog.AvailableModels.Select(m => m.Id).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            var visionModels = catalog.AvailableModels
+                .Where(m => m.IsVision)
+                .Select(m => m.Id)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            string currentAssistant = _llmModelComboBox.Text.Trim();
+            string currentBatchVision = _llmBatchVisionModelComboBox.Text.Trim();
+
             _llmModelComboBox.Items.Clear();
+            _llmBatchVisionModelComboBox.Items.Clear();
+
             if (models.Count > 0)
             {
                 _llmModelComboBox.Items.AddRange(models.ToArray());
+                if (!string.IsNullOrWhiteSpace(currentAssistant) &&
+                    !models.Contains(currentAssistant, StringComparer.OrdinalIgnoreCase))
+                {
+                    _llmModelComboBox.Items.Add(currentAssistant);
+                }
+
+                _llmModelComboBox.Text = string.IsNullOrWhiteSpace(currentAssistant) ? models[0] : currentAssistant;
                 _llmModelComboBox.DroppedDown = true;
+
+                if (visionModels.Count > 0)
+                {
+                    _llmBatchVisionModelComboBox.Items.AddRange(visionModels.ToArray());
+                    if (!string.IsNullOrWhiteSpace(currentBatchVision) &&
+                        !visionModels.Contains(currentBatchVision, StringComparer.OrdinalIgnoreCase))
+                    {
+                        _llmBatchVisionModelComboBox.Items.Add(currentBatchVision);
+                    }
+
+                    _llmBatchVisionModelComboBox.Text = string.IsNullOrWhiteSpace(currentBatchVision) ? visionModels[0] : currentBatchVision;
+                }
+                else
+                {
+                    if (!string.IsNullOrWhiteSpace(currentBatchVision))
+                    {
+                        _llmBatchVisionModelComboBox.Items.Add(currentBatchVision);
+                        _llmBatchVisionModelComboBox.Text = currentBatchVision;
+                    }
+                    MessageBox.Show("No vision-capable models were detected. Load a vision model in LM Studio and fetch again.", "Fetch Models", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
             }
             else
             {
@@ -1139,6 +1188,7 @@ public class SettingsForm : Form
         s.ChatModeEnabled = _llmChatEnabledChk.Checked;
         s.LlmChatApiUrl = _llmChatApiUrlBox.Text.Trim();
         s.LlmModelName = _llmModelComboBox.Text.Trim();
+        s.LlmBatchVisionModelName = _llmBatchVisionModelComboBox.Text.Trim();
         s.LlmMaxTokens = (int)_llmMaxTokensNum.Value;
         s.LlmTemperature = (double)_llmTempNum.Value;
 

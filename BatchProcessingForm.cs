@@ -283,9 +283,45 @@ public class BatchProcessingForm : Form
         Log(Localization.T("batch_starting"));
 
         var settings = AppSettings.Current;
+        string batchApiUrl = LlmService.GetCompletionsApiUrl(settings.LlmApiUrl, settings.LlmChatApiUrl);
+        _llmService.ApiUrl = batchApiUrl;
+        if (!string.Equals(batchApiUrl, settings.LlmApiUrl, StringComparison.OrdinalIgnoreCase))
+        {
+            Log($"Using batch API endpoint: {batchApiUrl}");
+        }
 
         try
         {
+            bool hasImageFiles = _files.Any(FileSystemService.IsImageFile);
+            bool hasNonImageFiles = _files.Any(f => !FileSystemService.IsImageFile(f));
+
+            string? batchVisionModel = null;
+            string? batchTextModel = null;
+
+            if (_rbTagging.Checked || hasImageFiles)
+            {
+                Log("Resolving vision model...");
+                batchVisionModel = await _llmService.ResolveModelForTaskAsync(LlmUsageKind.Batch, LlmTaskKind.Vision, this);
+                if (string.IsNullOrWhiteSpace(batchVisionModel))
+                {
+                    Log("Cancelled: no vision model selected.");
+                    return;
+                }
+                Log($"Vision model: {batchVisionModel}");
+            }
+
+            if (!_rbTagging.Checked && hasNonImageFiles)
+            {
+                Log("Resolving text model...");
+                batchTextModel = await _llmService.ResolveModelForTaskAsync(LlmUsageKind.Batch, LlmTaskKind.Text, this);
+                if (string.IsNullOrWhiteSpace(batchTextModel))
+                {
+                    Log("Cancelled: no text model selected.");
+                    return;
+                }
+                Log($"Text model: {batchTextModel}");
+            }
+
             for (int i = 0; i < _files.Count; i++)
             {
                 if (_cts.Token.IsCancellationRequested)
@@ -302,26 +338,34 @@ public class BatchProcessingForm : Form
 
                 try
                 {
-                    // Refresh settings for each call just in case
-                    _llmService.ApiUrl = settings.LlmApiUrl;
+                    // Keep batch processing pinned to completions endpoint (not chat history endpoint).
+                    _llmService.ApiUrl = batchApiUrl;
                     
-                    var imagePaths = new List<string> { file };
+                    bool isImageFile = FileSystemService.IsImageFile(file);
+                    List<string>? imagePaths = isImageFile ? new List<string> { file } : null;
                     string dir = Path.GetDirectoryName(file)!;
 
                     if (_rbTagging.Checked)
                     {
                         // TAGGING MODE
-                        var tags = await _llmService.GetImageTagsAsync(prompt, file);
-                        if (tags.Count > 0)
+                        if (!isImageFile)
                         {
-                            Log($"  -> Generated {tags.Count} tags: {string.Join(", ", tags)}");
-                            // Apply tags
-                            TagManager.Instance.UpdateTagsBatch(new[] { file }, tags, Enumerable.Empty<string>());
-                            Log($"  -> Tags applied.");
+                            Log("  -> Skipped (not an image file).");
                         }
                         else
                         {
-                            Log("  -> No tags generated.");
+                            var tags = await _llmService.GetImageTagsAsync(prompt, file, batchVisionModel);
+                            if (tags.Count > 0)
+                            {
+                                Log($"  -> Generated {tags.Count} tags: {string.Join(", ", tags)}");
+                                // Apply tags
+                                TagManager.Instance.UpdateTagsBatch(new[] { file }, tags, Enumerable.Empty<string>());
+                                Log($"  -> Tags applied.");
+                            }
+                            else
+                            {
+                                Log("  -> No tags generated.");
+                            }
                         }
                     }
                     else
@@ -333,35 +377,47 @@ public class BatchProcessingForm : Form
                             $"\n\nTarget File: {fileName}" +
                             $"\nIMPORTANT: If you create a text file for a description, you MUST name it '{Path.GetFileNameWithoutExtension(fileName)}_desc.txt'.";
 
-                        string response = await _llmService.SendPromptAsync(
-                            augmentedPrompt, 
-                            dir, 
-                            false, // fullContext off
-                            settings.LlmTaggingEnabled, 
-                            settings.LlmSearchEnabled, 
-                            settings.LlmThinkingEnabled,
-                            imagePaths 
-                        );
+                        string? selectedModel = isImageFile
+                            ? (batchVisionModel ?? batchTextModel)
+                            : (batchTextModel ?? batchVisionModel);
 
-                        var commands = LlmService.ParseCommands(response);
-
-                        if (commands.Count > 0)
+                        if (string.IsNullOrWhiteSpace(selectedModel))
                         {
-                            Log($"  -> Executing {commands.Count} commands...");
-                            var executor = new LlmExecutor(dir, _ownerHandle);
-                            
-                            // HACK: Pre-pend a 'select_files' command for this file to ensure context is set!
-                            commands.Insert(0, new LlmCommand { 
-                                Cmd = "select_files", 
-                                Files = new List<string> { fileName } 
-                            });
-
-                            var ops = executor.ExecuteCommands(commands);
-                            Log($"  -> Success. {ops.Count} operations recorded.");
+                            Log("  -> ERROR: No model available for this file type.");
                         }
                         else
                         {
-                            Log("  -> No commands returned.");
+                            string response = await _llmService.SendPromptAsync(
+                                augmentedPrompt, 
+                                dir, 
+                                false, // fullContext off
+                                settings.LlmTaggingEnabled, 
+                                settings.LlmSearchEnabled, 
+                                settings.LlmThinkingEnabled,
+                                imagePaths,
+                                selectedModel
+                            );
+
+                            var commands = LlmService.ParseCommands(response);
+
+                            if (commands.Count > 0)
+                            {
+                                Log($"  -> Executing {commands.Count} commands...");
+                                var executor = new LlmExecutor(dir, _ownerHandle);
+                                
+                                // HACK: Pre-pend a 'select_files' command for this file to ensure context is set!
+                                commands.Insert(0, new LlmCommand { 
+                                    Cmd = "select_files", 
+                                    Files = new List<string> { fileName } 
+                                });
+
+                                var ops = executor.ExecuteCommands(commands);
+                                Log($"  -> Success. {ops.Count} operations recorded.");
+                            }
+                            else
+                            {
+                                Log("  -> No commands returned.");
+                            }
                         }
                     }
                 }
