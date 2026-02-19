@@ -1105,10 +1105,9 @@ public class LlmService
 
             if (!response.IsSuccessStatusCode &&
                 isVisionRequest &&
-                (IsModelUnloadedError(responseText) || IsFailedToProcessImageError(response.StatusCode, responseText)))
+                IsModelUnloadedError(responseText))
             {
-                string reason = IsModelUnloadedError(responseText) ? "model-unloaded" : "failed-to-process-image";
-                if (await TryRecoverVisionModelAsync(requestUrl, model, $"SendPrompt primary {reason}"))
+                if (await TryRecoverVisionModelAsync(requestUrl, model, "SendPrompt primary model-unloaded"))
                 {
                     using var recoveryContent = new StringContent(requestJson, Encoding.UTF8, "application/json");
                     response = await _httpClient.PostAsync(requestUrl, recoveryContent);
@@ -1129,10 +1128,9 @@ public class LlmService
                 responseText = await response.Content.ReadAsStringAsync();
 
                 if (!response.IsSuccessStatusCode &&
-                    (IsModelUnloadedError(responseText) || IsFailedToProcessImageError(response.StatusCode, responseText)))
+                    IsModelUnloadedError(responseText))
                 {
-                    string reason = IsModelUnloadedError(responseText) ? "model-unloaded" : "failed-to-process-image";
-                    if (await TryRecoverVisionModelAsync(requestUrl, model, $"SendPrompt retry {reason}"))
+                    if (await TryRecoverVisionModelAsync(requestUrl, model, "SendPrompt retry model-unloaded"))
                     {
                         using var retryRecoveryContent = new StringContent(retryJson, Encoding.UTF8, "application/json");
                         response = await _httpClient.PostAsync(requestUrl, retryRecoveryContent);
@@ -1233,10 +1231,9 @@ public class LlmService
             var responseText = await response.Content.ReadAsStringAsync();
 
             if (!response.IsSuccessStatusCode &&
-                (IsModelUnloadedError(responseText) || IsFailedToProcessImageError(response.StatusCode, responseText)))
+                IsModelUnloadedError(responseText))
             {
-                string reason = IsModelUnloadedError(responseText) ? "model-unloaded" : "failed-to-process-image";
-                if (await TryRecoverVisionModelAsync(requestUrl, model, $"GetImageTags primary {reason}"))
+                if (await TryRecoverVisionModelAsync(requestUrl, model, "GetImageTags primary model-unloaded"))
                 {
                     using var recoveryContent = new StringContent(requestJson, Encoding.UTF8, "application/json");
                     response = await _httpClient.PostAsync(requestUrl, recoveryContent);
@@ -1278,10 +1275,9 @@ public class LlmService
                 responseText = await response.Content.ReadAsStringAsync();
 
                 if (!response.IsSuccessStatusCode &&
-                    (IsModelUnloadedError(responseText) || IsFailedToProcessImageError(response.StatusCode, responseText)))
+                    IsModelUnloadedError(responseText))
                 {
-                    string reason = IsModelUnloadedError(responseText) ? "model-unloaded" : "failed-to-process-image";
-                    if (await TryRecoverVisionModelAsync(requestUrl, model, $"GetImageTags retry {reason}"))
+                    if (await TryRecoverVisionModelAsync(requestUrl, model, "GetImageTags retry model-unloaded"))
                     {
                         using var retryRecoveryContent = new StringContent(requestJson, Encoding.UTF8, "application/json");
                         response = await _httpClient.PostAsync(requestUrl, retryRecoveryContent);
@@ -1487,8 +1483,7 @@ public class LlmService
                     var fallbackResponse = await _httpClient.PostAsync(requestUrl, fallbackContent, fallbackCts.Token);
                     string fallbackResponseText = await fallbackResponse.Content.ReadAsStringAsync();
 
-                    if (!fallbackResponse.IsSuccessStatusCode &&
-                        (IsModelUnloadedError(fallbackResponseText) || IsFailedToProcessImageError(fallbackResponse.StatusCode, fallbackResponseText)))
+                    if (!fallbackResponse.IsSuccessStatusCode && IsModelUnloadedError(fallbackResponseText))
                     {
                         if (await TryReloadModelAsync($"fallback {attempt.MaxPixels}px"))
                         {
@@ -1566,8 +1561,7 @@ public class LlmService
             var response = await _httpClient.PostAsync(requestUrl, content, requestCts.Token);
             var responseText = await response.Content.ReadAsStringAsync();
 
-            if (!response.IsSuccessStatusCode &&
-                (IsModelUnloadedError(responseText) || IsFailedToProcessImageError(response.StatusCode, responseText)))
+            if (!response.IsSuccessStatusCode && IsModelUnloadedError(responseText))
             {
                 if (await TryReloadModelAsync("primary"))
                 {
@@ -1581,6 +1575,11 @@ public class LlmService
             if (!response.IsSuccessStatusCode &&
                 IsFailedToProcessImageError(response.StatusCode, responseText))
             {
+                LlmDebugLogger.LogExecution("ExtractImageText early fallback without response_format (primary failed to process image)", success: false);
+                var earlyFallback = await RunFallbackWithoutSchemaAsync(1536L * 1536L, 85, "primary failed_to_process_image");
+                if (earlyFallback != null)
+                    return earlyFallback;
+
                 LlmDebugLogger.LogExecution("ExtractImageText retry with aggressive resize/compression", success: false);
                 (requestJson, stats) = BuildRequest(1024L * 1024L, 70);
                 LlmDebugLogger.LogRequest(Path.GetDirectoryName(imagePath) ?? "", userPrompt, systemPrompt, requestJson, new[] { imagePath }, stats);
@@ -1590,8 +1589,7 @@ public class LlmService
                 response = await _httpClient.PostAsync(requestUrl, retryContent, retryCts.Token);
                 responseText = await response.Content.ReadAsStringAsync();
 
-                if (!response.IsSuccessStatusCode &&
-                    (IsModelUnloadedError(responseText) || IsFailedToProcessImageError(response.StatusCode, responseText)))
+                if (!response.IsSuccessStatusCode && IsModelUnloadedError(responseText))
                 {
                     if (await TryReloadModelAsync("retry-1"))
                     {
@@ -1614,8 +1612,7 @@ public class LlmService
                     response = await _httpClient.PostAsync(requestUrl, retryContent2, retryCts2.Token);
                     responseText = await response.Content.ReadAsStringAsync();
 
-                    if (!response.IsSuccessStatusCode &&
-                        (IsModelUnloadedError(responseText) || IsFailedToProcessImageError(response.StatusCode, responseText)))
+                    if (!response.IsSuccessStatusCode && IsModelUnloadedError(responseText))
                     {
                         if (await TryReloadModelAsync("retry-2"))
                         {

@@ -5,7 +5,9 @@ using System.Drawing.Drawing2D;
 using System.Drawing.Text;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using System.Windows.Forms;
 using System.Runtime.InteropServices;
 
@@ -43,6 +45,8 @@ public class ImageViewerForm : Form
     private readonly Label _aiStatusLabel;
     private readonly TextBox _targetLanguageBox;
     private readonly CheckBox _overlayToggle;
+    private readonly CheckBox _reuseSavedOcrCheck;
+    private readonly CheckBox _showSavedTranslationCheck;
     private readonly Button _prevBtn;
     private readonly Button _nextBtn;
     private readonly Button _zoomOutBtn;
@@ -70,15 +74,34 @@ public class ImageViewerForm : Form
     private bool _aiBusy;
     private string? _ocrImagePath;
     private LlmImageTextResult? _lastOcrResult;
+    private LlmTextTranslationResult? _savedTranslationForCurrentImage;
     private List<string> _lastTranslations = new();
     private readonly List<OverlayTextBlock> _overlayBlocks = new();
+    private bool _suppressSavedTranslationToggleEvent;
 
     private sealed class OverlayTextBlock
     {
+        public int SourceIndex { get; set; }
         public string SourceText { get; set; } = "";
         public string DisplayText { get; set; } = "";
         public RectangleF NormalizedRect { get; set; }
         public float NormalizedFontSize { get; set; }
+    }
+
+    private sealed class OcrCacheEnvelope
+    {
+        public string SourcePath { get; set; } = "";
+        public long SourceLength { get; set; }
+        public long SourceLastWriteUtcTicks { get; set; }
+        public long SavedUtcTicks { get; set; }
+        public string ModelId { get; set; } = "";
+        public LlmImageTextResult? Result { get; set; }
+        public string TranslationTargetLanguage { get; set; } = "";
+        public string TranslationSourceLanguage { get; set; } = "";
+        public string TranslationModelId { get; set; } = "";
+        public string TranslationFullText { get; set; } = "";
+        public List<string> TranslationLines { get; set; } = new();
+        public long TranslationSavedUtcTicks { get; set; }
     }
     
     private static readonly Color BackColor_Dark = Color.FromArgb(20, 20, 20);
@@ -298,6 +321,39 @@ public class ImageViewerForm : Form
         aiToolsRow.Controls.Add(_copyResultBtn);
         aiToolsRow.Controls.Add(_clearOverlayBtn);
 
+        var cacheRow = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            Height = Scale(24),
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false,
+            BackColor = Color.Transparent,
+            Margin = Padding.Empty,
+            Padding = Padding.Empty
+        };
+        _reuseSavedOcrCheck = new CheckBox
+        {
+            AutoSize = true,
+            Text = "Use saved OCR if available",
+            Checked = true,
+            ForeColor = ForeColor_Dark,
+            Font = new Font("Segoe UI", 8),
+            BackColor = Color.Transparent,
+            Margin = new Padding(0, Scale(3), Scale(10), 0)
+        };
+        _showSavedTranslationCheck = new CheckBox
+        {
+            AutoSize = true,
+            Text = "Show saved translation",
+            Checked = false,
+            ForeColor = ForeColor_Dark,
+            Font = new Font("Segoe UI", 8),
+            BackColor = Color.Transparent,
+            Margin = new Padding(0, Scale(3), 0, 0)
+        };
+        cacheRow.Controls.Add(_reuseSavedOcrCheck);
+        cacheRow.Controls.Add(_showSavedTranslationCheck);
+
         _aiStatusLabel = new Label
         {
             Dock = DockStyle.Top,
@@ -324,6 +380,7 @@ public class ImageViewerForm : Form
 
         _aiPanel.Controls.Add(_aiOutputBox);
         _aiPanel.Controls.Add(_aiStatusLabel);
+        _aiPanel.Controls.Add(cacheRow);
         _aiPanel.Controls.Add(aiToolsRow);
         _aiPanel.Controls.Add(langRow);
         _aiPanel.Controls.Add(aiActionRow);
@@ -332,6 +389,12 @@ public class ImageViewerForm : Form
         _translateBtn.Click += async (s, e) => await RunViewerOcrAsync(true);
         _tagBtn.Click += async (s, e) => await RunViewerTaggingAsync();
         _overlayToggle.CheckedChanged += (s, e) => _pictureBox.Invalidate();
+        _reuseSavedOcrCheck.CheckedChanged += (s, e) =>
+        {
+            if (_reuseSavedOcrCheck.Checked)
+                TryApplySavedOcrForCurrentImage(allowStatusUpdate: true);
+        };
+        _showSavedTranslationCheck.CheckedChanged += (s, e) => ApplySavedTranslationToggleForCurrentImage();
         _clearOverlayBtn.Click += (s, e) =>
         {
             _overlayBlocks.Clear();
@@ -707,6 +770,8 @@ public class ImageViewerForm : Form
         _tagBtn.Enabled = !busy;
         _targetLanguageBox.Enabled = !busy;
         _overlayToggle.Enabled = !busy;
+        _reuseSavedOcrCheck.Enabled = !busy;
+        _showSavedTranslationCheck.Enabled = !busy;
         _clearOverlayBtn.Enabled = !busy;
         _copyResultBtn.Enabled = !busy;
         _aiStatusLabel.Text = statusText;
@@ -717,6 +782,309 @@ public class ImageViewerForm : Form
     {
         _llmService.ApiUrl = LlmService.GetCompletionsApiUrl(_settings.LlmApiUrl, null);
         return await _llmService.ResolveModelForTaskAsync(LlmUsageKind.Assistant, LlmTaskKind.Vision, this);
+    }
+
+    private static string GetOcrOutputDirectory()
+        => Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "OCR_output");
+
+    private static string GetOcrCachePath(string imagePath)
+    {
+        string normalized = Path.GetFullPath(imagePath).Trim().ToLowerInvariant();
+        using var sha = SHA256.Create();
+        var hashBytes = sha.ComputeHash(Encoding.UTF8.GetBytes(normalized));
+        string hash = Convert.ToHexString(hashBytes);
+        return Path.Combine(GetOcrOutputDirectory(), $"{hash}.json");
+    }
+
+    private static bool TryGetSourceStamp(string imagePath, out long length, out long lastWriteUtcTicks)
+    {
+        length = 0;
+        lastWriteUtcTicks = 0;
+
+        try
+        {
+            var info = new FileInfo(imagePath);
+            if (!info.Exists)
+                return false;
+
+            length = info.Length;
+            lastWriteUtcTicks = info.LastWriteTimeUtc.Ticks;
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static OcrCacheEnvelope? TryReadOcrEnvelopeUnchecked(string cachePath)
+    {
+        try
+        {
+            if (!File.Exists(cachePath))
+                return null;
+
+            string json = File.ReadAllText(cachePath);
+            var envelope = JsonSerializer.Deserialize<OcrCacheEnvelope>(json);
+            if (envelope == null)
+                return null;
+
+            envelope.TranslationLines ??= new List<string>();
+            return envelope;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static bool TryLoadSavedOcrEnvelope(string imagePath, out OcrCacheEnvelope? envelope)
+    {
+        envelope = null;
+
+        if (!TryGetSourceStamp(imagePath, out long srcLength, out long srcTicks))
+            return false;
+
+        string cachePath = GetOcrCachePath(imagePath);
+        var loaded = TryReadOcrEnvelopeUnchecked(cachePath);
+        if (loaded?.Result == null)
+            return false;
+
+        if (loaded.SourceLength != srcLength || loaded.SourceLastWriteUtcTicks != srcTicks)
+            return false;
+
+        if (string.IsNullOrWhiteSpace(loaded.Result.FullText) && (loaded.Result.Blocks == null || loaded.Result.Blocks.Count == 0))
+            return false;
+
+        loaded.Result.Blocks ??= new List<LlmImageTextBlock>();
+        loaded.TranslationLines ??= new List<string>();
+        envelope = loaded;
+        return true;
+    }
+
+    private static bool TryBuildSavedTranslation(OcrCacheEnvelope envelope, out LlmTextTranslationResult? translation)
+    {
+        translation = null;
+        var lines = envelope.TranslationLines ?? new List<string>();
+        bool hasLines = lines.Any(t => !string.IsNullOrWhiteSpace(t));
+        bool hasFull = !string.IsNullOrWhiteSpace(envelope.TranslationFullText);
+        if (!hasLines && !hasFull)
+            return false;
+
+        var normalized = lines
+            .Where(t => !string.IsNullOrWhiteSpace(t))
+            .Select(t => t.Trim())
+            .ToList();
+
+        translation = new LlmTextTranslationResult
+        {
+            TargetLanguage = string.IsNullOrWhiteSpace(envelope.TranslationTargetLanguage) ? "Unknown" : envelope.TranslationTargetLanguage,
+            TranslatedFullText = envelope.TranslationFullText ?? "",
+            Translations = normalized
+        };
+
+        if (translation.Translations.Count == 0 && !string.IsNullOrWhiteSpace(translation.TranslatedFullText))
+            translation.Translations = new List<string> { translation.TranslatedFullText };
+        if (string.IsNullOrWhiteSpace(translation.TranslatedFullText) && translation.Translations.Count > 0)
+            translation.TranslatedFullText = string.Join(Environment.NewLine, translation.Translations);
+
+        return true;
+    }
+
+    private static bool TryLoadSavedOcrResult(string imagePath, out LlmImageTextResult? ocr, out string cachedModel)
+    {
+        ocr = null;
+        cachedModel = "";
+        if (!TryLoadSavedOcrEnvelope(imagePath, out var envelope) || envelope?.Result == null)
+            return false;
+
+        ocr = envelope.Result;
+        cachedModel = envelope.ModelId ?? "";
+        return true;
+    }
+
+    private static bool TryLoadSavedTranslationResult(string imagePath, out LlmTextTranslationResult? translation)
+    {
+        translation = null;
+        if (!TryLoadSavedOcrEnvelope(imagePath, out var envelope) || envelope == null)
+            return false;
+
+        return TryBuildSavedTranslation(envelope, out translation);
+    }
+
+    private static void SaveOcrResultToCache(string imagePath, string? modelId, LlmImageTextResult ocr)
+    {
+        if (ocr == null)
+            return;
+
+        if (!TryGetSourceStamp(imagePath, out long srcLength, out long srcTicks))
+            return;
+
+        try
+        {
+            Directory.CreateDirectory(GetOcrOutputDirectory());
+            string cachePath = GetOcrCachePath(imagePath);
+            var envelope = TryReadOcrEnvelopeUnchecked(cachePath) ?? new OcrCacheEnvelope();
+
+            envelope.SourcePath = Path.GetFullPath(imagePath);
+            envelope.SourceLength = srcLength;
+            envelope.SourceLastWriteUtcTicks = srcTicks;
+            envelope.SavedUtcTicks = DateTime.UtcNow.Ticks;
+            if (!string.IsNullOrWhiteSpace(modelId))
+                envelope.ModelId = modelId!;
+            envelope.Result = ocr;
+            envelope.TranslationLines ??= new List<string>();
+
+            string json = JsonSerializer.Serialize(envelope, new JsonSerializerOptions
+            {
+                WriteIndented = false
+            });
+            File.WriteAllText(cachePath, json);
+        }
+        catch (Exception ex)
+        {
+            LlmDebugLogger.LogError($"Failed to save OCR cache for '{imagePath}': {ex.Message}");
+        }
+    }
+
+    private static void SaveTranslationToCache(string imagePath, string? modelId, LlmImageTextResult ocr, LlmTextTranslationResult translation)
+    {
+        if (ocr == null || translation == null)
+            return;
+
+        if (!TryGetSourceStamp(imagePath, out long srcLength, out long srcTicks))
+            return;
+
+        try
+        {
+            Directory.CreateDirectory(GetOcrOutputDirectory());
+            string cachePath = GetOcrCachePath(imagePath);
+            var envelope = TryReadOcrEnvelopeUnchecked(cachePath) ?? new OcrCacheEnvelope();
+
+            envelope.SourcePath = Path.GetFullPath(imagePath);
+            envelope.SourceLength = srcLength;
+            envelope.SourceLastWriteUtcTicks = srcTicks;
+            envelope.SavedUtcTicks = DateTime.UtcNow.Ticks;
+            if (!string.IsNullOrWhiteSpace(modelId))
+            {
+                envelope.ModelId = modelId!;
+                envelope.TranslationModelId = modelId!;
+            }
+            envelope.Result = ocr;
+            envelope.TranslationTargetLanguage = translation.TargetLanguage ?? "";
+            envelope.TranslationSourceLanguage = ocr.DetectedLanguage ?? "";
+            envelope.TranslationFullText = translation.TranslatedFullText ?? "";
+            envelope.TranslationLines = translation.Translations?
+                .Where(t => !string.IsNullOrWhiteSpace(t))
+                .Select(t => t.Trim())
+                .ToList() ?? new List<string>();
+            envelope.TranslationSavedUtcTicks = DateTime.UtcNow.Ticks;
+
+            if (string.IsNullOrWhiteSpace(envelope.TranslationFullText) && envelope.TranslationLines.Count > 0)
+                envelope.TranslationFullText = string.Join(Environment.NewLine, envelope.TranslationLines);
+
+            string json = JsonSerializer.Serialize(envelope, new JsonSerializerOptions
+            {
+                WriteIndented = false
+            });
+            File.WriteAllText(cachePath, json);
+        }
+        catch (Exception ex)
+        {
+            LlmDebugLogger.LogError($"Failed to save translation cache for '{imagePath}': {ex.Message}");
+        }
+    }
+
+    private void SetShowSavedTranslationChecked(bool value)
+    {
+        _suppressSavedTranslationToggleEvent = true;
+        try
+        {
+            _showSavedTranslationCheck.Checked = value;
+        }
+        finally
+        {
+            _suppressSavedTranslationToggleEvent = false;
+        }
+    }
+
+    private void TryApplySavedOcrForCurrentImage(bool allowStatusUpdate)
+    {
+        string? imagePath = GetCurrentImagePath();
+        if (string.IsNullOrWhiteSpace(imagePath) || !File.Exists(imagePath))
+            return;
+        if (!_reuseSavedOcrCheck.Checked)
+            return;
+
+        if (!TryLoadSavedOcrEnvelope(imagePath, out var envelope) || envelope?.Result == null)
+        {
+            _savedTranslationForCurrentImage = null;
+            return;
+        }
+
+        _ocrImagePath = imagePath;
+        _lastOcrResult = envelope.Result;
+        _lastTranslations = new List<string>();
+        _savedTranslationForCurrentImage = TryBuildSavedTranslation(envelope, out var savedTranslation) ? savedTranslation : null;
+
+        SetOverlayFromOcrResult(_lastOcrResult, null);
+        _aiOutputBox.Text = RenderOcrResult(_lastOcrResult);
+        _aiOutputBox.AppendText(Environment.NewLine + Environment.NewLine + "[Loaded from OCR_output cache]");
+
+        if (_savedTranslationForCurrentImage != null && _showSavedTranslationCheck.Checked)
+        {
+            _lastTranslations = _savedTranslationForCurrentImage.Translations?.ToList() ?? new List<string>();
+            ApplyTranslationsToOverlay(_lastTranslations);
+            _aiOutputBox.Text = RenderTranslatedResult(_lastOcrResult, _savedTranslationForCurrentImage);
+            _aiOutputBox.AppendText(Environment.NewLine + Environment.NewLine + "[Loaded from OCR_output cache]");
+
+            if (allowStatusUpdate && !_aiBusy)
+                _aiStatusLabel.Text = $"Loaded OCR + translation ({_savedTranslationForCurrentImage.TargetLanguage})";
+        }
+        else if (allowStatusUpdate && !_aiBusy)
+        {
+            _aiStatusLabel.Text = _savedTranslationForCurrentImage == null
+                ? "Loaded OCR from cache"
+                : $"Loaded OCR from cache (saved translation: {_savedTranslationForCurrentImage.TargetLanguage})";
+        }
+    }
+
+    private void ApplySavedTranslationToggleForCurrentImage()
+    {
+        if (_suppressSavedTranslationToggleEvent || _aiBusy)
+            return;
+        if (_lastOcrResult == null)
+            return;
+
+        if (_showSavedTranslationCheck.Checked)
+        {
+            if (_savedTranslationForCurrentImage == null)
+            {
+                string? imagePath = GetCurrentImagePath();
+                if (!string.IsNullOrWhiteSpace(imagePath))
+                    TryLoadSavedTranslationResult(imagePath, out _savedTranslationForCurrentImage);
+            }
+
+            if (_savedTranslationForCurrentImage == null)
+            {
+                _aiStatusLabel.Text = "No saved translation for this image";
+                SetShowSavedTranslationChecked(false);
+                return;
+            }
+
+            _lastTranslations = _savedTranslationForCurrentImage.Translations?.ToList() ?? new List<string>();
+            ApplyTranslationsToOverlay(_lastTranslations);
+            _aiOutputBox.Text = RenderTranslatedResult(_lastOcrResult, _savedTranslationForCurrentImage);
+            _aiOutputBox.AppendText(Environment.NewLine + Environment.NewLine + "[Loaded from OCR_output cache]");
+            _aiStatusLabel.Text = $"Showing saved translation ({_savedTranslationForCurrentImage.TargetLanguage})";
+            return;
+        }
+
+        _lastTranslations = new List<string>();
+        SetOverlayFromOcrResult(_lastOcrResult, null);
+        _aiOutputBox.Text = RenderOcrResult(_lastOcrResult);
+        _aiOutputBox.AppendText(Environment.NewLine + Environment.NewLine + "[Loaded from OCR_output cache]");
+        _aiStatusLabel.Text = "Showing saved OCR text";
     }
 
     private async Task RunViewerOcrAsync(bool withTranslation)
@@ -730,25 +1098,79 @@ public class ImageViewerForm : Form
 
         try
         {
+            LlmImageTextResult? ocr = null;
+            string? model = null;
+            bool fromInMemoryCache = _lastOcrResult != null &&
+                string.Equals(_ocrImagePath, imagePath, StringComparison.OrdinalIgnoreCase);
+            bool fromSavedCache = false;
+            string savedCacheModel = "";
+
+            if (fromInMemoryCache)
+            {
+                ocr = _lastOcrResult;
+                _aiStatusLabel.Text = "Using in-memory OCR cache...";
+            }
+            else if (_reuseSavedOcrCheck.Checked && TryLoadSavedOcrResult(imagePath, out var savedOcr, out savedCacheModel))
+            {
+                ocr = savedOcr;
+                fromSavedCache = ocr != null;
+                LlmDebugLogger.LogExecution($"OCR disk cache hit: {Path.GetFileName(imagePath)}");
+                if (fromSavedCache)
+                {
+                    _ocrImagePath = imagePath;
+                    _lastOcrResult = ocr;
+                    TryLoadSavedTranslationResult(imagePath, out _savedTranslationForCurrentImage);
+                    _aiStatusLabel.Text = string.IsNullOrWhiteSpace(savedCacheModel)
+                        ? "Loaded OCR from disk cache..."
+                        : $"Loaded OCR cache ({savedCacheModel})...";
+                }
+            }
+            else if (_reuseSavedOcrCheck.Checked)
+            {
+                LlmDebugLogger.LogExecution($"OCR disk cache miss: {Path.GetFileName(imagePath)}");
+            }
+
+            // OCR-only action can skip model resolution entirely when cache is available.
+            if (ocr != null && !withTranslation)
+            {
+                _ocrImagePath = imagePath;
+                _lastOcrResult = ocr;
+                _lastTranslations = new List<string>();
+                SetOverlayFromOcrResult(ocr, null);
+                _aiOutputBox.Text = RenderOcrResult(ocr);
+                if (fromSavedCache)
+                    _aiOutputBox.AppendText(Environment.NewLine + Environment.NewLine + "[Loaded from OCR_output cache]");
+
+                SetAiBusy(false, fromSavedCache
+                    ? $"OCR loaded from cache ({ocr.Blocks.Count} blocks)"
+                    : $"OCR loaded from memory ({ocr.Blocks.Count} blocks)");
+                return;
+            }
+
+            if (withTranslation && ocr != null && _savedTranslationForCurrentImage != null)
+            {
+                string requestedTarget = string.IsNullOrWhiteSpace(_targetLanguageBox.Text) ? "English" : _targetLanguageBox.Text.Trim();
+                if (string.Equals(_savedTranslationForCurrentImage.TargetLanguage, requestedTarget, StringComparison.OrdinalIgnoreCase))
+                {
+                    _lastTranslations = _savedTranslationForCurrentImage.Translations?.ToList() ?? new List<string>();
+                    ApplyTranslationsToOverlay(_lastTranslations);
+                    _aiOutputBox.Text = RenderTranslatedResult(ocr, _savedTranslationForCurrentImage);
+                    _aiOutputBox.AppendText(Environment.NewLine + Environment.NewLine + "[Loaded translation from OCR_output cache]");
+                    SetShowSavedTranslationChecked(true);
+                    SetAiBusy(false, $"Translation loaded from cache ({_savedTranslationForCurrentImage.TargetLanguage})");
+                    return;
+                }
+            }
+
             SetAiBusy(true, "Resolving model...");
-            string? model = await EnsureVisionModelAsync();
+            model = await EnsureVisionModelAsync();
             if (string.IsNullOrWhiteSpace(model))
             {
                 SetAiBusy(false, "Model selection cancelled");
                 return;
             }
 
-            LlmImageTextResult? ocr = null;
-            bool hasCachedOcr = withTranslation &&
-                _lastOcrResult != null &&
-                string.Equals(_ocrImagePath, imagePath, StringComparison.OrdinalIgnoreCase);
-
-            if (hasCachedOcr)
-            {
-                ocr = _lastOcrResult;
-                _aiStatusLabel.Text = "Using cached OCR...";
-            }
-            else
+            if (ocr == null)
             {
                 SetAiBusy(true, "Extracting text...");
                 ocr = await _llmService.ExtractImageTextAsync(imagePath, model);
@@ -763,16 +1185,27 @@ public class ImageViewerForm : Form
 
             _ocrImagePath = imagePath;
             _lastOcrResult = ocr;
-            if (!hasCachedOcr)
+            bool keepCurrentOverlay = withTranslation && fromInMemoryCache && _overlayBlocks.Count > 0;
+            if (!keepCurrentOverlay)
             {
                 _lastTranslations = new List<string>();
                 SetOverlayFromOcrResult(ocr, null);
                 _aiOutputBox.Text = RenderOcrResult(ocr);
+                if (fromSavedCache)
+                {
+                    _aiOutputBox.AppendText(Environment.NewLine + Environment.NewLine + "[Loaded from OCR_output cache]");
+                }
             }
+
+            if (!fromInMemoryCache && !fromSavedCache && !string.IsNullOrWhiteSpace(model))
+                SaveOcrResultToCache(imagePath, model, ocr);
 
             if (!withTranslation)
             {
-                SetAiBusy(false, $"OCR complete ({ocr.Blocks.Count} blocks)");
+                if (fromSavedCache)
+                    SetAiBusy(false, $"OCR loaded from cache ({ocr.Blocks.Count} blocks)");
+                else
+                    SetAiBusy(false, $"OCR complete ({ocr.Blocks.Count} blocks)");
                 return;
             }
 
@@ -789,9 +1222,12 @@ public class ImageViewerForm : Form
                 return;
             }
 
+            _savedTranslationForCurrentImage = translation;
             _lastTranslations = translation.Translations;
             ApplyTranslationsToOverlay(_lastTranslations);
             _aiOutputBox.Text = RenderTranslatedResult(ocr, translation);
+            SaveTranslationToCache(imagePath, model, ocr, translation);
+            SetShowSavedTranslationChecked(true);
             SetAiBusy(false, $"Translated to {translation.TargetLanguage}");
         }
         catch (Exception ex)
@@ -949,11 +1385,19 @@ public class ImageViewerForm : Form
 
             _overlayBlocks.Add(new OverlayTextBlock
             {
+                SourceIndex = i,
                 SourceText = block.Text,
                 DisplayText = translated,
                 NormalizedRect = rect,
                 NormalizedFontSize = normalizedFontSize
             });
+        }
+
+        var reduced = ReduceOverlayBlocksConservatively(_overlayBlocks);
+        if (reduced.Count != _overlayBlocks.Count)
+        {
+            _overlayBlocks.Clear();
+            _overlayBlocks.AddRange(reduced);
         }
 
         _pictureBox.Invalidate();
@@ -966,11 +1410,89 @@ public class ImageViewerForm : Form
 
         for (int i = 0; i < _overlayBlocks.Count; i++)
         {
-            if (i < translatedLines.Count && !string.IsNullOrWhiteSpace(translatedLines[i]))
-                _overlayBlocks[i].DisplayText = StripOrderedPrefix(translatedLines[i]);
+            int sourceIndex = _overlayBlocks[i].SourceIndex;
+            if (sourceIndex >= 0 && sourceIndex < translatedLines.Count && !string.IsNullOrWhiteSpace(translatedLines[sourceIndex]))
+                _overlayBlocks[i].DisplayText = StripOrderedPrefix(translatedLines[sourceIndex]);
         }
 
         _pictureBox.Invalidate();
+    }
+
+    private static List<OverlayTextBlock> ReduceOverlayBlocksConservatively(List<OverlayTextBlock> input)
+    {
+        const int maxBlocks = 260;
+        if (input.Count <= 1)
+            return input.ToList();
+
+        var output = new List<OverlayTextBlock>(Math.Min(input.Count, maxBlocks));
+        for (int i = 0; i < input.Count; i++)
+        {
+            var candidate = input[i];
+            if (string.IsNullOrWhiteSpace(candidate.DisplayText))
+                continue;
+
+            float area = Math.Max(0f, candidate.NormalizedRect.Width * candidate.NormalizedRect.Height);
+            if (area < 0.000008f)
+                continue;
+
+            string candidateNorm = NormalizeOverlayText(candidate.DisplayText);
+            bool duplicate = false;
+            int start = Math.Max(0, output.Count - 120);
+            for (int j = output.Count - 1; j >= start; j--)
+            {
+                var prior = output[j];
+                float overlap = ComputeRectOverlapRatio(candidate.NormalizedRect, prior.NormalizedRect);
+                if (overlap < 0.50f)
+                    continue;
+
+                string priorNorm = NormalizeOverlayText(prior.DisplayText);
+                bool sameText = candidateNorm.Length > 0 && candidateNorm == priorNorm;
+
+                if (overlap >= 0.80f || (sameText && overlap >= 0.55f))
+                {
+                    duplicate = true;
+                    break;
+                }
+            }
+
+            if (duplicate)
+                continue;
+
+            output.Add(candidate);
+            if (output.Count >= maxBlocks)
+                break;
+        }
+
+        return output;
+    }
+
+    private static string NormalizeOverlayText(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return "";
+
+        var sb = new StringBuilder(text.Length);
+        foreach (char ch in text)
+        {
+            if (char.IsLetterOrDigit(ch))
+                sb.Append(char.ToLowerInvariant(ch));
+        }
+        return sb.ToString();
+    }
+
+    private static float ComputeRectOverlapRatio(RectangleF a, RectangleF b)
+    {
+        float overlapW = Math.Min(a.Right, b.Right) - Math.Max(a.Left, b.Left);
+        if (overlapW <= 0f)
+            return 0f;
+
+        float overlapH = Math.Min(a.Bottom, b.Bottom) - Math.Max(a.Top, b.Top);
+        if (overlapH <= 0f)
+            return 0f;
+
+        float overlapArea = overlapW * overlapH;
+        float minArea = Math.Max(0.0000001f, Math.Min(a.Width * a.Height, b.Width * b.Height));
+        return overlapArea / minArea;
     }
 
     private static string StripOrderedPrefix(string text)
@@ -1057,6 +1579,7 @@ public class ImageViewerForm : Form
         {
             _ocrImagePath = null;
             _lastOcrResult = null;
+            _savedTranslationForCurrentImage = null;
             _lastTranslations = new List<string>();
             _overlayBlocks.Clear();
             _aiOutputBox.Clear();
@@ -1078,6 +1601,7 @@ public class ImageViewerForm : Form
 
             UpdateTags(path);
             FitToWindow();
+            TryApplySavedOcrForCurrentImage(allowStatusUpdate: true);
         }
         catch (SixLabors.ImageSharp.UnknownImageFormatException)
         {
@@ -1347,14 +1871,19 @@ public class ImageViewerForm : Form
         if (!HasHeavyOverlayOverlap(baseRect, placedRects))
             return baseRect;
 
-        float step = Math.Clamp(Math.Min(baseRect.Width, baseRect.Height) * 0.12f, 4f, 14f);
+        float step = Math.Clamp(Math.Min(baseRect.Width, baseRect.Height) * 0.16f, 6f, 20f);
         var directions = new (float dx, float dy)[]
         {
             (1f, 0f), (-1f, 0f), (0f, 1f), (0f, -1f),
-            (1f, 1f), (-1f, 1f), (1f, -1f), (-1f, -1f)
+            (1f, 1f), (-1f, 1f), (1f, -1f), (-1f, -1f),
+            (2f, 1f), (-2f, 1f), (2f, -1f), (-2f, -1f),
+            (1f, 2f), (-1f, 2f), (1f, -2f), (-1f, -2f)
         };
 
-        for (int ring = 1; ring <= 4; ring++)
+        RectangleF bestRect = baseRect;
+        float bestPenalty = ComputeTotalOverlayOverlapPenalty(baseRect, placedRects);
+
+        for (int ring = 1; ring <= 8; ring++)
         {
             foreach (var (dx, dy) in directions)
             {
@@ -1364,12 +1893,47 @@ public class ImageViewerForm : Form
                     baseRect.Width,
                     baseRect.Height);
                 shifted = ShiftRectIntoBounds(shifted, bounds);
+                float penalty = ComputeTotalOverlayOverlapPenalty(shifted, placedRects);
+                if (penalty < bestPenalty)
+                {
+                    bestPenalty = penalty;
+                    bestRect = shifted;
+                }
+
                 if (!HasHeavyOverlayOverlap(shifted, placedRects))
                     return shifted;
             }
         }
 
-        return baseRect;
+        // If we are constrained by image bounds, gradually shrink as a last resort to reduce overlap.
+        RectangleF shrinkCandidate = bestRect;
+        for (int i = 0; i < 4; i++)
+        {
+            float newWidth = Math.Max(bounds.Width * 0.04f, shrinkCandidate.Width * 0.92f);
+            float newHeight = Math.Max(bounds.Height * 0.04f, shrinkCandidate.Height * 0.92f);
+            float cx = shrinkCandidate.X + (shrinkCandidate.Width * 0.5f);
+            float cy = shrinkCandidate.Y + (shrinkCandidate.Height * 0.5f);
+            var shrunk = new RectangleF(
+                cx - (newWidth * 0.5f),
+                cy - (newHeight * 0.5f),
+                newWidth,
+                newHeight);
+            shrunk = ShiftRectIntoBounds(shrunk, bounds);
+
+            float penalty = ComputeTotalOverlayOverlapPenalty(shrunk, placedRects);
+            if (penalty < bestPenalty)
+            {
+                bestPenalty = penalty;
+                bestRect = shrunk;
+            }
+
+            if (!HasHeavyOverlayOverlap(shrunk, placedRects))
+                return shrunk;
+
+            shrinkCandidate = shrunk;
+        }
+
+        return bestRect;
     }
 
     private static bool HasHeavyOverlayOverlap(RectangleF candidate, List<RectangleF> placedRects)
@@ -1394,11 +1958,40 @@ public class ImageViewerForm : Form
             float overlapArea = overlapW * overlapH;
             float otherArea = Math.Max(1f, other.Width * other.Height);
             float overlapRatio = overlapArea / Math.Min(candidateArea, otherArea);
-            if (overlapRatio >= 0.42f)
+            if (overlapRatio >= 0.34f)
                 return true;
         }
 
         return false;
+    }
+
+    private static float ComputeTotalOverlayOverlapPenalty(RectangleF candidate, List<RectangleF> placedRects)
+    {
+        if (placedRects.Count == 0)
+            return 0f;
+
+        float candidateArea = Math.Max(1f, candidate.Width * candidate.Height);
+        int start = Math.Max(0, placedRects.Count - 100);
+        float total = 0f;
+
+        for (int i = start; i < placedRects.Count; i++)
+        {
+            var other = placedRects[i];
+            float overlapW = Math.Min(candidate.Right, other.Right) - Math.Max(candidate.Left, other.Left);
+            if (overlapW <= 0f)
+                continue;
+
+            float overlapH = Math.Min(candidate.Bottom, other.Bottom) - Math.Max(candidate.Top, other.Top);
+            if (overlapH <= 0f)
+                continue;
+
+            float overlapArea = overlapW * overlapH;
+            float otherArea = Math.Max(1f, other.Width * other.Height);
+            float overlapRatio = overlapArea / Math.Min(candidateArea, otherArea);
+            total += overlapRatio * overlapRatio;
+        }
+
+        return total;
     }
 
     private void PictureBox_MouseDown(object? sender, MouseEventArgs e)
