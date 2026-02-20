@@ -67,6 +67,9 @@ public class AppSettings
     public bool DefaultFileManagerEnabled { get; set; } = false;
     public string DefaultFileManagerScope { get; set; } = "None";
     public string DefaultFileManagerBackupJson { get; set; } = "";
+    public bool ImageViewerFileAssocEnabled { get; set; } = false;
+    public string ImageViewerFileAssocScope { get; set; } = "None";
+    public string ImageViewerFileAssocBackupJson { get; set; } = "";
     public bool PermanentDeleteByDefault { get; set; } = false;
 
     // Window Sizes

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.IO.Pipes;
 using System.Text;
@@ -69,11 +70,69 @@ static class Program
             return;
         }
 
+        bool launchImageViewerOnly = TryResolveDirectImageLaunchPath(args, out var directImagePath);
+
         if (!_mutex.WaitOne(TimeSpan.Zero, true))
         {
             // Already running, send arguments to the existing instance
             LogCrash("Program.Main", null, "SingleInstance redirect to existing process");
             SendToMainInstance(args);
+            return;
+        }
+
+        if (launchImageViewerOnly && !string.IsNullOrWhiteSpace(directImagePath))
+        {
+            Application.EnableVisualStyles();
+            Application.SetCompatibleTextRenderingDefault(false);
+            Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
+            Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
+            InstallNativeCrashHandler();
+
+            AppDomain.CurrentDomain.UnhandledException += (s, e) =>
+            {
+                LogCrash("AppDomain.UnhandledException", e.ExceptionObject as Exception, e.ExceptionObject?.ToString());
+                WriteMiniDump("appdomain");
+                MessageBox.Show(e.ExceptionObject?.ToString() ?? "(null)", "Unhandled Exception");
+            };
+            AppDomain.CurrentDomain.ProcessExit += (s, e) =>
+            {
+                LogCrash("AppDomain.ProcessExit", null, "Process exiting.");
+            };
+            Application.ThreadException += (s, e) =>
+            {
+                LogCrash("Application.ThreadException", e.Exception);
+                WriteMiniDump("thread");
+                MessageBox.Show(e.Exception.ToString(), "Thread Exception");
+            };
+            Application.ApplicationExit += (s, e) =>
+            {
+                LogCrash("Application.ApplicationExit", null, "Application exiting.");
+            };
+            TaskScheduler.UnobservedTaskException += (s, e) =>
+            {
+                LogCrash("TaskScheduler.UnobservedTaskException", e.Exception);
+                WriteMiniDump("taskscheduler");
+                e.SetObserved();
+            };
+
+            try
+            {
+                if (!TryBuildImageViewerSequence(directImagePath, out var imagePaths, out int startIndex))
+                {
+                    imagePaths = new List<string> { directImagePath };
+                    startIndex = 0;
+                }
+
+                LogCrash("Program.Main", null, $"ImageViewerOnly launch path=\"{directImagePath}\" images={imagePaths.Count} startIndex={startIndex}");
+                Application.Run(new ImageViewerForm(imagePaths, startIndex));
+                LogCrash("Program.Main", null, "ImageViewerOnly Application.Run returned");
+            }
+            catch (Exception ex)
+            {
+                LogCrash("Program.Main.ImageViewerOnly", ex);
+                MessageBox.Show(ex.ToString(), "Image Viewer Startup Error");
+            }
+
             return;
         }
 
@@ -392,6 +451,22 @@ static class Program
                             try { Process.Start(new ProcessStartInfo("explorer.exe", startPath!) { UseShellExecute = true }); } catch { }
                             return;
                         }
+
+                        if (TryResolveImageViewerLaunchPath(startPath, out var imagePath))
+                        {
+                            if (!TryBuildImageViewerSequence(imagePath, out var imagePaths, out int startIndex))
+                            {
+                                imagePaths = new List<string> { imagePath };
+                                startIndex = 0;
+                            }
+
+                            LogCrash("Pipe.ImageViewerOnly", null, $"path=\"{imagePath}\" images={imagePaths.Count} startIndex={startIndex}");
+                            var viewer = new ImageViewerForm(imagePaths, startIndex);
+                            viewer.Show();
+                            viewer.Activate();
+                            return;
+                        }
+
                         var existing = GetBestMainFormForExternalOpen();
                         if (existing != null)
                         {
@@ -834,5 +909,105 @@ static class Program
         if (p.StartsWith("shell:", StringComparison.OrdinalIgnoreCase)) return true;
         if (p.StartsWith("::", StringComparison.OrdinalIgnoreCase)) return true;
         return false;
+    }
+
+    private static bool TryResolveDirectImageLaunchPath(string[] args, out string imagePath)
+    {
+        imagePath = string.Empty;
+
+        if (!AppSettings.Current.UseBuiltInImageViewer)
+            return false;
+
+        string? startPath = ExtractStartPathFromArgs(args);
+        return TryResolveImageViewerLaunchPath(startPath, out imagePath);
+    }
+
+    private static bool TryResolveImageViewerLaunchPath(string? startPath, out string imagePath)
+    {
+        imagePath = string.Empty;
+
+        if (!AppSettings.Current.UseBuiltInImageViewer)
+            return false;
+        if (string.IsNullOrWhiteSpace(startPath))
+            return false;
+        if (IsExplorerShellArgument(startPath))
+            return false;
+
+        string candidate = startPath.Trim().Trim('"');
+        if (string.IsNullOrWhiteSpace(candidate))
+            return false;
+
+        try
+        {
+            candidate = Path.GetFullPath(candidate);
+        }
+        catch
+        {
+            return false;
+        }
+
+        if (!File.Exists(candidate))
+            return false;
+        if (!FileSystemService.IsImageFile(candidate))
+            return false;
+
+        imagePath = candidate;
+        return true;
+    }
+
+    private static bool TryBuildImageViewerSequence(string imagePath, out List<string> imagePaths, out int startIndex)
+    {
+        imagePaths = new List<string>();
+        startIndex = 0;
+
+        if (string.IsNullOrWhiteSpace(imagePath))
+            return false;
+
+        string normalizedImagePath = imagePath;
+        try
+        {
+            normalizedImagePath = Path.GetFullPath(normalizedImagePath);
+        }
+        catch { }
+
+        if (!File.Exists(normalizedImagePath))
+            return false;
+        if (!FileSystemService.IsImageFile(normalizedImagePath))
+            return false;
+
+        string? directoryPath = Path.GetDirectoryName(normalizedImagePath);
+        if (string.IsNullOrWhiteSpace(directoryPath))
+        {
+            imagePaths.Add(normalizedImagePath);
+            return true;
+        }
+
+        try
+        {
+            foreach (var file in Directory.EnumerateFiles(directoryPath))
+            {
+                if (!FileSystemService.IsImageFile(file))
+                    continue;
+                imagePaths.Add(file);
+            }
+        }
+        catch
+        {
+            // Fall back to one-file sequence.
+        }
+
+        if (imagePaths.Count == 0)
+            imagePaths.Add(normalizedImagePath);
+        else
+            imagePaths.Sort(StringComparer.OrdinalIgnoreCase);
+
+        startIndex = imagePaths.FindIndex(p => string.Equals(p, normalizedImagePath, StringComparison.OrdinalIgnoreCase));
+        if (startIndex < 0)
+        {
+            imagePaths.Insert(0, normalizedImagePath);
+            startIndex = 0;
+        }
+
+        return true;
     }
 }

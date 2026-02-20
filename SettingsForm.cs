@@ -59,6 +59,9 @@ public class SettingsForm : Form
     private Button _defaultFileManagerApplyBtn = null!;
     private Button _defaultFileManagerRestoreBtn = null!;
     private Label _defaultFileManagerStatusLabel = null!;
+    private Button _defaultImageAssocApplyBtn = null!;
+    private Button _defaultImageAssocRestoreBtn = null!;
+    private Label _defaultImageAssocStatusLabel = null!;
     private Button _viewLicenseBtn = null!;
     
     private TabControl _tabControl = null!;
@@ -526,6 +529,41 @@ public class SettingsForm : Form
         _defaultFileManagerRestoreBtn.Click += (s, e) => ApplyDefaultFileManagerSettings(enable: false);
         panel.Controls.Add(_defaultFileManagerRestoreBtn);
 
+        panel.Controls.Add(new Panel { Height = Scale(12), Width = Scale(1), BackColor = tab.BackColor });
+        panel.Controls.Add(CreateLabel(Localization.T("default_image_app_label"), Point.Empty));
+
+        _defaultImageAssocStatusLabel = CreateLabel(Localization.T("status_defaults"), Point.Empty);
+        _defaultImageAssocStatusLabel.ForeColor = Color.Gray;
+        panel.Controls.Add(_defaultImageAssocStatusLabel);
+
+        _defaultImageAssocApplyBtn = new Button
+        {
+            Text = Localization.T("apply_default_images"),
+            AutoSize = true,
+            FlatStyle = FlatStyle.Flat,
+            BackColor = Color.FromArgb(70, 70, 70),
+            ForeColor = Color.White,
+            Cursor = Cursors.Hand,
+            Margin = Scale(new Padding(0, 8, 0, 0))
+        };
+        _defaultImageAssocApplyBtn.FlatAppearance.BorderSize = 0;
+        _defaultImageAssocApplyBtn.Click += (s, e) => ApplyImageViewerAssociationSettings(enable: true);
+        panel.Controls.Add(_defaultImageAssocApplyBtn);
+
+        _defaultImageAssocRestoreBtn = new Button
+        {
+            Text = Localization.T("restore_default_images"),
+            AutoSize = true,
+            FlatStyle = FlatStyle.Flat,
+            BackColor = Color.FromArgb(70, 70, 70),
+            ForeColor = Color.White,
+            Cursor = Cursors.Hand,
+            Margin = Scale(new Padding(0, 8, 0, 0))
+        };
+        _defaultImageAssocRestoreBtn.FlatAppearance.BorderSize = 0;
+        _defaultImageAssocRestoreBtn.Click += (s, e) => ApplyImageViewerAssociationSettings(enable: false);
+        panel.Controls.Add(_defaultImageAssocRestoreBtn);
+
         panel.Controls.Add(new Panel { Height = Scale(30), Width = Scale(1), BackColor = tab.BackColor });
 
         // LLM Section
@@ -964,6 +1002,7 @@ public class SettingsForm : Form
         _debugNavUiQueueChk.Checked = s.DebugNavigationUiQueue;
         _debugNavPostBindChk.Checked = s.DebugNavigationPostBind;
         UpdateDefaultFileManagerStatusLabel();
+        UpdateImageViewerAssociationStatusLabel();
         
         _hotkeyEdits.Clear();
         foreach (var kvp in s.Hotkeys) _hotkeyEdits[kvp.Key] = kvp.Value;
@@ -1042,6 +1081,58 @@ public class SettingsForm : Form
                 return;
             }
             UpdateDefaultFileManagerStatusLabel();
+        };
+        t.Start();
+    }
+
+    private void UpdateImageViewerAssociationStatusLabel()
+    {
+        var status = ImageViewerAssociationService.GetCurrentStatus();
+        switch (status)
+        {
+            case ImageViewerAssociationService.AssociationStatus.AppliedHkcu:
+                _defaultImageAssocStatusLabel.Text = Localization.T("status_applied_hkcu");
+                _defaultImageAssocStatusLabel.ForeColor = Color.LightGreen;
+                break;
+            case ImageViewerAssociationService.AssociationStatus.PartialHkcu:
+                _defaultImageAssocStatusLabel.Text = Localization.T("status_partial_hkcu");
+                _defaultImageAssocStatusLabel.ForeColor = Color.Khaki;
+                break;
+            default:
+                _defaultImageAssocStatusLabel.Text = Localization.T("status_defaults");
+                _defaultImageAssocStatusLabel.ForeColor = Color.Gray;
+                break;
+        }
+    }
+
+    private void ApplyImageViewerAssociationSettings(bool enable)
+    {
+        var result = ImageViewerAssociationService.ApplyFromUi(enable, this);
+        if (!result.Success)
+        {
+            MessageBox.Show("Failed to apply image file default settings.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            UpdateImageViewerAssociationStatusLabel();
+            return;
+        }
+
+        AppSettings.ReloadCurrent();
+        UpdateImageViewerAssociationStatusLabel();
+        StartImageViewerAssociationStatusPolling();
+    }
+
+    private void StartImageViewerAssociationStatusPolling()
+    {
+        int remaining = 10;
+        var t = new System.Windows.Forms.Timer { Interval = 500 };
+        t.Tick += (s, e) =>
+        {
+            if (remaining-- <= 0)
+            {
+                t.Stop();
+                t.Dispose();
+                return;
+            }
+            UpdateImageViewerAssociationStatusLabel();
         };
         t.Start();
     }

@@ -469,6 +469,7 @@ public partial class MainForm : Form
         ApplySettings();   
         this.KeyUp += (s, e) => { if (_hotkeyController.IsActionKeyCode("QuickLook", e.KeyCode)) HideQuickLook(); };
 
+        CaptureStartupImageCandidate(initialPath);
         bool inferStartupSelection = !string.IsNullOrWhiteSpace(initialPath);
         var normalizedStartup = NormalizeStartupPath(initialPath, out _startupSelectPaths, inferStartupSelection);
         _fastStartup = _startupSelectPaths != null && _startupSelectPaths.Count > 0;

@@ -424,6 +424,7 @@ public partial class MainForm
                             _owner._listView.Visible = true;
                     }
                     await _owner.NavigateTo(startPath, _owner._startupSelectPaths);
+                    _owner.OpenStartupImageViewerIfPending();
                     _owner.RefreshFrame();
                     _owner.StretchTagsColumn();
 

@@ -136,6 +136,8 @@ public partial class MainForm
                     rawPath = parsed;
             }
 
+            var imagePathForViewer = _owner.ResolveImagePathForBuiltInViewer(rawPath);
+
             var normalized = _owner.NormalizeStartupPath(rawPath, out var selectPaths, inferRecentSelectionForDirectory: true);
             if (_owner._listView != null && !_owner._listView.IsDisposed)
                 _owner._listView.Visible = true;
@@ -163,10 +165,16 @@ public partial class MainForm
                         }
                         catch { }
                     }
+                    if (!string.IsNullOrWhiteSpace(imagePathForViewer))
+                    {
+                        _owner.TryOpenImageViewerForImagePath(imagePathForViewer, _owner._items.Select(static x => x.FullPath));
+                    }
                     return;
                 }
 
-                _owner.ObserveTask(_owner.NavigateTo(normalized, selectPaths), "TabsController.HandleExternalPath/existing-tab");
+                _owner.ObserveTask(
+                    _owner.NavigateToAndMaybeOpenImageViewerAsync(normalized, selectPaths, imagePathForViewer),
+                    "TabsController.HandleExternalPath/existing-tab");
                 return;
             }
 
@@ -189,11 +197,15 @@ public partial class MainForm
                 _activeTabIndex = newIndex;
                 RebuildTabStrip();
                 SwitchToTab(newIndex, force: true, saveCurrent: false, skipNavigation: true);
-                _owner.ObserveTask(_owner.NavigateTo(normalized, selectPaths), "TabsController.HandleExternalPath/new-tab");
+                _owner.ObserveTask(
+                    _owner.NavigateToAndMaybeOpenImageViewerAsync(normalized, selectPaths, imagePathForViewer),
+                    "TabsController.HandleExternalPath/new-tab");
             }
             else
             {
-                _owner.ObserveTask(_owner.NavigateTo(normalized, selectPaths), "TabsController.HandleExternalPath/first-tab");
+                _owner.ObserveTask(
+                    _owner.NavigateToAndMaybeOpenImageViewerAsync(normalized, selectPaths, imagePathForViewer),
+                    "TabsController.HandleExternalPath/first-tab");
             }
         }
 

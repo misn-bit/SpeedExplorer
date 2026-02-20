@@ -117,29 +117,14 @@ public partial class MainForm
             }
             else if (FileSystemService.IsImageFile(path) && AppSettings.Current.UseBuiltInImageViewer)
             {
-                var imageFiles = _owner._items
-                    .Where(x => !x.IsDirectory && FileSystemService.IsImageFile(x.FullPath))
-                    .Select(x => x.FullPath)
-                    .ToList();
-
-                if (!imageFiles.Contains(path))
-                    imageFiles.Insert(0, path);
-
-                if (imageFiles.Count == 0) return;
-
-                var startIndex = imageFiles.IndexOf(path);
-                if (startIndex < 0) startIndex = 0;
-
-                var viewer = new ImageViewerForm(imageFiles, startIndex);
-                viewer.Show();
+                if (_owner.TryOpenImageViewerForImagePath(path, _owner._items.Select(static x => x.FullPath)))
+                    return;
             }
-            else
+
+            try { Process.Start(new ProcessStartInfo(path) { UseShellExecute = true }); }
+            catch (Exception ex)
             {
-                try { Process.Start(new ProcessStartInfo(path) { UseShellExecute = true }); }
-                catch (Exception ex)
-                {
-                    MessageBox.Show($"Could not open file: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                }
+                MessageBox.Show($"Could not open file: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
     }
