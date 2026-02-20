@@ -12,7 +12,7 @@ namespace SpeedExplorer;
 /// </summary>
 public static class LlmDebugLogger
 {
-    private static readonly string LogPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "llm_debug.log");
+    private static readonly string LogPath = Path.Combine(GetAppDirectory(), "llm_debug.log");
     private static readonly object _lock = new object();
 
     public static void LogRequest(string currentDir, string userPrompt, string systemPrompt, string fullRequestJson, IEnumerable<string>? imagePaths = null, IEnumerable<LlmImageStats>? imageStats = null)
@@ -109,5 +109,29 @@ public static class LlmDebugLogger
             }
             catch { }
         }
+    }
+
+    private static string GetAppDirectory()
+    {
+        try
+        {
+            string? processPath = Environment.ProcessPath;
+            if (!string.IsNullOrWhiteSpace(processPath))
+            {
+                string? dir = Path.GetDirectoryName(processPath);
+                if (!string.IsNullOrWhiteSpace(dir))
+                    return dir;
+            }
+        }
+        catch { }
+
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(AppContext.BaseDirectory))
+                return AppContext.BaseDirectory;
+        }
+        catch { }
+
+        return Environment.CurrentDirectory;
     }
 }

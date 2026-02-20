@@ -197,6 +197,11 @@ public partial class MainForm
             {
                 if (string.IsNullOrWhiteSpace(change.Path))
                     continue;
+                if (!BelongsToCurrentDirectory(change.Path) &&
+                    (string.IsNullOrWhiteSpace(change.OldPath) || !BelongsToCurrentDirectory(change.OldPath!)))
+                {
+                    continue;
+                }
 
                 switch (change.Kind)
                 {
@@ -285,6 +290,31 @@ public partial class MainForm
             _owner._tabsController.SyncPathSnapshot(_owner._currentPath, _owner._items, _owner._allItems);
             _owner._statusLabel.Text = string.Format(Localization.T("status_ready_items"), _owner._items.Count);
             return true;
+        }
+
+        private bool BelongsToCurrentDirectory(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+                return false;
+            if (string.IsNullOrWhiteSpace(_owner._currentPath))
+                return false;
+            if (MainForm.IsShellPath(_owner._currentPath) || _owner._currentPath == ThisPcPath)
+                return false;
+
+            try
+            {
+                var parent = Path.GetDirectoryName(path);
+                if (string.IsNullOrWhiteSpace(parent))
+                    return false;
+                return string.Equals(
+                    parent.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+                    _owner._currentPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+                    StringComparison.OrdinalIgnoreCase);
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         private static bool TryCreateFileItem(string fullPath, out FileItem item)

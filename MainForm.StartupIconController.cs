@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Windows.Forms;
@@ -15,7 +16,7 @@ public partial class MainForm
             _ = owner;
         }
 
-        public string NormalizeStartupPath(string? input, out List<string>? selectPaths)
+        public string NormalizeStartupPath(string? input, out List<string>? selectPaths, bool inferRecentSelectionForDirectory = false)
         {
             selectPaths = null;
             if (string.IsNullOrWhiteSpace(input))
@@ -38,8 +39,36 @@ public partial class MainForm
 
             raw = raw.Trim().Trim('"');
 
+            if (raw.StartsWith("file://", StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    var uri = new Uri(raw, UriKind.Absolute);
+                    if (uri.IsFile)
+                        raw = uri.LocalPath;
+                }
+                catch { }
+            }
+
+            if (!File.Exists(raw) && !Directory.Exists(raw))
+            {
+                int switchSplit = raw.IndexOf(" /", StringComparison.Ordinal);
+                if (switchSplit < 0)
+                    switchSplit = raw.IndexOf(" -", StringComparison.Ordinal);
+                if (switchSplit > 0)
+                {
+                    var shortened = raw[..switchSplit].Trim().Trim('"');
+                    if (!string.IsNullOrWhiteSpace(shortened))
+                        raw = shortened;
+                }
+            }
+
             if (Directory.Exists(raw))
+            {
+                if (inferRecentSelectionForDirectory && TryInferRecentSelectionForDirectory(raw, out var inferredPath))
+                    selectPaths = new List<string> { inferredPath };
                 return raw;
+            }
 
             if (File.Exists(raw))
             {
@@ -70,6 +99,83 @@ public partial class MainForm
             }
 
             return raw;
+        }
+
+        private static bool TryInferRecentSelectionForDirectory(string directoryPath, out string inferredPath)
+        {
+            inferredPath = string.Empty;
+            if (string.IsNullOrWhiteSpace(directoryPath))
+                return false;
+            if (!IsLikelyDownloadsFolder(directoryPath))
+                return false;
+
+            // Keep this bounded to avoid UI stalls on huge folders.
+            const int scanBudgetMs = 120;
+            const int maxFilesScanned = 1800;
+            DateTime cutoffUtc = DateTime.UtcNow.AddSeconds(-10);
+            string bestPath = string.Empty;
+            DateTime bestTimeUtc = DateTime.MinValue;
+            int scanned = 0;
+            var sw = Stopwatch.StartNew();
+
+            try
+            {
+                foreach (var file in Directory.EnumerateFiles(directoryPath))
+                {
+                    if (sw.ElapsedMilliseconds > scanBudgetMs)
+                        break;
+                    scanned++;
+                    if (scanned > maxFilesScanned)
+                        break;
+
+                    try
+                    {
+                        DateTime createdUtc = File.GetCreationTimeUtc(file);
+                        DateTime modifiedUtc = File.GetLastWriteTimeUtc(file);
+                        DateTime candidateUtc = modifiedUtc > createdUtc ? modifiedUtc : createdUtc;
+                        if (candidateUtc < cutoffUtc)
+                            continue;
+                        if (candidateUtc <= bestTimeUtc)
+                            continue;
+                        bestTimeUtc = candidateUtc;
+                        bestPath = file;
+                    }
+                    catch { }
+                }
+            }
+            catch
+            {
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(bestPath))
+                return false;
+
+            inferredPath = bestPath;
+            return true;
+        }
+
+        private static bool IsLikelyDownloadsFolder(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+                return false;
+
+            string normalized = path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            if (string.IsNullOrWhiteSpace(normalized))
+                return false;
+
+            string defaultDownloads = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                "Downloads").TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+            if (!string.IsNullOrWhiteSpace(defaultDownloads) &&
+                string.Equals(normalized, defaultDownloads, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            return normalized.EndsWith($"{Path.DirectorySeparatorChar}Downloads", StringComparison.OrdinalIgnoreCase) ||
+                   normalized.EndsWith($"{Path.AltDirectorySeparatorChar}Downloads", StringComparison.OrdinalIgnoreCase);
         }
 
         public ImageList CreateIconList(int size)

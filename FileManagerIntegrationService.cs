@@ -20,6 +20,13 @@ public static class FileManagerIntegrationService
         "Software\\Classes\\Drive"
     };
 
+    private static readonly string[] DefaultManagerRoots = new[]
+    {
+        "Software\\Classes\\Folder",
+        "Software\\Classes\\Directory",
+        "Software\\Classes\\Drive"
+    };
+
     public static bool IsApplyArg(string arg) => string.Equals(arg, EnableArg, StringComparison.OrdinalIgnoreCase);
     public static bool IsRemoveArg(string arg) => string.Equals(arg, DisableArg, StringComparison.OrdinalIgnoreCase);
 
@@ -38,7 +45,7 @@ public static class FileManagerIntegrationService
     public static IntegrationStatus GetCurrentStatus()
     {
         string exePath = Application.ExecutablePath;
-        string expected = $"\"{exePath}\" \"%1\"";
+        string expected = BuildShellOpenCommand(exePath);
 
         bool hkcuOk = IsRegistryApplied(Registry.CurrentUser, expected);
         bool hklmOk = false;
@@ -55,7 +62,7 @@ public static class FileManagerIntegrationService
         var result = new IntegrationApplyResult();
         bool isAdmin = IsAdministrator();
         string exePath = Application.ExecutablePath;
-        string command = $"\"{exePath}\" \"%1\"";
+        string command = BuildShellOpenCommand(exePath);
 
         if (!isAdmin && allowElevation)
         {
@@ -167,7 +174,7 @@ public static class FileManagerIntegrationService
 
     private static void WriteDefaults(RegistryKey root, string command)
     {
-        foreach (var basePath in TargetRoots)
+        foreach (var basePath in DefaultManagerRoots)
         {
             using var shellKey = root.CreateSubKey($"{basePath}\\shell");
             shellKey?.SetValue("", "open", RegistryValueKind.String);
@@ -175,16 +182,93 @@ public static class FileManagerIntegrationService
             using var openCmd = root.CreateSubKey($"{basePath}\\shell\\open\\command");
             openCmd?.SetValue("", command, RegistryValueKind.String);
             openCmd?.DeleteValue("DelegateExecute", false);
+            openCmd?.DeleteValue("ExplorerCommandHandler", false);
+
+            try { root.DeleteSubKeyTree($"{basePath}\\shell\\open\\DropTarget", false); } catch { }
 
             using var exploreCmd = root.CreateSubKey($"{basePath}\\shell\\explore\\command");
             exploreCmd?.SetValue("", command, RegistryValueKind.String);
             exploreCmd?.DeleteValue("DelegateExecute", false);
+            exploreCmd?.DeleteValue("ExplorerCommandHandler", false);
+
+            using var openNewWindowCmd = root.CreateSubKey($"{basePath}\\shell\\opennewwindow\\command");
+            openNewWindowCmd?.SetValue("", command, RegistryValueKind.String);
+            openNewWindowCmd?.DeleteValue("DelegateExecute", false);
+            openNewWindowCmd?.DeleteValue("ExplorerCommandHandler", false);
+
+            using var findVerb = root.OpenSubKey($"{basePath}\\shell\\find", writable: true);
+            if (findVerb != null)
+            {
+                using var findCmd = root.CreateSubKey($"{basePath}\\shell\\find\\command");
+                findCmd?.SetValue("", command, RegistryValueKind.String);
+                findCmd?.DeleteValue("DelegateExecute", false);
+                findCmd?.DeleteValue("ExplorerCommandHandler", false);
+                try { root.DeleteSubKeyTree($"{basePath}\\shell\\find\\DropTarget", false); } catch { }
+            }
+
+            SanitizeVerbMetadata(root, basePath, "open");
+            SanitizeVerbMetadata(root, basePath, "explore");
+            SanitizeVerbMetadata(root, basePath, "opennewwindow");
+            SanitizeVerbMetadata(root, basePath, "find");
+
+            if (basePath.EndsWith("Folder", StringComparison.OrdinalIgnoreCase))
+            {
+                using var openNewProcessCmd = root.CreateSubKey($"{basePath}\\shell\\opennewprocess\\command");
+                openNewProcessCmd?.SetValue("", command, RegistryValueKind.String);
+                openNewProcessCmd?.DeleteValue("DelegateExecute", false);
+                openNewProcessCmd?.DeleteValue("ExplorerCommandHandler", false);
+
+                using var openNewTabCmd = root.CreateSubKey($"{basePath}\\shell\\opennewtab\\command");
+                openNewTabCmd?.SetValue("", command, RegistryValueKind.String);
+                openNewTabCmd?.DeleteValue("DelegateExecute", false);
+                openNewTabCmd?.DeleteValue("ExplorerCommandHandler", false);
+
+                SanitizeVerbMetadata(root, basePath, "opennewprocess");
+                SanitizeVerbMetadata(root, basePath, "opennewtab");
+            }
         }
+
+    }
+
+    private static void SanitizeVerbMetadata(RegistryKey root, string basePath, string verb)
+    {
+        try
+        {
+            using var verbKey = root.OpenSubKey($"{basePath}\\shell\\{verb}", writable: true);
+            if (verbKey == null) return;
+
+            // Explorer-specific metadata can force shell handler fallbacks/timeouts
+            // before command execution when another file manager owns the verb.
+            foreach (var name in new[]
+            {
+                "DelegateExecute",
+                "ExplorerCommandHandler",
+                "ExplorerHost",
+                "CommandStateHandler",
+                "CommandStateSync",
+                "OnlyInBrowserWindow",
+                "ProgrammaticAccessOnly",
+                "Extended",
+                "AppliesTo",
+                "MUIVerb",
+                "LaunchExplorerFlags"
+            })
+            {
+                verbKey.DeleteValue(name, false);
+            }
+        }
+        catch { }
+
+        try
+        {
+            root.DeleteSubKeyTree($"{basePath}\\shell\\{verb}\\ddeexec", false);
+        }
+        catch { }
     }
 
     private static bool IsRegistryApplied(RegistryKey root, string expectedCommand)
     {
-        foreach (var basePath in TargetRoots)
+        foreach (var basePath in DefaultManagerRoots)
         {
             using var openCmd = root.OpenSubKey($"{basePath}\\shell\\open\\command", writable: false);
             var current = openCmd?.GetValue("")?.ToString() ?? "";
@@ -204,9 +288,12 @@ public static class FileManagerIntegrationService
             menuKey.SetValue("Icon", $"\"{exePath}\"", RegistryValueKind.String);
 
             using var cmdKey = root.CreateSubKey($"{basePath}\\shell\\open_speed_explorer\\command");
-            cmdKey?.SetValue("", $"\"{exePath}\" \"%1\"", RegistryValueKind.String);
+            cmdKey?.SetValue("", BuildShellOpenCommand(exePath), RegistryValueKind.String);
         }
     }
+
+    private static string BuildShellOpenCommand(string exePath)
+        => $"\"{exePath}\" \"%1\" %*";
 
     private static void RemoveContextMenu(RegistryKey root)
     {
@@ -218,10 +305,13 @@ public static class FileManagerIntegrationService
     }
 
     private static void RestoreExplorerDefaults(RegistryKey root)
+        => RestoreExplorerDefaults(root, TargetRoots);
+
+    private static void RestoreExplorerDefaults(RegistryKey root, IEnumerable<string> basePaths)
     {
         const string explorerDelegate = "{11dbb47c-a525-400b-9e80-a54615a090c0}";
 
-        foreach (var basePath in TargetRoots)
+        foreach (var basePath in basePaths)
         {
             using var shellKey = root.CreateSubKey($"{basePath}\\shell");
             shellKey?.SetValue("", "open", RegistryValueKind.String);
@@ -230,9 +320,53 @@ public static class FileManagerIntegrationService
             openCmd?.SetValue("", "explorer.exe \"%1\"", RegistryValueKind.String);
             openCmd?.SetValue("DelegateExecute", explorerDelegate, RegistryValueKind.String);
 
+            using var openVerb = root.CreateSubKey($"{basePath}\\shell\\open");
+            openVerb?.SetValue("MultiSelectModel", "Document", RegistryValueKind.String);
+
             using var exploreCmd = root.CreateSubKey($"{basePath}\\shell\\explore\\command");
             exploreCmd?.SetValue("", "explorer.exe /e,\"%1\"", RegistryValueKind.String);
             exploreCmd?.SetValue("DelegateExecute", explorerDelegate, RegistryValueKind.String);
+
+            using var exploreVerb = root.CreateSubKey($"{basePath}\\shell\\explore");
+            exploreVerb?.SetValue("LaunchExplorerFlags", 0x18, RegistryValueKind.DWord);
+            exploreVerb?.SetValue("MultiSelectModel", "Document", RegistryValueKind.String);
+            exploreVerb?.SetValue("ProgrammaticAccessOnly", "", RegistryValueKind.String);
+
+            using var openNewWindowCmd = root.CreateSubKey($"{basePath}\\shell\\opennewwindow\\command");
+            openNewWindowCmd?.SetValue("", "", RegistryValueKind.String);
+            openNewWindowCmd?.SetValue("DelegateExecute", explorerDelegate, RegistryValueKind.String);
+
+            using var openNewWindowVerb = root.CreateSubKey($"{basePath}\\shell\\opennewwindow");
+            openNewWindowVerb?.SetValue("LaunchExplorerFlags", 0x1, RegistryValueKind.DWord);
+            openNewWindowVerb?.SetValue("MUIVerb", "@windows.storage.dll,-8517", RegistryValueKind.String);
+            openNewWindowVerb?.SetValue("MultiSelectModel", "Document", RegistryValueKind.String);
+            openNewWindowVerb?.SetValue("OnlyInBrowserWindow", "", RegistryValueKind.String);
+
+            if (basePath.EndsWith("Folder", StringComparison.OrdinalIgnoreCase))
+            {
+                using var openNewProcessCmd = root.CreateSubKey($"{basePath}\\shell\\opennewprocess\\command");
+                openNewProcessCmd?.SetValue("", "", RegistryValueKind.String);
+                openNewProcessCmd?.SetValue("DelegateExecute", explorerDelegate, RegistryValueKind.String);
+
+                using var openNewProcessVerb = root.CreateSubKey($"{basePath}\\shell\\opennewprocess");
+                openNewProcessVerb?.SetValue("ExplorerHost", "{ceff45ee-c862-41de-aee2-a022c81eda92}", RegistryValueKind.String);
+                openNewProcessVerb?.SetValue("Extended", "", RegistryValueKind.String);
+                openNewProcessVerb?.SetValue("LaunchExplorerFlags", 0x3, RegistryValueKind.DWord);
+                openNewProcessVerb?.SetValue("MUIVerb", "@shell32.dll,-8518", RegistryValueKind.String);
+                openNewProcessVerb?.SetValue("MultiSelectModel", "Document", RegistryValueKind.String);
+
+                using var openNewTabCmd = root.CreateSubKey($"{basePath}\\shell\\opennewtab\\command");
+                openNewTabCmd?.SetValue("", "", RegistryValueKind.String);
+                openNewTabCmd?.SetValue("DelegateExecute", explorerDelegate, RegistryValueKind.String);
+
+                using var openNewTabVerb = root.CreateSubKey($"{basePath}\\shell\\opennewtab");
+                openNewTabVerb?.SetValue("CommandStateHandler", "{11dbb47c-a525-400b-9e80-a54615a090c0}", RegistryValueKind.String);
+                openNewTabVerb?.SetValue("CommandStateSync", "", RegistryValueKind.String);
+                openNewTabVerb?.SetValue("LaunchExplorerFlags", 0x60, RegistryValueKind.DWord);
+                openNewTabVerb?.SetValue("MUIVerb", "@windows.storage.dll,-8519", RegistryValueKind.String);
+                openNewTabVerb?.SetValue("MultiSelectModel", "Document", RegistryValueKind.String);
+                openNewTabVerb?.SetValue("OnlyInBrowserWindow", "", RegistryValueKind.String);
+            }
         }
     }
 
@@ -242,7 +376,20 @@ public static class FileManagerIntegrationService
         {
             BackupKey(root, hiveName, $"{basePath}\\shell", backup);
             BackupKey(root, hiveName, $"{basePath}\\shell\\open\\command", backup);
+            BackupKey(root, hiveName, $"{basePath}\\shell\\open\\DropTarget", backup);
             BackupKey(root, hiveName, $"{basePath}\\shell\\explore\\command", backup);
+            BackupKey(root, hiveName, $"{basePath}\\shell\\find", backup);
+            BackupKey(root, hiveName, $"{basePath}\\shell\\find\\command", backup);
+            BackupKey(root, hiveName, $"{basePath}\\shell\\find\\DropTarget", backup);
+            BackupKey(root, hiveName, $"{basePath}\\shell\\opennewwindow", backup);
+            BackupKey(root, hiveName, $"{basePath}\\shell\\opennewwindow\\command", backup);
+            if (basePath.EndsWith("Folder", StringComparison.OrdinalIgnoreCase))
+            {
+                BackupKey(root, hiveName, $"{basePath}\\shell\\opennewprocess", backup);
+                BackupKey(root, hiveName, $"{basePath}\\shell\\opennewprocess\\command", backup);
+                BackupKey(root, hiveName, $"{basePath}\\shell\\opennewtab", backup);
+                BackupKey(root, hiveName, $"{basePath}\\shell\\opennewtab\\command", backup);
+            }
             BackupKey(root, hiveName, $"{basePath}\\shell\\open_speed_explorer", backup);
             BackupKey(root, hiveName, $"{basePath}\\shell\\open_speed_explorer\\command", backup);
         }
@@ -261,7 +408,23 @@ public static class FileManagerIntegrationService
 
         if (key != null)
         {
-            foreach (var valueName in new[] { "", "Icon", "DelegateExecute" })
+            foreach (var valueName in new[]
+            {
+                "",
+                "Icon",
+                "DelegateExecute",
+                "ExplorerCommandHandler",
+                "ExplorerHost",
+                "CommandStateHandler",
+                "CommandStateSync",
+                "OnlyInBrowserWindow",
+                "ProgrammaticAccessOnly",
+                "Extended",
+                "AppliesTo",
+                "MUIVerb",
+                "LaunchExplorerFlags",
+                "MultiSelectModel"
+            })
             {
                 var value = key.GetValue(valueName, null, RegistryValueOptions.DoNotExpandEnvironmentNames);
                 var kind = RegistryValueKind.String;
@@ -282,6 +445,18 @@ public static class FileManagerIntegrationService
         {
             snapshot.Values.Add(new RegistryValueSnapshot { Name = "", Exists = false });
             snapshot.Values.Add(new RegistryValueSnapshot { Name = "Icon", Exists = false });
+            snapshot.Values.Add(new RegistryValueSnapshot { Name = "DelegateExecute", Exists = false });
+            snapshot.Values.Add(new RegistryValueSnapshot { Name = "ExplorerCommandHandler", Exists = false });
+            snapshot.Values.Add(new RegistryValueSnapshot { Name = "ExplorerHost", Exists = false });
+            snapshot.Values.Add(new RegistryValueSnapshot { Name = "CommandStateHandler", Exists = false });
+            snapshot.Values.Add(new RegistryValueSnapshot { Name = "CommandStateSync", Exists = false });
+            snapshot.Values.Add(new RegistryValueSnapshot { Name = "OnlyInBrowserWindow", Exists = false });
+            snapshot.Values.Add(new RegistryValueSnapshot { Name = "ProgrammaticAccessOnly", Exists = false });
+            snapshot.Values.Add(new RegistryValueSnapshot { Name = "Extended", Exists = false });
+            snapshot.Values.Add(new RegistryValueSnapshot { Name = "AppliesTo", Exists = false });
+            snapshot.Values.Add(new RegistryValueSnapshot { Name = "MUIVerb", Exists = false });
+            snapshot.Values.Add(new RegistryValueSnapshot { Name = "LaunchExplorerFlags", Exists = false });
+            snapshot.Values.Add(new RegistryValueSnapshot { Name = "MultiSelectModel", Exists = false });
         }
 
         backup.Keys.Add(snapshot);
@@ -363,6 +538,41 @@ public static class FileManagerIntegrationService
                 var current = exploreCmd.GetValue("")?.ToString();
                 if (string.Equals(current, command, StringComparison.OrdinalIgnoreCase))
                     exploreCmd.DeleteValue("", false);
+            }
+
+            using var openNewWindowCmd = root.OpenSubKey($"{basePath}\\shell\\opennewwindow\\command", writable: true);
+            if (openNewWindowCmd != null)
+            {
+                var current = openNewWindowCmd.GetValue("")?.ToString();
+                if (string.Equals(current, command, StringComparison.OrdinalIgnoreCase))
+                    openNewWindowCmd.DeleteValue("", false);
+            }
+
+            using var findCmd = root.OpenSubKey($"{basePath}\\shell\\find\\command", writable: true);
+            if (findCmd != null)
+            {
+                var current = findCmd.GetValue("")?.ToString();
+                if (string.Equals(current, command, StringComparison.OrdinalIgnoreCase))
+                    findCmd.DeleteValue("", false);
+            }
+
+            if (basePath.EndsWith("Folder", StringComparison.OrdinalIgnoreCase))
+            {
+                using var openNewProcessCmd = root.OpenSubKey($"{basePath}\\shell\\opennewprocess\\command", writable: true);
+                if (openNewProcessCmd != null)
+                {
+                    var current = openNewProcessCmd.GetValue("")?.ToString();
+                    if (string.Equals(current, command, StringComparison.OrdinalIgnoreCase))
+                        openNewProcessCmd.DeleteValue("", false);
+                }
+
+                using var openNewTabCmd = root.OpenSubKey($"{basePath}\\shell\\opennewtab\\command", writable: true);
+                if (openNewTabCmd != null)
+                {
+                    var current = openNewTabCmd.GetValue("")?.ToString();
+                    if (string.Equals(current, command, StringComparison.OrdinalIgnoreCase))
+                        openNewTabCmd.DeleteValue("", false);
+                }
             }
         }
     }

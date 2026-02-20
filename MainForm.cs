@@ -469,7 +469,8 @@ public partial class MainForm : Form
         ApplySettings();   
         this.KeyUp += (s, e) => { if (_hotkeyController.IsActionKeyCode("QuickLook", e.KeyCode)) HideQuickLook(); };
 
-        var normalizedStartup = NormalizeStartupPath(initialPath, out _startupSelectPaths);
+        bool inferStartupSelection = !string.IsNullOrWhiteSpace(initialPath);
+        var normalizedStartup = NormalizeStartupPath(initialPath, out _startupSelectPaths, inferStartupSelection);
         _fastStartup = _startupSelectPaths != null && _startupSelectPaths.Count > 0;
         InitializeTabs(normalizedStartup);
 
@@ -479,8 +480,8 @@ public partial class MainForm : Form
 
     private void InitializeTabs(string? initialPath) => _tabsController.InitializeTabs(initialPath);
 
-    private string NormalizeStartupPath(string? input, out List<string>? selectPaths)
-        => _startupIconController.NormalizeStartupPath(input, out selectPaths);
+    private string NormalizeStartupPath(string? input, out List<string>? selectPaths, bool inferRecentSelectionForDirectory = false)
+        => _startupIconController.NormalizeStartupPath(input, out selectPaths, inferRecentSelectionForDirectory);
 
     public void HandleExternalPath(string? rawPath) => _tabsController.HandleExternalPath(rawPath);
 

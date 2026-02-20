@@ -63,8 +63,9 @@ public partial class MainForm
 
         // Create a hashset for fast lookup of exact paths
         var pathSet = new HashSet<string>(paths, StringComparer.OrdinalIgnoreCase);
+        bool hasRootedInput = paths.Any(static p => !string.IsNullOrWhiteSpace(p) && Path.IsPathRooted(p));
 
-        // Also create a set of filenames in case the path differs slightly or for robustness
+        // Keep filename fallback only for non-rooted requests to avoid cross-folder false matches.
         var nameSet = new HashSet<string>(
             paths
                 .Select(Path.GetFileName)
@@ -79,7 +80,10 @@ public partial class MainForm
             var item = _items[i];
 
             // Check full path first
-            if (pathSet.Contains(item.FullPath) || nameSet.Contains(item.Name))
+            bool matches = pathSet.Contains(item.FullPath);
+            if (!matches && !hasRootedInput)
+                matches = nameSet.Contains(item.Name);
+            if (matches)
             {
                 _listView.SelectedIndices.Add(i);
                 if (!firstFound)

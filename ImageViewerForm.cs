@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Text;
@@ -45,7 +46,7 @@ public class ImageViewerForm : Form
     private readonly Label _aiStatusLabel;
     private readonly TextBox _targetLanguageBox;
     private readonly CheckBox _overlayToggle;
-    private readonly CheckBox _reuseSavedOcrCheck;
+    private readonly CheckBox _showSavedOcrCheck;
     private readonly CheckBox _showSavedTranslationCheck;
     private readonly Button _prevBtn;
     private readonly Button _nextBtn;
@@ -60,6 +61,7 @@ public class ImageViewerForm : Form
     private readonly Button _tagBtn;
     private readonly Button _clearOverlayBtn;
     private readonly Button _copyResultBtn;
+    private readonly Button _openSavedOcrFileBtn;
     private readonly LlmService _llmService = new();
 
     private float _zoomLevel = 1.0f;
@@ -77,6 +79,7 @@ public class ImageViewerForm : Form
     private LlmTextTranslationResult? _savedTranslationForCurrentImage;
     private List<string> _lastTranslations = new();
     private readonly List<OverlayTextBlock> _overlayBlocks = new();
+    private bool _currentOverlayFromSavedCache;
     private bool _suppressSavedTranslationToggleEvent;
 
     private sealed class OverlayTextBlock
@@ -316,14 +319,12 @@ public class ImageViewerForm : Form
             Margin = Scale(new Padding(0, 5, 8, 0))
         };
         _copyResultBtn = CreateButton("Copy", Scale(56));
-        _clearOverlayBtn = CreateButton("Clear", Scale(56));
         aiToolsRow.Controls.Add(_overlayToggle);
         aiToolsRow.Controls.Add(_copyResultBtn);
-        aiToolsRow.Controls.Add(_clearOverlayBtn);
 
-        var cacheRow = new FlowLayoutPanel
+        var savedToggleRow = new FlowLayoutPanel
         {
-            Dock = DockStyle.Top,
+            Dock = DockStyle.Bottom,
             Height = Scale(24),
             FlowDirection = FlowDirection.LeftToRight,
             WrapContents = false,
@@ -331,11 +332,11 @@ public class ImageViewerForm : Form
             Margin = Padding.Empty,
             Padding = Padding.Empty
         };
-        _reuseSavedOcrCheck = new CheckBox
+        _showSavedOcrCheck = new CheckBox
         {
             AutoSize = true,
-            Text = "Use saved OCR if available",
-            Checked = true,
+            Text = "Show saved OCR",
+            Checked = _settings.ImageViewerShowSavedOcr,
             ForeColor = ForeColor_Dark,
             Font = new Font("Segoe UI", 8),
             BackColor = Color.Transparent,
@@ -351,8 +352,23 @@ public class ImageViewerForm : Form
             BackColor = Color.Transparent,
             Margin = new Padding(0, Scale(3), 0, 0)
         };
-        cacheRow.Controls.Add(_reuseSavedOcrCheck);
-        cacheRow.Controls.Add(_showSavedTranslationCheck);
+        savedToggleRow.Controls.Add(_showSavedOcrCheck);
+        savedToggleRow.Controls.Add(_showSavedTranslationCheck);
+
+        var savedActionRow = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Bottom,
+            Height = Scale(28),
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false,
+            BackColor = Color.Transparent,
+            Margin = Padding.Empty,
+            Padding = Padding.Empty
+        };
+        _openSavedOcrFileBtn = CreateButton("Show File", Scale(74));
+        _clearOverlayBtn = CreateButton("Delete Saved OCR", Scale(136));
+        savedActionRow.Controls.Add(_openSavedOcrFileBtn);
+        savedActionRow.Controls.Add(_clearOverlayBtn);
 
         _aiStatusLabel = new Label
         {
@@ -379,8 +395,9 @@ public class ImageViewerForm : Form
         };
 
         _aiPanel.Controls.Add(_aiOutputBox);
+        _aiPanel.Controls.Add(savedActionRow);
+        _aiPanel.Controls.Add(savedToggleRow);
         _aiPanel.Controls.Add(_aiStatusLabel);
-        _aiPanel.Controls.Add(cacheRow);
         _aiPanel.Controls.Add(aiToolsRow);
         _aiPanel.Controls.Add(langRow);
         _aiPanel.Controls.Add(aiActionRow);
@@ -389,19 +406,10 @@ public class ImageViewerForm : Form
         _translateBtn.Click += async (s, e) => await RunViewerOcrAsync(true);
         _tagBtn.Click += async (s, e) => await RunViewerTaggingAsync();
         _overlayToggle.CheckedChanged += (s, e) => _pictureBox.Invalidate();
-        _reuseSavedOcrCheck.CheckedChanged += (s, e) =>
-        {
-            if (_reuseSavedOcrCheck.Checked)
-                TryApplySavedOcrForCurrentImage(allowStatusUpdate: true);
-        };
+        _showSavedOcrCheck.CheckedChanged += (s, e) => OnShowSavedOcrToggled();
         _showSavedTranslationCheck.CheckedChanged += (s, e) => ApplySavedTranslationToggleForCurrentImage();
-        _clearOverlayBtn.Click += (s, e) =>
-        {
-            _overlayBlocks.Clear();
-            _lastTranslations = new List<string>();
-            _pictureBox.Invalidate();
-            _aiStatusLabel.Text = "Overlay cleared";
-        };
+        _clearOverlayBtn.Click += (s, e) => DeleteSavedOcrForCurrentImage();
+        _openSavedOcrFileBtn.Click += (s, e) => OpenSavedOcrFileForCurrentImage();
         _copyResultBtn.Click += (s, e) =>
         {
             if (!string.IsNullOrWhiteSpace(_aiOutputBox.Text))
@@ -770,12 +778,14 @@ public class ImageViewerForm : Form
         _tagBtn.Enabled = !busy;
         _targetLanguageBox.Enabled = !busy;
         _overlayToggle.Enabled = !busy;
-        _reuseSavedOcrCheck.Enabled = !busy;
+        _showSavedOcrCheck.Enabled = !busy;
         _showSavedTranslationCheck.Enabled = !busy;
         _clearOverlayBtn.Enabled = !busy;
+        _openSavedOcrFileBtn.Enabled = !busy;
         _copyResultBtn.Enabled = !busy;
         _aiStatusLabel.Text = statusText;
         Cursor = busy ? Cursors.WaitCursor : Cursors.Default;
+        UpdateSavedCacheUiState();
     }
 
     private async Task<string?> EnsureVisionModelAsync()
@@ -787,13 +797,69 @@ public class ImageViewerForm : Form
     private static string GetOcrOutputDirectory()
         => Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "OCR_output");
 
-    private static string GetOcrCachePath(string imagePath)
+    private static string ComputeNormalizedPathHash(string imagePath)
     {
         string normalized = Path.GetFullPath(imagePath).Trim().ToLowerInvariant();
         using var sha = SHA256.Create();
         var hashBytes = sha.ComputeHash(Encoding.UTF8.GetBytes(normalized));
-        string hash = Convert.ToHexString(hashBytes);
+        return Convert.ToHexString(hashBytes);
+    }
+
+    private static string SanitizeFileComponent(string value, int maxLen = 64)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return "image";
+
+        var sb = new StringBuilder(value.Length);
+        foreach (char ch in value)
+        {
+            if (char.IsLetterOrDigit(ch) || ch == '-' || ch == '_')
+                sb.Append(ch);
+            else if (char.IsWhiteSpace(ch) || ch == '.')
+                sb.Append('_');
+        }
+
+        string sanitized = sb.ToString().Trim('_');
+        if (string.IsNullOrWhiteSpace(sanitized))
+            sanitized = "image";
+        if (sanitized.Length > maxLen)
+            sanitized = sanitized.Substring(0, maxLen);
+        return sanitized;
+    }
+
+    private static string GetOcrCachePath(string imagePath)
+    {
+        string hash = ComputeNormalizedPathHash(imagePath);
+        string imageName = SanitizeFileComponent(Path.GetFileNameWithoutExtension(imagePath));
+        string shortHash = hash.Length > 12 ? hash.Substring(0, 12) : hash;
+        return Path.Combine(GetOcrOutputDirectory(), $"{imageName}__{shortHash}.json");
+    }
+
+    private static string GetLegacyOcrCachePath(string imagePath)
+    {
+        string hash = ComputeNormalizedPathHash(imagePath);
         return Path.Combine(GetOcrOutputDirectory(), $"{hash}.json");
+    }
+
+    private static IEnumerable<string> EnumerateOcrCacheCandidates(string imagePath)
+    {
+        yield return GetOcrCachePath(imagePath);
+        yield return GetLegacyOcrCachePath(imagePath);
+    }
+
+    private static bool TryGetExistingOcrCachePath(string imagePath, out string cachePath)
+    {
+        foreach (var candidate in EnumerateOcrCacheCandidates(imagePath))
+        {
+            if (File.Exists(candidate))
+            {
+                cachePath = candidate;
+                return true;
+            }
+        }
+
+        cachePath = GetOcrCachePath(imagePath);
+        return false;
     }
 
     private static bool TryGetSourceStamp(string imagePath, out long length, out long lastWriteUtcTicks)
@@ -845,7 +911,9 @@ public class ImageViewerForm : Form
         if (!TryGetSourceStamp(imagePath, out long srcLength, out long srcTicks))
             return false;
 
-        string cachePath = GetOcrCachePath(imagePath);
+        if (!TryGetExistingOcrCachePath(imagePath, out string cachePath))
+            return false;
+
         var loaded = TryReadOcrEnvelopeUnchecked(cachePath);
         if (loaded?.Result == null)
             return false;
@@ -888,18 +956,6 @@ public class ImageViewerForm : Form
         if (string.IsNullOrWhiteSpace(translation.TranslatedFullText) && translation.Translations.Count > 0)
             translation.TranslatedFullText = string.Join(Environment.NewLine, translation.Translations);
 
-        return true;
-    }
-
-    private static bool TryLoadSavedOcrResult(string imagePath, out LlmImageTextResult? ocr, out string cachedModel)
-    {
-        ocr = null;
-        cachedModel = "";
-        if (!TryLoadSavedOcrEnvelope(imagePath, out var envelope) || envelope?.Result == null)
-            return false;
-
-        ocr = envelope.Result;
-        cachedModel = envelope.ModelId ?? "";
         return true;
     }
 
@@ -1008,28 +1064,253 @@ public class ImageViewerForm : Form
         }
     }
 
+    private void UpdateSavedCacheUiState()
+    {
+        bool hasSaved = false;
+        string? imagePath = GetCurrentImagePath();
+        if (!string.IsNullOrWhiteSpace(imagePath))
+            hasSaved = TryGetExistingOcrCachePath(imagePath, out _);
+
+        _openSavedOcrFileBtn.Enabled = !_aiBusy && hasSaved;
+        _clearOverlayBtn.Enabled = !_aiBusy && hasSaved;
+
+        if (_savedTranslationForCurrentImage == null && _showSavedTranslationCheck.Checked)
+            SetShowSavedTranslationChecked(false);
+
+        _showSavedTranslationCheck.Enabled = !_aiBusy && _showSavedOcrCheck.Checked && _savedTranslationForCurrentImage != null;
+    }
+
+    private void OnShowSavedOcrToggled()
+    {
+        _settings.ImageViewerShowSavedOcr = _showSavedOcrCheck.Checked;
+        _settings.Save();
+
+        if (_showSavedOcrCheck.Checked)
+        {
+            TryApplySavedOcrForCurrentImage(allowStatusUpdate: true);
+        }
+        else
+        {
+            if (_currentOverlayFromSavedCache)
+            {
+                _overlayBlocks.Clear();
+                _lastTranslations = new List<string>();
+                _savedTranslationForCurrentImage = null;
+                _ocrImagePath = null;
+                _lastOcrResult = null;
+                _aiOutputBox.Clear();
+                _pictureBox.Invalidate();
+                _currentOverlayFromSavedCache = false;
+            }
+            if (!_aiBusy)
+                _aiStatusLabel.Text = "Saved OCR hidden";
+        }
+
+        UpdateSavedCacheUiState();
+    }
+
+    private void DeleteSavedOcrForCurrentImage()
+    {
+        string? imagePath = GetCurrentImagePath();
+        if (string.IsNullOrWhiteSpace(imagePath))
+            return;
+
+        int deleted = 0;
+        foreach (var path in EnumerateOcrCacheCandidates(imagePath))
+        {
+            try
+            {
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                    deleted++;
+                }
+            }
+            catch (Exception ex)
+            {
+                LlmDebugLogger.LogError($"Failed to delete saved OCR file '{path}': {ex.Message}");
+            }
+        }
+
+        if (deleted == 0)
+        {
+            if (!_aiBusy)
+                _aiStatusLabel.Text = "No saved OCR file to delete";
+            UpdateSavedCacheUiState();
+            return;
+        }
+
+        _overlayBlocks.Clear();
+        _lastTranslations = new List<string>();
+        _savedTranslationForCurrentImage = null;
+        _ocrImagePath = null;
+        _lastOcrResult = null;
+        _aiOutputBox.Clear();
+        _pictureBox.Invalidate();
+        _currentOverlayFromSavedCache = false;
+        SetShowSavedTranslationChecked(false);
+
+        if (!_aiBusy)
+            _aiStatusLabel.Text = "Deleted saved OCR";
+
+        UpdateSavedCacheUiState();
+    }
+
+    private void OpenSavedOcrFileForCurrentImage()
+    {
+        string? imagePath = GetCurrentImagePath();
+        if (string.IsNullOrWhiteSpace(imagePath))
+            return;
+
+        if (!TryGetExistingOcrCachePath(imagePath, out string cachePath))
+        {
+            if (!_aiBusy)
+                _aiStatusLabel.Text = "No saved OCR file";
+            return;
+        }
+
+        string selectArg = $"/select,\"{cachePath}\"";
+        string? cacheDirectory = Path.GetDirectoryName(cachePath);
+        if (string.IsNullOrWhiteSpace(cacheDirectory) || !Directory.Exists(cacheDirectory))
+        {
+            if (!_aiBusy)
+                _aiStatusLabel.Text = "Saved OCR folder not found";
+            return;
+        }
+
+        try
+        {
+            var existingMain = Application.OpenForms
+                .OfType<MainForm>()
+                .LastOrDefault(f => !f.IsDisposed);
+            if (existingMain != null)
+            {
+                if (existingMain.WindowState == FormWindowState.Minimized)
+                    existingMain.WindowState = FormWindowState.Normal;
+                existingMain.Show();
+                existingMain.Activate();
+                existingMain.BringToFront();
+                existingMain.HandleExternalPath(selectArg);
+                if (!_aiBusy)
+                    _aiStatusLabel.Text = $"Opened and selected: {Path.GetFileName(cachePath)}";
+                return;
+            }
+        }
+        catch (Exception ex)
+        {
+            LlmDebugLogger.LogExecution($"Direct open/select via existing MainForm failed: {ex.Message}", false);
+        }
+
+        try
+        {
+            string exePath = Application.ExecutablePath;
+            if (!string.IsNullOrWhiteSpace(exePath) && File.Exists(exePath))
+            {
+                var appPsi = new ProcessStartInfo
+                {
+                    FileName = exePath,
+                    Arguments = selectArg,
+                    UseShellExecute = true
+                };
+                Process.Start(appPsi);
+                if (!_aiBusy)
+                    _aiStatusLabel.Text = $"Opened and selected: {Path.GetFileName(cachePath)}";
+                return;
+            }
+        }
+        catch (Exception ex)
+        {
+            LlmDebugLogger.LogExecution($"Open/select via app executable failed: {ex.Message}", false);
+        }
+
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = cacheDirectory,
+                Verb = "open",
+                UseShellExecute = true
+            };
+            Process.Start(psi);
+            if (!_aiBusy)
+                _aiStatusLabel.Text = $"Opened saved OCR folder: {Path.GetFileName(cachePath)}";
+            return;
+        }
+        catch (Exception ex)
+        {
+            LlmDebugLogger.LogExecution($"Open saved OCR folder via shell failed, falling back to Explorer select: {ex.Message}", false);
+        }
+
+        try
+        {
+            var fallbackPsi = new ProcessStartInfo
+            {
+                FileName = "explorer.exe",
+                Arguments = $"/select,\"{cachePath}\"",
+                UseShellExecute = true
+            };
+            Process.Start(fallbackPsi);
+            if (!_aiBusy)
+                _aiStatusLabel.Text = $"Opened saved OCR file: {Path.GetFileName(cachePath)}";
+        }
+        catch (Exception ex)
+        {
+            LlmDebugLogger.LogError($"Failed to open saved OCR path '{cachePath}': {ex.Message}");
+            if (!_aiBusy)
+                _aiStatusLabel.Text = "Failed to open saved OCR location";
+        }
+    }
+
     private void TryApplySavedOcrForCurrentImage(bool allowStatusUpdate)
     {
         string? imagePath = GetCurrentImagePath();
         if (string.IsNullOrWhiteSpace(imagePath) || !File.Exists(imagePath))
             return;
-        if (!_reuseSavedOcrCheck.Checked)
-            return;
 
         if (!TryLoadSavedOcrEnvelope(imagePath, out var envelope) || envelope?.Result == null)
         {
             _savedTranslationForCurrentImage = null;
+            if (_showSavedOcrCheck.Checked && _currentOverlayFromSavedCache)
+            {
+                _overlayBlocks.Clear();
+                _lastTranslations = new List<string>();
+                _ocrImagePath = null;
+                _lastOcrResult = null;
+                _aiOutputBox.Clear();
+                _pictureBox.Invalidate();
+                _currentOverlayFromSavedCache = false;
+            }
+            if (allowStatusUpdate && !_aiBusy && _showSavedOcrCheck.Checked)
+                _aiStatusLabel.Text = "No saved OCR for this image";
+            UpdateSavedCacheUiState();
+            return;
+        }
+
+        _savedTranslationForCurrentImage = TryBuildSavedTranslation(envelope, out var savedTranslation) ? savedTranslation : null;
+
+        if (!_showSavedOcrCheck.Checked)
+        {
+            _currentOverlayFromSavedCache = false;
+            if (allowStatusUpdate && !_aiBusy)
+            {
+                _aiStatusLabel.Text = _savedTranslationForCurrentImage == null
+                    ? "Saved OCR available"
+                    : $"Saved OCR + translation available ({_savedTranslationForCurrentImage.TargetLanguage})";
+            }
+            UpdateSavedCacheUiState();
             return;
         }
 
         _ocrImagePath = imagePath;
         _lastOcrResult = envelope.Result;
         _lastTranslations = new List<string>();
-        _savedTranslationForCurrentImage = TryBuildSavedTranslation(envelope, out var savedTranslation) ? savedTranslation : null;
-
+        _currentOverlayFromSavedCache = true;
         SetOverlayFromOcrResult(_lastOcrResult, null);
+        string cacheLabel = TryGetExistingOcrCachePath(imagePath, out string existingCachePath)
+            ? Path.GetFileName(existingCachePath)
+            : Path.GetFileName(GetOcrCachePath(imagePath));
         _aiOutputBox.Text = RenderOcrResult(_lastOcrResult);
-        _aiOutputBox.AppendText(Environment.NewLine + Environment.NewLine + "[Loaded from OCR_output cache]");
+        _aiOutputBox.AppendText(Environment.NewLine + Environment.NewLine + $"[Loaded from OCR_output cache: {cacheLabel}]");
 
         if (_savedTranslationForCurrentImage != null && _showSavedTranslationCheck.Checked)
         {
@@ -1047,17 +1328,32 @@ public class ImageViewerForm : Form
                 ? "Loaded OCR from cache"
                 : $"Loaded OCR from cache (saved translation: {_savedTranslationForCurrentImage.TargetLanguage})";
         }
+
+        if (_savedTranslationForCurrentImage == null && _showSavedTranslationCheck.Checked)
+            SetShowSavedTranslationChecked(false);
+
+        UpdateSavedCacheUiState();
     }
 
     private void ApplySavedTranslationToggleForCurrentImage()
     {
         if (_suppressSavedTranslationToggleEvent || _aiBusy)
             return;
-        if (_lastOcrResult == null)
+        if (!_showSavedOcrCheck.Checked)
+        {
+            SetShowSavedTranslationChecked(false);
             return;
+        }
 
         if (_showSavedTranslationCheck.Checked)
         {
+            if (_lastOcrResult == null)
+            {
+                TryApplySavedOcrForCurrentImage(allowStatusUpdate: true);
+                UpdateSavedCacheUiState();
+                return;
+            }
+
             if (_savedTranslationForCurrentImage == null)
             {
                 string? imagePath = GetCurrentImagePath();
@@ -1076,7 +1372,15 @@ public class ImageViewerForm : Form
             ApplyTranslationsToOverlay(_lastTranslations);
             _aiOutputBox.Text = RenderTranslatedResult(_lastOcrResult, _savedTranslationForCurrentImage);
             _aiOutputBox.AppendText(Environment.NewLine + Environment.NewLine + "[Loaded from OCR_output cache]");
+            _currentOverlayFromSavedCache = true;
             _aiStatusLabel.Text = $"Showing saved translation ({_savedTranslationForCurrentImage.TargetLanguage})";
+            UpdateSavedCacheUiState();
+            return;
+        }
+
+        if (_lastOcrResult == null)
+        {
+            UpdateSavedCacheUiState();
             return;
         }
 
@@ -1084,7 +1388,9 @@ public class ImageViewerForm : Form
         SetOverlayFromOcrResult(_lastOcrResult, null);
         _aiOutputBox.Text = RenderOcrResult(_lastOcrResult);
         _aiOutputBox.AppendText(Environment.NewLine + Environment.NewLine + "[Loaded from OCR_output cache]");
+        _currentOverlayFromSavedCache = true;
         _aiStatusLabel.Text = "Showing saved OCR text";
+        UpdateSavedCacheUiState();
     }
 
     private async Task RunViewerOcrAsync(bool withTranslation)
@@ -1098,83 +1404,16 @@ public class ImageViewerForm : Form
 
         try
         {
-            LlmImageTextResult? ocr = null;
-            string? model = null;
-            bool fromInMemoryCache = _lastOcrResult != null &&
-                string.Equals(_ocrImagePath, imagePath, StringComparison.OrdinalIgnoreCase);
-            bool fromSavedCache = false;
-            string savedCacheModel = "";
-
-            if (fromInMemoryCache)
-            {
-                ocr = _lastOcrResult;
-                _aiStatusLabel.Text = "Using in-memory OCR cache...";
-            }
-            else if (_reuseSavedOcrCheck.Checked && TryLoadSavedOcrResult(imagePath, out var savedOcr, out savedCacheModel))
-            {
-                ocr = savedOcr;
-                fromSavedCache = ocr != null;
-                LlmDebugLogger.LogExecution($"OCR disk cache hit: {Path.GetFileName(imagePath)}");
-                if (fromSavedCache)
-                {
-                    _ocrImagePath = imagePath;
-                    _lastOcrResult = ocr;
-                    TryLoadSavedTranslationResult(imagePath, out _savedTranslationForCurrentImage);
-                    _aiStatusLabel.Text = string.IsNullOrWhiteSpace(savedCacheModel)
-                        ? "Loaded OCR from disk cache..."
-                        : $"Loaded OCR cache ({savedCacheModel})...";
-                }
-            }
-            else if (_reuseSavedOcrCheck.Checked)
-            {
-                LlmDebugLogger.LogExecution($"OCR disk cache miss: {Path.GetFileName(imagePath)}");
-            }
-
-            // OCR-only action can skip model resolution entirely when cache is available.
-            if (ocr != null && !withTranslation)
-            {
-                _ocrImagePath = imagePath;
-                _lastOcrResult = ocr;
-                _lastTranslations = new List<string>();
-                SetOverlayFromOcrResult(ocr, null);
-                _aiOutputBox.Text = RenderOcrResult(ocr);
-                if (fromSavedCache)
-                    _aiOutputBox.AppendText(Environment.NewLine + Environment.NewLine + "[Loaded from OCR_output cache]");
-
-                SetAiBusy(false, fromSavedCache
-                    ? $"OCR loaded from cache ({ocr.Blocks.Count} blocks)"
-                    : $"OCR loaded from memory ({ocr.Blocks.Count} blocks)");
-                return;
-            }
-
-            if (withTranslation && ocr != null && _savedTranslationForCurrentImage != null)
-            {
-                string requestedTarget = string.IsNullOrWhiteSpace(_targetLanguageBox.Text) ? "English" : _targetLanguageBox.Text.Trim();
-                if (string.Equals(_savedTranslationForCurrentImage.TargetLanguage, requestedTarget, StringComparison.OrdinalIgnoreCase))
-                {
-                    _lastTranslations = _savedTranslationForCurrentImage.Translations?.ToList() ?? new List<string>();
-                    ApplyTranslationsToOverlay(_lastTranslations);
-                    _aiOutputBox.Text = RenderTranslatedResult(ocr, _savedTranslationForCurrentImage);
-                    _aiOutputBox.AppendText(Environment.NewLine + Environment.NewLine + "[Loaded translation from OCR_output cache]");
-                    SetShowSavedTranslationChecked(true);
-                    SetAiBusy(false, $"Translation loaded from cache ({_savedTranslationForCurrentImage.TargetLanguage})");
-                    return;
-                }
-            }
-
             SetAiBusy(true, "Resolving model...");
-            model = await EnsureVisionModelAsync();
+            string? model = await EnsureVisionModelAsync();
             if (string.IsNullOrWhiteSpace(model))
             {
                 SetAiBusy(false, "Model selection cancelled");
                 return;
             }
 
-            if (ocr == null)
-            {
-                SetAiBusy(true, "Extracting text...");
-                ocr = await _llmService.ExtractImageTextAsync(imagePath, model);
-            }
+            SetAiBusy(true, "Extracting text...");
+            var ocr = await _llmService.ExtractImageTextAsync(imagePath, model);
 
             if (ocr == null)
             {
@@ -1185,27 +1424,20 @@ public class ImageViewerForm : Form
 
             _ocrImagePath = imagePath;
             _lastOcrResult = ocr;
-            bool keepCurrentOverlay = withTranslation && fromInMemoryCache && _overlayBlocks.Count > 0;
-            if (!keepCurrentOverlay)
-            {
-                _lastTranslations = new List<string>();
-                SetOverlayFromOcrResult(ocr, null);
-                _aiOutputBox.Text = RenderOcrResult(ocr);
-                if (fromSavedCache)
-                {
-                    _aiOutputBox.AppendText(Environment.NewLine + Environment.NewLine + "[Loaded from OCR_output cache]");
-                }
-            }
+            _currentOverlayFromSavedCache = false;
+            _savedTranslationForCurrentImage = null;
+            _lastTranslations = new List<string>();
+            SetOverlayFromOcrResult(ocr, null);
+            _aiOutputBox.Text = RenderOcrResult(ocr);
+            SetShowSavedTranslationChecked(false);
 
-            if (!fromInMemoryCache && !fromSavedCache && !string.IsNullOrWhiteSpace(model))
+            if (!string.IsNullOrWhiteSpace(model))
                 SaveOcrResultToCache(imagePath, model, ocr);
 
             if (!withTranslation)
             {
-                if (fromSavedCache)
-                    SetAiBusy(false, $"OCR loaded from cache ({ocr.Blocks.Count} blocks)");
-                else
-                    SetAiBusy(false, $"OCR complete ({ocr.Blocks.Count} blocks)");
+                SetAiBusy(false, $"OCR regenerated ({ocr.Blocks.Count} blocks)");
+                UpdateSavedCacheUiState();
                 return;
             }
 
@@ -1228,12 +1460,15 @@ public class ImageViewerForm : Form
             _aiOutputBox.Text = RenderTranslatedResult(ocr, translation);
             SaveTranslationToCache(imagePath, model, ocr, translation);
             SetShowSavedTranslationChecked(true);
+            _currentOverlayFromSavedCache = false;
             SetAiBusy(false, $"Translated to {translation.TargetLanguage}");
+            UpdateSavedCacheUiState();
         }
         catch (Exception ex)
         {
             SetAiBusy(false, $"AI error: {ex.Message}");
             LlmDebugLogger.LogError($"Image viewer OCR/translate failed: {ex}");
+            UpdateSavedCacheUiState();
         }
     }
 
@@ -1583,6 +1818,7 @@ public class ImageViewerForm : Form
             _lastTranslations = new List<string>();
             _overlayBlocks.Clear();
             _aiOutputBox.Clear();
+            _currentOverlayFromSavedCache = false;
             if (!_aiBusy)
                 _aiStatusLabel.Text = "AI ready";
         }
@@ -1602,6 +1838,7 @@ public class ImageViewerForm : Form
             UpdateTags(path);
             FitToWindow();
             TryApplySavedOcrForCurrentImage(allowStatusUpdate: true);
+            UpdateSavedCacheUiState();
         }
         catch (SixLabors.ImageSharp.UnknownImageFormatException)
         {

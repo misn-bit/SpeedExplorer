@@ -136,9 +136,39 @@ public partial class MainForm
                     rawPath = parsed;
             }
 
-            var normalized = _owner.NormalizeStartupPath(rawPath, out var selectPaths);
+            var normalized = _owner.NormalizeStartupPath(rawPath, out var selectPaths, inferRecentSelectionForDirectory: true);
             if (_owner._listView != null && !_owner._listView.IsDisposed)
                 _owner._listView.Visible = true;
+
+            int existingTabIndex = _tabs.FindIndex(t =>
+                !string.IsNullOrWhiteSpace(t.CurrentPath) &&
+                string.Equals(t.CurrentPath, normalized, StringComparison.OrdinalIgnoreCase));
+            if (existingTabIndex >= 0)
+            {
+                bool hasExplicitSelection = selectPaths != null && selectPaths.Count > 0;
+                if (_activeTabIndex != existingTabIndex)
+                    SwitchToTab(existingTabIndex);
+
+                bool activeAlreadyOnPath = string.Equals(_owner._currentPath, normalized, StringComparison.OrdinalIgnoreCase);
+                if (activeAlreadyOnPath)
+                {
+                    if (hasExplicitSelection && !_owner.IsSearchMode)
+                    {
+                        _owner.SelectItems(selectPaths!);
+                        try
+                        {
+                            var listView = _owner._listView;
+                            if (listView != null && !listView.IsDisposed && listView.Visible && listView.CanFocus)
+                                listView.Focus();
+                        }
+                        catch { }
+                    }
+                    return;
+                }
+
+                _owner.ObserveTask(_owner.NavigateTo(normalized, selectPaths), "TabsController.HandleExternalPath/existing-tab");
+                return;
+            }
 
             bool useNewTab = _tabs.Count > 0;
             if (useNewTab)

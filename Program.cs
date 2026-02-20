@@ -51,7 +51,11 @@ static class Program
     static void Main(string[] args)
     {
         args ??= Array.Empty<string>();
-        LogCrash("Program.Main", null, $"START args=\"{string.Join(" ", args)}\"");
+        NormalizeWorkingDirectory();
+        string argsDump = args.Length == 0
+            ? "(none)"
+            : string.Join(" || ", args.Select((a, i) => $"[{i}]={a}"));
+        LogCrash("Program.Main", null, $"START argsCount={args.Length} args=\"{argsDump}\" cwd=\"{Environment.CurrentDirectory}\" exeDir=\"{GetExecutableDirectory()}\"");
         if (args.Any(FileManagerIntegrationService.IsApplyArg))
         {
             LogCrash("Program.Main", null, "ApplyFromCommandLine(true)");
@@ -73,8 +77,10 @@ static class Program
             return;
         }
 
-        // Delay startup if launched by Windows to avoid slowing down boot
-        if (args.Any(a => a.Equals("--startup", StringComparison.OrdinalIgnoreCase)))
+        // Delay startup only for explicit startup launches (no path payload).
+        bool hasStartupFlag = args.Any(a => a.Equals("--startup", StringComparison.OrdinalIgnoreCase));
+        bool hasPathLikeArg = args.Any(a => !string.IsNullOrWhiteSpace(a) && !a.StartsWith("--", StringComparison.Ordinal));
+        if (hasStartupFlag && !hasPathLikeArg)
         {
             Thread.Sleep(15000);
         }
@@ -231,6 +237,8 @@ static class Program
 
             string[] candidates = new[]
             {
+                GetExecutableDirectory(),
+                AppContext.BaseDirectory,
                 AppDomain.CurrentDomain.BaseDirectory,
                 Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SpeedExplorer"),
                 Path.Combine(Path.GetTempPath(), "SpeedExplorer")
@@ -254,6 +262,8 @@ static class Program
     {
         try
         {
+            if (string.IsNullOrWhiteSpace(dir))
+                return false;
             Directory.CreateDirectory(dir);
             string probe = Path.Combine(dir, ".diag_probe.tmp");
             File.WriteAllText(probe, "ok");
@@ -264,6 +274,55 @@ static class Program
         {
             return false;
         }
+    }
+
+    private static void NormalizeWorkingDirectory()
+    {
+        try
+        {
+            string exeDir = GetExecutableDirectory();
+            if (string.IsNullOrWhiteSpace(exeDir))
+                return;
+            if (string.Equals(Environment.CurrentDirectory, exeDir, StringComparison.OrdinalIgnoreCase))
+                return;
+            Environment.CurrentDirectory = exeDir;
+        }
+        catch
+        {
+        }
+    }
+
+    private static string GetExecutableDirectory()
+    {
+        try
+        {
+            string? processPath = Environment.ProcessPath;
+            if (!string.IsNullOrWhiteSpace(processPath))
+            {
+                string? dir = Path.GetDirectoryName(processPath);
+                if (!string.IsNullOrWhiteSpace(dir))
+                    return dir;
+            }
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            string exePath = Application.ExecutablePath;
+            if (!string.IsNullOrWhiteSpace(exePath))
+            {
+                string? dir = Path.GetDirectoryName(exePath);
+                if (!string.IsNullOrWhiteSpace(dir))
+                    return dir;
+            }
+        }
+        catch
+        {
+        }
+
+        return AppContext.BaseDirectory;
     }
 
     private static void SendToMainInstance(string[] args)
@@ -287,14 +346,25 @@ static class Program
                 return;
             }
 
+            var swConnect = Stopwatch.StartNew();
             using var client = new NamedPipeClientStream(".", "SpeedExplorerPipe", PipeDirection.Out);
             client.Connect(1000);
+            swConnect.Stop();
+            LogCrash("Pipe.ClientConnect", null, $"ms={swConnect.ElapsedMilliseconds}");
             using var writer = new StreamWriter(client);
             var payload = args != null && args.Length > 0 ? string.Join("\u001F", args) : pathArg;
             writer.WriteLine(payload);
             writer.Flush();
+            LogCrash("Pipe.ClientSend", null, $"payloadLen={(payload?.Length ?? 0)}");
         }
-        catch { }
+        catch (TimeoutException tex)
+        {
+            LogCrash("Pipe.ClientTimeout", tex);
+        }
+        catch (Exception ex)
+        {
+            LogCrash("Pipe.ClientError", ex);
+        }
     }
 
     private static void StartPipeListener(MultiWindowContext context)
@@ -305,29 +375,28 @@ static class Program
             {
                 try
                 {
+                    var swWait = Stopwatch.StartNew();
                     using var server = new NamedPipeServerStream("SpeedExplorerPipe", PipeDirection.In);
                     await server.WaitForConnectionAsync();
+                    swWait.Stop();
+                    LogCrash("Pipe.ServerAccepted", null, $"waitMs={swWait.ElapsedMilliseconds}");
                     using var reader = new StreamReader(server);
                     var raw = await reader.ReadLineAsync();
 
                     context.Invoke(() =>
                     {
                         var startPath = ParsePipePayload(raw);
+                        LogCrash("Pipe.Receive", null, $"raw=\"{raw}\" startPath=\"{startPath}\"");
                         if (IsExplorerShellArgument(startPath))
                         {
                             try { Process.Start(new ProcessStartInfo("explorer.exe", startPath!) { UseShellExecute = true }); } catch { }
                             return;
                         }
-                        var existing = Application.OpenForms.Cast<Form>()
-                            .OfType<MainForm>()
-                            .LastOrDefault(f => !f.IsDisposed);
+                        var existing = GetBestMainFormForExternalOpen();
                         if (existing != null)
                         {
-                            // Restore if minimized
-                            if (existing.WindowState == FormWindowState.Minimized)
-                            {
-                                existing.WindowState = FormWindowState.Normal;
-                            }
+                            LogCrash("Pipe.Target", null, $"targetHandle=0x{existing.Handle.ToInt64():X} visible={existing.Visible} state={existing.WindowState}");
+                            RestoreWindowForExternalOpen(existing);
                             
                             // Ensure visible first
                             existing.Show();
@@ -352,6 +421,42 @@ static class Program
                 }
             }
         });
+    }
+
+    private static MainForm? GetBestMainFormForExternalOpen()
+    {
+        var forms = Application.OpenForms.Cast<Form>()
+            .OfType<MainForm>()
+            .Where(f => !f.IsDisposed)
+            .ToList();
+        if (forms.Count == 0)
+            return null;
+
+        if (Form.ActiveForm is MainForm activeMain && !activeMain.IsDisposed)
+            return activeMain;
+
+        var focusedVisible = forms.FirstOrDefault(f => f.Visible && (f.Focused || f.ContainsFocus));
+        if (focusedVisible != null)
+            return focusedVisible;
+
+        var visibleNonMinimized = forms.FirstOrDefault(f => f.Visible && f.WindowState != FormWindowState.Minimized);
+        if (visibleNonMinimized != null)
+            return visibleNonMinimized;
+
+        var anyVisible = forms.FirstOrDefault(f => f.Visible);
+        if (anyVisible != null)
+            return anyVisible;
+
+        return forms[^1];
+    }
+
+    private static void RestoreWindowForExternalOpen(MainForm form)
+    {
+        if (form.WindowState != FormWindowState.Minimized)
+            return;
+
+        bool shouldMaximize = AppSettings.Current.MainWindowMaximized || AppSettings.Current.MainWindowFullscreen;
+        form.WindowState = shouldMaximize ? FormWindowState.Maximized : FormWindowState.Normal;
     }
 
     public class MultiWindowContext : ApplicationContext
@@ -449,52 +554,265 @@ static class Program
 
     internal static string? ExtractStartPathFromArgs(string[] args)
     {
-        if (args == null || args.Length == 0) return null;
+        if (args == null || args.Length == 0)
+            return null;
 
-        for (int i = 0; i < args.Length; i++)
+        var tokens = args
+            .Where(static a => !string.IsNullOrWhiteSpace(a))
+            .Select(static a => a.Trim())
+            .ToArray();
+        if (tokens.Length == 0)
+            return null;
+
+        // Pass 1: explicit /select wins, no matter argument order.
+        for (int i = 0; i < tokens.Length; i++)
         {
-            var arg = args[i];
-            if (string.IsNullOrWhiteSpace(arg)) continue;
-            if (arg.StartsWith("--", StringComparison.OrdinalIgnoreCase)) continue;
-
-            var lower = arg.ToLowerInvariant();
-            if (lower.StartsWith("/select") || lower.StartsWith("-select"))
-            {
-                int comma = arg.IndexOf(',');
-                if (comma >= 0 && comma + 1 < arg.Length)
-                    return arg.Substring(comma + 1).Trim().Trim('"');
-
-                // Handle /select:"path" or /select:path or /select=path
-                int sep = arg.IndexOf(':');
-                if (sep < 0) sep = arg.IndexOf('=');
-                if (sep >= 0 && sep + 1 < arg.Length)
-                    return arg.Substring(sep + 1).Trim().Trim('"');
-
-                if (i + 1 < args.Length)
-                    return args[i + 1].Trim().Trim('"');
-                return null;
-            }
-
-            if (lower.StartsWith("/e,") || lower.StartsWith("/root,") || lower.StartsWith("/root"))
-            {
-                int comma = arg.IndexOf(',');
-                if (comma >= 0 && comma + 1 < arg.Length)
-                    return arg.Substring(comma + 1).Trim().Trim('"');
-                if (i + 1 < args.Length)
-                    return args[i + 1].Trim().Trim('"');
-                return null;
-            }
-
-            return arg.Trim().Trim('"');
+            if (TryExtractSelectPath(tokens, i, out var selectedPath))
+                return selectedPath;
         }
 
-        return null;
+        // Pass 2: other Explorer routing switches (/root, /e).
+        for (int i = 0; i < tokens.Length; i++)
+        {
+            if (TryExtractExplorerOptionPath(tokens, i, out var optionPath))
+                return optionPath;
+        }
+
+        // Pass 3: best-effort plain path resolution.
+        string? firstDirectory = null;
+        string? firstFallback = null;
+        var unresolvedCandidates = new List<string>();
+        for (int i = 0; i < tokens.Length; i++)
+        {
+            var token = tokens[i];
+            if (IsSwitchToken(token))
+                continue;
+
+            var candidate = NormalizePotentialPath(token);
+            if (string.IsNullOrWhiteSpace(candidate))
+                continue;
+
+            if (File.Exists(candidate))
+                return candidate;
+
+            if (Directory.Exists(candidate))
+            {
+                firstDirectory ??= candidate;
+                continue;
+            }
+
+            unresolvedCandidates.Add(candidate);
+            firstFallback ??= candidate;
+        }
+
+        if (!string.IsNullOrWhiteSpace(firstDirectory) && unresolvedCandidates.Count > 0)
+        {
+            foreach (var unresolved in unresolvedCandidates)
+            {
+                if (string.IsNullOrWhiteSpace(unresolved))
+                    continue;
+                if (IsSwitchToken(unresolved))
+                    continue;
+                if (Path.IsPathRooted(unresolved))
+                    continue;
+
+                var trimmed = unresolved.Trim().Trim('"').TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                if (string.IsNullOrWhiteSpace(trimmed))
+                    continue;
+
+                var combined = Path.Combine(firstDirectory!, trimmed);
+                if (File.Exists(combined) || Directory.Exists(combined))
+                    return combined;
+            }
+        }
+
+        return firstDirectory ?? firstFallback;
     }
 
     internal static string? ExtractStartPathFromSingleArg(string arg)
     {
         if (string.IsNullOrWhiteSpace(arg)) return null;
         return ExtractStartPathFromArgs(new[] { arg });
+    }
+
+    private static bool TryExtractSelectPath(string[] tokens, int index, out string? path)
+    {
+        path = null;
+        if (index < 0 || index >= tokens.Length)
+            return false;
+
+        string token = tokens[index];
+        int selectIdx = token.IndexOf("/select", StringComparison.OrdinalIgnoreCase);
+        if (selectIdx < 0)
+            selectIdx = token.IndexOf("-select", StringComparison.OrdinalIgnoreCase);
+        if (selectIdx < 0)
+            return false;
+
+        string tail = token.Substring(selectIdx);
+        if (TryExtractPathFromSwitchTail(tail, ',', tokens, index, out path))
+            return true;
+        if (TryExtractPathFromSwitchTail(tail, ':', tokens, index, out path))
+            return true;
+        if (TryExtractPathFromSwitchTail(tail, '=', tokens, index, out path))
+            return true;
+
+        string normalizedTail = tail.Trim().Trim('"');
+        if ((normalizedTail.Equals("/select", StringComparison.OrdinalIgnoreCase) ||
+             normalizedTail.Equals("-select", StringComparison.OrdinalIgnoreCase) ||
+             normalizedTail.EndsWith(",", StringComparison.Ordinal)) &&
+            index + 1 < tokens.Length)
+        {
+            var next = NormalizePotentialPath(tokens[index + 1]);
+            if (!string.IsNullOrWhiteSpace(next) && !IsSwitchToken(next))
+            {
+                path = next;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool TryExtractExplorerOptionPath(string[] tokens, int index, out string? path)
+    {
+        path = null;
+        if (index < 0 || index >= tokens.Length)
+            return false;
+
+        string token = tokens[index];
+        string lower = token.ToLowerInvariant();
+
+        if (lower.StartsWith("/root", StringComparison.Ordinal))
+        {
+            if (TryExtractPathFromSwitchTail(token, ',', tokens, index, out path))
+                return true;
+            if (TryExtractPathFromSwitchTail(token, ':', tokens, index, out path))
+                return true;
+            if (TryExtractPathFromSwitchTail(token, '=', tokens, index, out path))
+                return true;
+
+            if (index + 1 < tokens.Length)
+            {
+                var next = NormalizePotentialPath(tokens[index + 1]);
+                if (!string.IsNullOrWhiteSpace(next) && !IsSwitchToken(next))
+                {
+                    path = next;
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        if (lower.StartsWith("/e,", StringComparison.Ordinal))
+        {
+            int comma = token.IndexOf(',');
+            if (comma >= 0 && comma + 1 < token.Length)
+            {
+                var after = NormalizePotentialPath(token[(comma + 1)..]);
+                if (!string.IsNullOrWhiteSpace(after))
+                {
+                    path = after;
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        if (lower.Equals("/e", StringComparison.Ordinal) && index + 1 < tokens.Length)
+        {
+            var next = NormalizePotentialPath(tokens[index + 1]);
+            if (!string.IsNullOrWhiteSpace(next) && !IsSwitchToken(next))
+            {
+                path = next;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool TryExtractPathFromSwitchTail(string tail, char delimiter, string[] tokens, int index, out string? path)
+    {
+        path = null;
+        int sep = tail.IndexOf(delimiter);
+        if (sep < 0)
+            return false;
+
+        string raw = sep + 1 < tail.Length ? tail[(sep + 1)..] : string.Empty;
+        var candidate = NormalizePotentialPath(raw);
+        if (!string.IsNullOrWhiteSpace(candidate) && !IsSwitchToken(candidate))
+        {
+            path = candidate;
+            return true;
+        }
+
+        if (index + 1 < tokens.Length)
+        {
+            var next = NormalizePotentialPath(tokens[index + 1]);
+            if (!string.IsNullOrWhiteSpace(next) && !IsSwitchToken(next))
+            {
+                path = next;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static string? NormalizePotentialPath(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            return null;
+
+        string candidate = raw.Trim();
+        candidate = candidate.Trim().Trim('"');
+        candidate = candidate.Trim().Trim(',').Trim();
+        if (string.IsNullOrWhiteSpace(candidate))
+            return null;
+
+        if (candidate.StartsWith("file://", StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                var uri = new Uri(candidate, UriKind.Absolute);
+                if (uri.IsFile)
+                    candidate = uri.LocalPath;
+            }
+            catch { }
+        }
+
+        int quotedArgSplit = candidate.IndexOf("\" ", StringComparison.Ordinal);
+        if (quotedArgSplit > 0)
+            candidate = candidate[..quotedArgSplit].Trim().Trim('"');
+
+        if (!File.Exists(candidate) && !Directory.Exists(candidate))
+        {
+            int switchSplit = candidate.IndexOf(" /", StringComparison.Ordinal);
+            if (switchSplit < 0)
+                switchSplit = candidate.IndexOf(" -", StringComparison.Ordinal);
+            if (switchSplit > 0)
+            {
+                var shortened = candidate[..switchSplit].Trim().Trim('"');
+                if (!string.IsNullOrWhiteSpace(shortened))
+                    candidate = shortened;
+            }
+        }
+
+        return string.IsNullOrWhiteSpace(candidate) ? null : candidate;
+    }
+
+    private static bool IsSwitchToken(string token)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+            return true;
+        string t = token.Trim();
+        if (t.StartsWith("--", StringComparison.Ordinal))
+            return true;
+        if (t.StartsWith("/", StringComparison.Ordinal))
+            return true;
+        if (t.StartsWith("-", StringComparison.Ordinal))
+            return true;
+        return false;
     }
 
     private static string? ParsePipePayload(string? raw)
