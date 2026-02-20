@@ -456,6 +456,18 @@ public partial class MainForm
             UpdateTabStripVisuals();
         }
 
+        public void SyncActiveTabPath(string currentPath, string currentDisplayPath)
+        {
+            if (_activeTabIndex < 0 || _activeTabIndex >= _tabs.Count)
+                return;
+
+            var tab = _tabs[_activeTabIndex];
+            tab.CurrentPath = currentPath;
+            tab.CurrentDisplayPath = currentDisplayPath;
+            tab.Title = GetTabTitleForPath(currentPath);
+            UpdateTabStripVisuals();
+        }
+
         public string GetTabTitleForPath(string path)
         {
             if (string.IsNullOrEmpty(path)) return "Tab";

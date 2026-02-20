@@ -15,6 +15,9 @@ public static class IconHelper
     private const uint SHGFI_SMALLICON = 0x000000001;
     private const uint SHGFI_LARGEICON = 0x000000000;         // Actually 0
     private const uint SHGFI_TYPENAME = 0x000000400;
+    private const uint SHGSI_ICON = 0x000000100;
+    private const uint SHGSI_SMALLICON = 0x000000001;
+    private const uint SHGSI_LARGEICON = 0x000000000;         // Actually 0
 
     [StructLayout(LayoutKind.Sequential)]
     private struct SHFILEINFO
@@ -26,6 +29,22 @@ public static class IconHelper
         public string szDisplayName;
         [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 80)]
         public string szTypeName;
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct SHSTOCKICONINFO
+    {
+        public uint cbSize;
+        public IntPtr hIcon;
+        public int iSysImageIndex;
+        public int iIcon;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
+        public string szPath;
+    }
+
+    private enum SHSTOCKICONID : uint
+    {
+        SIID_IMAGEFILES = 72
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -65,6 +84,9 @@ public static class IconHelper
 
     [DllImport("shell32.dll", CharSet = CharSet.Auto)]
     private static extern IntPtr SHGetFileInfo(string pszPath, uint dwFileAttributes, ref SHFILEINFO psfi, uint cbFileInfo, uint uFlags);
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    private static extern int SHGetStockIconInfo(SHSTOCKICONID siid, uint uFlags, ref SHSTOCKICONINFO psii);
 
     [DllImport("shell32.dll", EntryPoint = "#727")]
     private static extern int SHGetImageList(int iImageList, [MarshalAs(UnmanagedType.LPStruct)] Guid riid, out IImageList ppv);
@@ -257,6 +279,46 @@ public static class IconHelper
     {
         int size = large ? 32 : 16;
         return GetIconSized(path, isDirectory, size, forceUnique, grayscale);
+    }
+
+    public static Bitmap? GetStockImageFileIconSized(int size, bool grayscale = false)
+    {
+        lock (IconApiLock)
+        {
+            IntPtr hIcon = IntPtr.Zero;
+            try
+            {
+                var info = new SHSTOCKICONINFO
+                {
+                    cbSize = (uint)Marshal.SizeOf<SHSTOCKICONINFO>()
+                };
+
+                uint flags = SHGSI_ICON | (size <= 16 ? SHGSI_SMALLICON : SHGSI_LARGEICON);
+                int hr = SHGetStockIconInfo(SHSTOCKICONID.SIID_IMAGEFILES, flags, ref info);
+                if (hr != 0 || info.hIcon == IntPtr.Zero)
+                    return null;
+
+                hIcon = info.hIcon;
+                using var icon = Icon.FromHandle(hIcon);
+                using var cloned = (Icon)icon.Clone();
+                var baseBmp = cloned.ToBitmap();
+                var sized = size == baseBmp.Width ? baseBmp : RenderBitmapToRequestedSize(baseBmp, size);
+
+                if (grayscale)
+                    return ToGrayscale(sized);
+
+                return sized;
+            }
+            catch
+            {
+                return null;
+            }
+            finally
+            {
+                if (hIcon != IntPtr.Zero)
+                    DestroyIcon(hIcon);
+            }
+        }
     }
 
     private static bool LooksLikePath(string path)

@@ -233,14 +233,18 @@ internal sealed class IconLoadService : IDisposable
 
                 if (smallIcon == null)
                 {
-                    smallIcon = IconHelper.GetIconSized(lookupPath, isDirectory, _smallIcons.ImageSize.Width, isUnique, grayscale: !colored);
+                    if (isImage && !isDirectory)
+                        smallIcon = IconHelper.GetStockImageFileIconSized(_smallIcons.ImageSize.Width, grayscale: !colored);
+                    smallIcon ??= IconHelper.GetIconSized(lookupPath, isDirectory, _smallIcons.ImageSize.Width, isUnique, grayscale: !colored);
                     smallIcon ??= GetFallbackIconBitmap(lookupPath, isDirectory, _smallIcons.ImageSize.Width);
                 }
                 if (largeIcon == null)
                 {
                     if (needLarge)
                     {
-                        largeIcon = IconHelper.GetIconSized(lookupPath, isDirectory, _largeIcons.ImageSize.Width, isUnique, grayscale: !colored);
+                        if (isImage && !isDirectory)
+                            largeIcon = IconHelper.GetStockImageFileIconSized(_largeIcons.ImageSize.Width, grayscale: !colored);
+                        largeIcon ??= IconHelper.GetIconSized(lookupPath, isDirectory, _largeIcons.ImageSize.Width, isUnique, grayscale: !colored);
                         largeIcon ??= GetFallbackIconBitmap(lookupPath, isDirectory, _largeIcons.ImageSize.Width);
                     }
                     else if (smallIcon != null)

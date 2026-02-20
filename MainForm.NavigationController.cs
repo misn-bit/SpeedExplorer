@@ -254,6 +254,7 @@ public partial class MainForm
             UpdateBreadcrumbs(path);
             _addressTextBox.Text = path;
             _statusLabel.Text = Localization.T("status_loading");
+            _tabsController.SyncActiveTabPath(_currentPath, _currentDisplayPath);
             UpdateActiveTabTitle();
             // Push navigation chrome updates immediately so path/title/crumbs do not feel delayed.
             try

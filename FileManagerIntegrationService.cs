@@ -179,89 +179,45 @@ public static class FileManagerIntegrationService
             using var shellKey = root.CreateSubKey($"{basePath}\\shell");
             shellKey?.SetValue("", "open", RegistryValueKind.String);
 
-            using var openCmd = root.CreateSubKey($"{basePath}\\shell\\open\\command");
-            openCmd?.SetValue("", command, RegistryValueKind.String);
-            openCmd?.DeleteValue("DelegateExecute", false);
-            openCmd?.DeleteValue("ExplorerCommandHandler", false);
+            ApplyBasicVerbCommand(root, basePath, "open", command);
+            ApplyBasicVerbCommand(root, basePath, "explore", command);
 
-            try { root.DeleteSubKeyTree($"{basePath}\\shell\\open\\DropTarget", false); } catch { }
-
-            using var exploreCmd = root.CreateSubKey($"{basePath}\\shell\\explore\\command");
-            exploreCmd?.SetValue("", command, RegistryValueKind.String);
-            exploreCmd?.DeleteValue("DelegateExecute", false);
-            exploreCmd?.DeleteValue("ExplorerCommandHandler", false);
-
-            using var openNewWindowCmd = root.CreateSubKey($"{basePath}\\shell\\opennewwindow\\command");
-            openNewWindowCmd?.SetValue("", command, RegistryValueKind.String);
-            openNewWindowCmd?.DeleteValue("DelegateExecute", false);
-            openNewWindowCmd?.DeleteValue("ExplorerCommandHandler", false);
-
-            using var findVerb = root.OpenSubKey($"{basePath}\\shell\\find", writable: true);
-            if (findVerb != null)
-            {
-                using var findCmd = root.CreateSubKey($"{basePath}\\shell\\find\\command");
-                findCmd?.SetValue("", command, RegistryValueKind.String);
-                findCmd?.DeleteValue("DelegateExecute", false);
-                findCmd?.DeleteValue("ExplorerCommandHandler", false);
-                try { root.DeleteSubKeyTree($"{basePath}\\shell\\find\\DropTarget", false); } catch { }
-            }
-
-            SanitizeVerbMetadata(root, basePath, "open");
-            SanitizeVerbMetadata(root, basePath, "explore");
-            SanitizeVerbMetadata(root, basePath, "opennewwindow");
-            SanitizeVerbMetadata(root, basePath, "find");
-
+            // Revert old extended overrides so integration remains minimal and predictable.
+            ClearCommandOverrideIfMatches(root, basePath, "find", command);
+            ClearCommandOverrideIfMatches(root, basePath, "opennewwindow", command);
             if (basePath.EndsWith("Folder", StringComparison.OrdinalIgnoreCase))
             {
-                using var openNewProcessCmd = root.CreateSubKey($"{basePath}\\shell\\opennewprocess\\command");
-                openNewProcessCmd?.SetValue("", command, RegistryValueKind.String);
-                openNewProcessCmd?.DeleteValue("DelegateExecute", false);
-                openNewProcessCmd?.DeleteValue("ExplorerCommandHandler", false);
-
-                using var openNewTabCmd = root.CreateSubKey($"{basePath}\\shell\\opennewtab\\command");
-                openNewTabCmd?.SetValue("", command, RegistryValueKind.String);
-                openNewTabCmd?.DeleteValue("DelegateExecute", false);
-                openNewTabCmd?.DeleteValue("ExplorerCommandHandler", false);
-
-                SanitizeVerbMetadata(root, basePath, "opennewprocess");
-                SanitizeVerbMetadata(root, basePath, "opennewtab");
+                ClearCommandOverrideIfMatches(root, basePath, "opennewprocess", command);
+                ClearCommandOverrideIfMatches(root, basePath, "opennewtab", command);
             }
         }
 
     }
 
-    private static void SanitizeVerbMetadata(RegistryKey root, string basePath, string verb)
+    private static void ApplyBasicVerbCommand(RegistryKey root, string basePath, string verb, string command)
+    {
+        using var cmd = root.CreateSubKey($"{basePath}\\shell\\{verb}\\command");
+        cmd?.SetValue("", command, RegistryValueKind.String);
+        cmd?.DeleteValue("DelegateExecute", false);
+        cmd?.DeleteValue("ExplorerCommandHandler", false);
+
+        try { root.DeleteSubKeyTree($"{basePath}\\shell\\{verb}\\DropTarget", false); } catch { }
+        try { root.DeleteSubKeyTree($"{basePath}\\shell\\{verb}\\ddeexec", false); } catch { }
+    }
+
+    private static void ClearCommandOverrideIfMatches(RegistryKey root, string basePath, string verb, string command)
     {
         try
         {
-            using var verbKey = root.OpenSubKey($"{basePath}\\shell\\{verb}", writable: true);
-            if (verbKey == null) return;
+            using var cmd = root.OpenSubKey($"{basePath}\\shell\\{verb}\\command", writable: true);
+            if (cmd == null)
+                return;
 
-            // Explorer-specific metadata can force shell handler fallbacks/timeouts
-            // before command execution when another file manager owns the verb.
-            foreach (var name in new[]
-            {
-                "DelegateExecute",
-                "ExplorerCommandHandler",
-                "ExplorerHost",
-                "CommandStateHandler",
-                "CommandStateSync",
-                "OnlyInBrowserWindow",
-                "ProgrammaticAccessOnly",
-                "Extended",
-                "AppliesTo",
-                "MUIVerb",
-                "LaunchExplorerFlags"
-            })
-            {
-                verbKey.DeleteValue(name, false);
-            }
-        }
-        catch { }
-
-        try
-        {
-            root.DeleteSubKeyTree($"{basePath}\\shell\\{verb}\\ddeexec", false);
+            var current = cmd.GetValue("")?.ToString() ?? "";
+            if (string.Equals(current, command, StringComparison.OrdinalIgnoreCase))
+                cmd.DeleteValue("", false);
+            cmd.DeleteValue("DelegateExecute", false);
+            cmd.DeleteValue("ExplorerCommandHandler", false);
         }
         catch { }
     }

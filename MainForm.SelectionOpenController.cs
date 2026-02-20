@@ -114,6 +114,7 @@ public partial class MainForm
             if (Directory.Exists(path))
             {
                 _owner.ObserveTask(_owner.NavigateTo(path), "SelectionOpen.OpenShellOrPath");
+                return;
             }
             else if (FileSystemService.IsImageFile(path) && AppSettings.Current.UseBuiltInImageViewer)
             {
