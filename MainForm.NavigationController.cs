@@ -270,7 +270,8 @@ public partial class MainForm
             try
             {
                 bool preserveAiPanelFocus = _llmChatPanel != null && _llmChatPanel.IsExpanded;
-                if (!preserveAiPanelFocus && _listView.Visible && _listView.CanFocus)
+                bool isRenaming = _renameTextBox != null && !_renameTextBox.IsDisposed;
+                if (!preserveAiPanelFocus && !isRenaming && _listView.Visible && _listView.CanFocus)
                     _listView.Focus();
             }
             catch { }
@@ -416,7 +417,8 @@ public partial class MainForm
                 if (!IsDisposed && !Disposing && _listView != null && !_listView.IsDisposed)
                 {
                     bool preserveAiPanelFocus = _llmChatPanel != null && _llmChatPanel.IsExpanded;
-                    if (!preserveAiPanelFocus &&
+                    bool isRenaming = _renameTextBox != null && !_renameTextBox.IsDisposed;
+                    if (!preserveAiPanelFocus && !isRenaming &&
                         _listView.Visible && _listView.CanFocus)
                     {
                         _listView.Focus();
@@ -429,7 +431,8 @@ public partial class MainForm
                                 {
                                     if (!IsDisposed && !Disposing &&
                                         _listView != null && !_listView.IsDisposed &&
-                                        _listView.Visible && _listView.CanFocus)
+                                        _listView.Visible && _listView.CanFocus &&
+                                        (_renameTextBox == null || _renameTextBox.IsDisposed))
                                     {
                                         _listView.Focus();
                                     }
@@ -640,7 +643,8 @@ public partial class MainForm
         }
 
         bool preserveAiPanelFocus = _llmChatPanel != null && _llmChatPanel.IsExpanded;
-        if (!preserveAiPanelFocus)
+        bool isRenaming = _renameTextBox != null && !_renameTextBox.IsDisposed;
+        if (!preserveAiPanelFocus && !isRenaming)
             _listView.Focus();
         _listView.Invalidate();
         try { _listView.Update(); } catch (Exception ex) { Debug.WriteLine($"{scope} Update failed: {ex.Message}"); }

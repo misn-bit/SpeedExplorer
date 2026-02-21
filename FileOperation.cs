@@ -188,10 +188,21 @@ public class RenameOperation : FileOperation
 public class CreateFileOperation : FileOperation
 {
     public string FilePath { get; private set; }
+    private byte[]? _cachedContent;
 
     public CreateFileOperation(string filePath)
     {
         FilePath = filePath;
+        // Capture file content at creation time so we can re-create it on Redo if needed.
+        try
+        {
+            if (File.Exists(filePath))
+                _cachedContent = File.ReadAllBytes(filePath);
+        }
+        catch
+        {
+            _cachedContent = Array.Empty<byte>();
+        }
     }
 
     public override string GetDescription()
@@ -201,18 +212,37 @@ public class CreateFileOperation : FileOperation
 
     public override void Redo()
     {
-        // Cannot easily redo content creation without storing content, 
-        // but for now we assume file exists or we don't support redo after undo fully 
-        // unless we store content. For simpler "Undo" (delete), it's fine.
-        // If we want robust Redo, we need content.
-        // Let's assume for this version, Redo is limited or we just don't delete on Undo?
-        // Standard undo for "Create" is "Delete". Redo is "Restore from Recycle Bin" if we deleted it.
-        // So we can use Shell logic.
+        // Undo sends the file to the Recycle Bin via ShellDelete.
+        // Try to restore it from there first.
+        try
+        {
+            FileSystemService.RestoreFromRecycleBin(new[] { FilePath }, IntPtr.Zero);
+            if (File.Exists(FilePath))
+                return;
+        }
+        catch { }
+
+        // Fallback: re-create the file with the cached content.
+        try
+        {
+            var dir = Path.GetDirectoryName(FilePath);
+            if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
+                Directory.CreateDirectory(dir);
+            File.WriteAllBytes(FilePath, _cachedContent ?? Array.Empty<byte>());
+        }
+        catch (Exception ex)
+        {
+            System.Windows.Forms.MessageBox.Show(
+                $"Could not re-create file: {ex.Message}",
+                "Redo Error",
+                System.Windows.Forms.MessageBoxButtons.OK,
+                System.Windows.Forms.MessageBoxIcon.Warning);
+        }
     }
 
     public override void Undo()
     {
-        // Delete the created file
+        // Delete the created file (sends to Recycle Bin)
         if (File.Exists(FilePath))
         {
             FileSystemService.ShellDelete(new[] { FilePath }, IntPtr.Zero, recordOperation: false);

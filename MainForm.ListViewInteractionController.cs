@@ -695,10 +695,12 @@ public partial class MainForm
                 startIndex = 0;
             }
 
-            for (int i = 0; i < _owner._items.Count; i++)
+            // Single-pass loop that wraps around the entire list.
+            int count = _owner._items.Count;
+            for (int i = 0; i < count; i++)
             {
-                int idx = (startIndex + i) % _owner._items.Count;
-                if (_owner._items[idx].Name.Length > 0 && char.ToUpper(_owner._items[idx].Name[0]) == _owner._lastSearchChar)
+                int idx = (startIndex + i) % count;
+                if (_owner._items[idx].Name.Length > 0 && char.ToUpper(_owner._items[idx].Name[0]) == c)
                 {
                     _owner._listView.SelectedIndices.Clear();
                     _owner._listView.SelectedIndices.Add(idx);
@@ -709,12 +711,8 @@ public partial class MainForm
                 }
             }
 
-            // Wrap around searched everything and didn't find next/start.
-            if (startIndex != 0)
-            {
-                _owner._lastSearchIndex = -1;
-                SearchAndSelect(c);
-            }
+            // No match found — reset search state.
+            _owner._lastSearchIndex = -1;
         }
 
         public void SortAndRefresh()

@@ -97,7 +97,8 @@ public partial class MainForm
 
         if (firstFound)
         {
-            _listView.Focus();
+            if (_renameTextBox == null || _renameTextBox.IsDisposed)
+                _listView.Focus();
         }
     }
 

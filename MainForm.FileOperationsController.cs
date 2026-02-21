@@ -13,36 +13,30 @@ public partial class MainForm
     private sealed class FileOperationsController
     {
         private readonly MainForm _owner;
+        private bool _renameCommitting;
 
         public FileOperationsController(MainForm owner)
         {
             _owner = owner;
         }
 
-        public void StartRenameAfterCreation(string newPath)
+        public async void StartRenameAfterCreation(string newPath)
         {
-            _ = _owner.RefreshCurrentAsync();
+            await _owner.RefreshCurrentAsync();
 
-            // Wait a bit for the refresh to complete and items to be populated
-            Task.Delay(100).ContinueWith(_ =>
+            var item = _owner._items.FirstOrDefault(i => i.FullPath.Equals(newPath, StringComparison.OrdinalIgnoreCase));
+            if (item != null)
             {
-                _owner.BeginInvoke(() =>
+                int index = _owner._items.IndexOf(item);
+                if (index >= 0)
                 {
-                    var item = _owner._items.FirstOrDefault(i => i.FullPath.Equals(newPath, StringComparison.OrdinalIgnoreCase));
-                    if (item != null)
-                    {
-                        int index = _owner._items.IndexOf(item);
-                        if (index >= 0)
-                        {
-                            _owner._listView.SelectedIndices.Clear();
-                            _owner._listView.SelectedIndices.Add(index);
-                            _owner._listView.EnsureVisible(index);
-                            _owner._listView.Focus();
-                            StartRename();
-                        }
-                    }
-                });
-            });
+                    _owner._listView.SelectedIndices.Clear();
+                    _owner._listView.SelectedIndices.Add(index);
+                    _owner._listView.EnsureVisible(index);
+                    _owner._listView.Focus();
+                    StartRename();
+                }
+            }
         }
 
         public void StartRename()
@@ -105,14 +99,16 @@ public partial class MainForm
 
         public void EndRename(bool commit)
         {
-            if (_owner._renameTextBox == null)
+            if (_owner._renameTextBox == null || _renameCommitting)
                 return;
+            _renameCommitting = true;
 
             string newName = _owner._renameTextBox.Text;
             var textBox = _owner._renameTextBox;
             _owner._renameTextBox = null;
             _owner._listView.Controls.Remove(textBox);
             textBox.Dispose();
+            _renameCommitting = false;
 
             if (commit && !string.IsNullOrEmpty(newName))
             {

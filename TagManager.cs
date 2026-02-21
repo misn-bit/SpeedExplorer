@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using System.Threading;
 
 namespace SpeedExplorer;
 
@@ -15,6 +16,8 @@ public class TagManager
     private readonly string _tagsFilePath;
     private bool _isDirty = false;
     private readonly object _lock = new object();
+    private System.Threading.Timer? _saveTimer;
+    private const int SaveDelayMs = 500;
 
     private TagManager()
     {
@@ -40,7 +43,7 @@ public class TagManager
             if (_tags[path].Add(tag))
             {
                 _isDirty = true;
-                SaveTags();
+                ScheduleSave();
             }
         }
     }
@@ -61,7 +64,7 @@ public class TagManager
                         _tags.Remove(path);
                     }
                     _isDirty = true;
-                    SaveTags();
+                    ScheduleSave();
                 }
             }
         }
@@ -81,7 +84,7 @@ public class TagManager
                 if (_tags.Remove(path))
                 {
                     _isDirty = true;
-                    SaveTags();
+                    ScheduleSave();
                 }
             }
             else
@@ -91,7 +94,7 @@ public class TagManager
                 {
                     _tags[path] = validTags;
                     _isDirty = true;
-                    SaveTags();
+                    ScheduleSave();
                 }
             }
         }
@@ -129,7 +132,7 @@ public class TagManager
             if (changed)
             {
                 _isDirty = true;
-                SaveTags();
+                ScheduleSave();
             }
         }
     }
@@ -189,7 +192,7 @@ public class TagManager
             if (changed)
             {
                 _isDirty = true;
-                SaveTags();
+                ScheduleSave();
             }
         }
     }
@@ -263,7 +266,7 @@ public class TagManager
             {
                 _tags[destPath] = new HashSet<string>(_tags[sourcePath], StringComparer.OrdinalIgnoreCase);
                 _isDirty = true;
-                SaveTags();
+                ScheduleSave();
             }
             
             // Handle folder copy (children)
@@ -284,7 +287,7 @@ public class TagManager
                     }
                 }
             }
-            if (_isDirty) SaveTags();
+            if (_isDirty) ScheduleSave();
         }
     }
 
@@ -352,7 +355,7 @@ public class TagManager
                 }
             }
 
-            if (_isDirty) SaveTags();
+            if (_isDirty) ScheduleSave();
         }
     }
 
@@ -376,15 +379,40 @@ public class TagManager
         }
     }
 
-    private void SaveTags()
+    private void ScheduleSave()
+    {
+        // Debounce: reset the timer each time so we only write once after changes settle.
+        _saveTimer?.Dispose();
+        _saveTimer = new System.Threading.Timer(_ => SaveTagsNow(), null, SaveDelayMs, Timeout.Infinite);
+    }
+
+    /// <summary>
+    /// Flush any pending save immediately. Call on app shutdown.
+    /// </summary>
+    public void Flush()
+    {
+        _saveTimer?.Dispose();
+        _saveTimer = null;
+        lock (_lock)
+        {
+            if (_isDirty) SaveTagsNow();
+        }
+    }
+
+    private void SaveTagsNow()
     {
         try
         {
-            // Pretty print for user readability since they might edit it manually
-            var options = new JsonSerializerOptions { WriteIndented = true };
-            var json = JsonSerializer.Serialize(_tags, options);
+            string json;
+            lock (_lock)
+            {
+                if (!_isDirty) return;
+                // Pretty print for user readability since they might edit it manually
+                var options = new JsonSerializerOptions { WriteIndented = true };
+                json = JsonSerializer.Serialize(_tags, options);
+                _isDirty = false;
+            }
             File.WriteAllText(_tagsFilePath, json);
-            _isDirty = false;
         }
         catch
         {

@@ -39,16 +39,19 @@ public class UndoRedoManager
         _redoStack = new Stack<FileOperation>();
     }
 
-    public bool CanUndo => _undoStack.Count > 0;
-    public bool CanRedo => _redoStack.Count > 0;
+    public bool CanUndo { get { lock (_lock) { return _undoStack.Count > 0; } } }
+    public bool CanRedo { get { lock (_lock) { return _redoStack.Count > 0; } } }
 
     /// <summary>
     /// Records a new operation. Clears the redo stack.
     /// </summary>
     public void RecordOperation(FileOperation operation)
     {
-        _undoStack.Push(operation);
-        _redoStack.Clear(); // New action invalidates redo history
+        lock (_lock)
+        {
+            _undoStack.Push(operation);
+            _redoStack.Clear(); // New action invalidates redo history
+        }
     }
 
     /// <summary>
@@ -56,14 +59,18 @@ public class UndoRedoManager
     /// </summary>
     public void Undo()
     {
-        if (!CanUndo)
-            return;
+        FileOperation? operation;
+        lock (_lock)
+        {
+            if (_undoStack.Count == 0)
+                return;
+            operation = _undoStack.Pop();
+        }
 
-        var operation = _undoStack.Pop();
         try
         {
             operation.Undo();
-            _redoStack.Push(operation);
+            lock (_lock) { _redoStack.Push(operation); }
         }
         catch (Exception ex)
         {
@@ -81,14 +88,18 @@ public class UndoRedoManager
     /// </summary>
     public void Redo()
     {
-        if (!CanRedo)
-            return;
+        FileOperation? operation;
+        lock (_lock)
+        {
+            if (_redoStack.Count == 0)
+                return;
+            operation = _redoStack.Pop();
+        }
 
-        var operation = _redoStack.Pop();
         try
         {
             operation.Redo();
-            _undoStack.Push(operation);
+            lock (_lock) { _undoStack.Push(operation); }
         }
         catch (Exception ex)
         {
@@ -106,10 +117,13 @@ public class UndoRedoManager
     /// </summary>
     public string GetUndoDescription()
     {
-        if (!CanUndo)
-            return Localization.T("undo");
+        lock (_lock)
+        {
+            if (_undoStack.Count == 0)
+                return Localization.T("undo");
 
-        return string.Format(Localization.T("undo_with"), _undoStack.Peek().GetDescription());
+            return string.Format(Localization.T("undo_with"), _undoStack.Peek().GetDescription());
+        }
     }
 
     /// <summary>
@@ -117,10 +131,13 @@ public class UndoRedoManager
     /// </summary>
     public string GetRedoDescription()
     {
-        if (!CanRedo)
-            return Localization.T("redo");
+        lock (_lock)
+        {
+            if (_redoStack.Count == 0)
+                return Localization.T("redo");
 
-        return string.Format(Localization.T("redo_with"), _redoStack.Peek().GetDescription());
+            return string.Format(Localization.T("redo_with"), _redoStack.Peek().GetDescription());
+        }
     }
 
     /// <summary>
@@ -128,7 +145,10 @@ public class UndoRedoManager
     /// </summary>
     public void Clear()
     {
-        _undoStack.Clear();
-        _redoStack.Clear();
+        lock (_lock)
+        {
+            _undoStack.Clear();
+            _redoStack.Clear();
+        }
     }
 }

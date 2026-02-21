@@ -182,12 +182,12 @@ public partial class MainForm
                 case "Undo":
                     if (_owner._currentPath == ThisPcPath) return;
                     FileSystemService.PerformUndo();
-                    Task.Delay(500).ContinueWith(_ => _owner.BeginInvoke(() => _ = _owner.RefreshCurrentAsync()));
+                    _owner.RequestWatcherRefresh();
                     break;
                 case "Redo":
                     if (_owner._currentPath == ThisPcPath) return;
                     FileSystemService.PerformRedo();
-                    Task.Delay(500).ContinueWith(_ => _owner.BeginInvoke(() => _ = _owner.RefreshCurrentAsync()));
+                    _owner.RequestWatcherRefresh();
                     break;
                 case "ToggleSidebar":
                     _owner.ToggleSidebar();

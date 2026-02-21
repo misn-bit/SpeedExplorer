@@ -519,6 +519,7 @@ public partial class MainForm
                 AppSettings.Current.Save();
 
                 _owner.SaveFolderSettings();
+                TagManager.Instance.Flush(); // Commit any pending debounced tag saves.
                 _owner._loadCts?.Cancel();
                 _owner._searchController.CancelActive();
                 _owner._repaintTimer?.Stop();
