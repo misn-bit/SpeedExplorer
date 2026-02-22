@@ -55,7 +55,7 @@ public partial class MainForm
         {
             candidate = Path.GetFullPath(candidate);
         }
-        catch { }
+        catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
 
         if (!File.Exists(candidate))
             return null;
@@ -77,7 +77,7 @@ public partial class MainForm
         {
             normalizedImagePath = Path.GetFullPath(normalizedImagePath);
         }
-        catch { }
+        catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
 
         if (!File.Exists(normalizedImagePath))
             return false;

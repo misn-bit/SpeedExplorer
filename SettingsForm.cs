@@ -1298,7 +1298,7 @@ public class SettingsForm : Form
         foreach (var kvp in _hotkeyEdits) s.Hotkeys[kvp.Key] = kvp.Value;
         s.Save();
         StartupService.SyncWithSettings();
-        try { Program.MultiWindowContext.Instance.SetTrayIconVisible(s.ShowTrayIcon); } catch { }
+        try { Program.MultiWindowContext.Instance.SetTrayIconVisible(s.ShowTrayIcon); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
         this.DialogResult = DialogResult.OK;
         Close();
     }

@@ -30,8 +30,20 @@ public class FileItem
     public string DriveFormat { get; set; } = "";
     public string DriveType { get; set; } = "";
 
-    public string SizeDisplay => IsDirectory ? "" : FormatSize(Size);
-    public string TypeDisplay => IsDirectory ? "Folder" : (string.IsNullOrEmpty(Extension) ? "File" : Extension.TrimStart('.').ToUpperInvariant());
+    private string? _sizeDisplay;
+    public string SizeDisplay => _sizeDisplay ??= (IsDirectory ? "" : FormatSize(Size));
+
+    private string? _typeDisplay;
+    public string TypeDisplay => _typeDisplay ??= (IsDirectory ? "Folder" : (string.IsNullOrEmpty(Extension) ? "File" : Extension.TrimStart('.').ToUpperInvariant()));
+
+    private string? _dateModifiedDisplay;
+    public string DateModifiedDisplay => _dateModifiedDisplay ??= (DateModified == DateTime.MinValue ? "" : DateModified.ToString("g"));
+
+    private string? _dateCreatedDisplay;
+    public string DateCreatedDisplay => _dateCreatedDisplay ??= (DateCreated == DateTime.MinValue ? "" : DateCreated.ToString("g"));
+
+    private string? _directoryNameDisplay;
+    public string DirectoryNameDisplay => _directoryNameDisplay ??= (IsShellItem ? DisplayPath : (Path.GetDirectoryName(FullPath) ?? ""));
 
     public static string FormatSize(long bytes)
     {

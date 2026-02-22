@@ -106,8 +106,8 @@ public partial class MainForm
             _owner._listView.BeginUpdate();
             try
             {
-                try { _owner._listView.SelectedIndices.Clear(); } catch { }
-                try { _owner._listView.FocusedItem = null; } catch { }
+                try { _owner._listView.SelectedIndices.Clear(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+                try { _owner._listView.FocusedItem = null; } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
 
                 if (_isTileView)
                 {
@@ -168,7 +168,7 @@ public partial class MainForm
                     // Reset virtual state before switching into concrete tile items.
                     if (_owner._listView.VirtualMode)
                     {
-                        try { _owner._listView.VirtualListSize = 0; } catch { }
+                        try { _owner._listView.VirtualListSize = 0; } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                     }
                     _owner._listView.VirtualMode = false;
                     _owner._listView.View = View.Tile;
@@ -197,9 +197,9 @@ public partial class MainForm
                 try
                 {
                     // IMPORTANT: VirtualMode cannot be enabled while concrete items exist.
-                    try { _owner._listView.SelectedIndices.Clear(); } catch { }
-                    try { _owner._listView.Items.Clear(); } catch { }
-                    try { _owner._listView.VirtualListSize = 0; } catch { }
+                    try { _owner._listView.SelectedIndices.Clear(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+                    try { _owner._listView.Items.Clear(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+                    try { _owner._listView.VirtualListSize = 0; } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                     _owner._listView.View = View.Details;
                     _owner._listView.OwnerDraw = true;
                     _owner._listView.VirtualMode = true;
@@ -310,7 +310,7 @@ public partial class MainForm
                         changed = true;
                     }
                 }
-                catch { }
+                catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
             }
 
             _iconBindings.Remove(key);

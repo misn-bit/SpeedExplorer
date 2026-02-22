@@ -71,7 +71,7 @@ internal sealed class IconLoadService : IDisposable
             IsBackground = true,
             Name = "SpeedExplorer.IconLoadService"
         };
-        try { _worker.SetApartmentState(ApartmentState.STA); } catch { }
+        try { _worker.SetApartmentState(ApartmentState.STA); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
         _worker.Start();
     }
 
@@ -84,7 +84,7 @@ internal sealed class IconLoadService : IDisposable
     public void Dispose()
     {
         Stop();
-        try { _worker?.Join(500); } catch { }
+        try { _worker?.Join(500); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
         DrainReadyQueue();
         _signal.Dispose();
     }
@@ -224,7 +224,7 @@ internal sealed class IconLoadService : IDisposable
                     smallIcon = IconHelper.GetThumbnail(lookupPath, _smallIcons.ImageSize.Width);
                     if (req.Generation != _generation)
                     {
-                        try { smallIcon?.Dispose(); } catch { }
+                        try { smallIcon?.Dispose(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                         continue;
                     }
                     if (needLarge)
@@ -253,8 +253,8 @@ internal sealed class IconLoadService : IDisposable
 
                 if (smallIcon == null || largeIcon == null)
                 {
-                    try { smallIcon?.Dispose(); } catch { }
-                    try { largeIcon?.Dispose(); } catch { }
+                    try { smallIcon?.Dispose(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+                    try { largeIcon?.Dispose(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                     continue;
                 }
 
@@ -359,8 +359,8 @@ internal sealed class IconLoadService : IDisposable
             }
             finally
             {
-                try { ready.SmallIcon?.Dispose(); } catch { }
-                try { ready.LargeIcon?.Dispose(); } catch { }
+                try { ready.SmallIcon?.Dispose(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+                try { ready.LargeIcon?.Dispose(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
             }
         }
 
@@ -371,7 +371,7 @@ internal sealed class IconLoadService : IDisposable
             {
                 for (int i = 0; i < appliedKeys.Count; i++)
                 {
-                    try { _iconApplied(appliedKeys[i]); } catch { }
+                    try { _iconApplied(appliedKeys[i]); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                 }
             }
         }
@@ -384,8 +384,8 @@ internal sealed class IconLoadService : IDisposable
     {
         while (_ready.TryDequeue(out var ready))
         {
-            try { ready.SmallIcon?.Dispose(); } catch { }
-            try { ready.LargeIcon?.Dispose(); } catch { }
+            try { ready.SmallIcon?.Dispose(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+            try { ready.LargeIcon?.Dispose(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
         }
     }
 

@@ -196,7 +196,7 @@ public static class IconHelper
             bool exists = false;
             if (looksLikePath)
             {
-                try { exists = isDirectory ? System.IO.Directory.Exists(path) : System.IO.File.Exists(path); } catch { }
+                try { exists = isDirectory ? System.IO.Directory.Exists(path) : System.IO.File.Exists(path); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
             }
 
             // Prefer high-quality shell icons for real filesystem paths.
@@ -409,12 +409,12 @@ public static class IconHelper
                 }
             }
         }
-        catch { }
+        catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
         finally
         {
             if (factory != null)
             {
-                try { Marshal.ReleaseComObject(factory); } catch { }
+                try { Marshal.ReleaseComObject(factory); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
             }
         }
         return false;
@@ -466,11 +466,11 @@ public static class IconHelper
         {
             if (hIcon != IntPtr.Zero)
             {
-                try { DestroyIcon(hIcon); } catch { }
+                try { DestroyIcon(hIcon); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
             }
             if (imageList != null)
             {
-                try { Marshal.ReleaseComObject(imageList); } catch { }
+                try { Marshal.ReleaseComObject(imageList); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
             }
         }
     }
@@ -568,105 +568,123 @@ public static class IconHelper
         }
     }
 
-    private static void TryNormalizeOpaqueBackdrop(Bitmap bmp)
+    private static unsafe void TryNormalizeOpaqueBackdrop(Bitmap bmp)
     {
         try
         {
             if (bmp.Width <= 0 || bmp.Height <= 0)
                 return;
-            if (HasAnyTransparency(bmp))
-                return;
 
-            var seed = bmp.GetPixel(0, 0);
-            if (seed.A < 250)
-                return;
-            if (!BorderMostlyMatches(bmp, seed, tolerance: 16))
-                return;
+            var data = bmp.LockBits(new Rectangle(0, 0, bmp.Width, bmp.Height), ImageLockMode.ReadWrite, PixelFormat.Format32bppArgb);
+            try
+            {
+                byte* ptr = (byte*)data.Scan0;
+                int stride = data.Stride;
+                int w = bmp.Width;
+                int h = bmp.Height;
 
-            int w = bmp.Width;
+                // 1. Quick check for any transparency
+                bool hasTransparency = false;
+                for (int y = 0; y < h && !hasTransparency; y++)
+                {
+                    byte* row = ptr + y * stride;
+                    for (int x = 0; x < w; x++)
+                    {
+                        if (row[x * 4 + 3] < 250) { hasTransparency = true; break; }
+                    }
+                }
+                if (hasTransparency) return;
+
+                // 2. Validate seed color from top-left (0,0)
+                int seedOffset = 0;
+                byte sb = ptr[seedOffset], sg = ptr[seedOffset + 1], sr = ptr[seedOffset + 2], sa = ptr[seedOffset + 3];
+                if (sa < 250) return;
+
+                bool ColorCloseBytes(byte b, byte g, byte r) 
+                {
+                    return Math.Abs(r - sr) <= 20 && Math.Abs(g - sg) <= 20 && Math.Abs(b - sb) <= 20;
+                }
+
+                // 3. Verify border mostly matches seed
+                int total = 0, matches = 0;
+                for (int x = 0; x < w; x++)
+                {
+                    total += 2;
+                    byte* top = ptr + x * 4;
+                    byte* btm = ptr + (h - 1) * stride + x * 4;
+                    if (ColorCloseBytes(top[0], top[1], top[2])) matches++;
+                    if (ColorCloseBytes(btm[0], btm[1], btm[2])) matches++;
+                }
+                for (int y = 1; y < h - 1; y++)
+                {
+                    total += 2;
+                    byte* left = ptr + y * stride;
+                    byte* right = ptr + y * stride + (w - 1) * 4;
+                    if (ColorCloseBytes(left[0], left[1], left[2])) matches++;
+                    if (ColorCloseBytes(right[0], right[1], right[2])) matches++;
+                }
+
+                if (total == 0 || matches < (int)(total * 0.93)) return;
+
+                // 4. Flood fill (BFS) matching adjacent pixels to transparent
+                var visited = new bool[w, h];
+                var q = new System.Collections.Generic.Queue<(int X, int Y)>();
+
+                void EnqueueIfMatch(int x, int y)
+                {
+                    if (x < 0 || y < 0 || x >= w || y >= h) return;
+                    if (visited[x, y]) return;
+                    byte* px = ptr + y * stride + x * 4;
+                    if (!ColorCloseBytes(px[0], px[1], px[2])) return;
+                    visited[x, y] = true;
+                    q.Enqueue((x, y));
+                }
+
+                for (int x = 0; x < w; x++) { EnqueueIfMatch(x, 0); EnqueueIfMatch(x, h - 1); }
+                for (int y = 0; y < h; y++) { EnqueueIfMatch(0, y); EnqueueIfMatch(w - 1, y); }
+
+                while (q.Count > 0)
+                {
+                    var p = q.Dequeue();
+                    byte* px = ptr + p.Y * stride + p.X * 4;
+                    px[3] = 0; // Set Alpha to 0, preserve RGB to avoid dark fringes
+                    EnqueueIfMatch(p.X - 1, p.Y);
+                    EnqueueIfMatch(p.X + 1, p.Y);
+                    EnqueueIfMatch(p.X, p.Y - 1);
+                    EnqueueIfMatch(p.X, p.Y + 1);
+                }
+            }
+            finally
+            {
+                bmp.UnlockBits(data);
+            }
+        }
+        catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+    }
+
+    private static unsafe bool HasAnyTransparency(Bitmap bmp)
+    {
+        if (bmp.Width <= 0 || bmp.Height <= 0) return false;
+        var data = bmp.LockBits(new Rectangle(0, 0, bmp.Width, bmp.Height), ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+        try
+        {
+            byte* ptr = (byte*)data.Scan0;
+            int stride = data.Stride;
             int h = bmp.Height;
-            var visited = new bool[w, h];
-            var q = new System.Collections.Generic.Queue<(int X, int Y)>();
-
-            void EnqueueIfMatch(int x, int y)
-            {
-                if (x < 0 || y < 0 || x >= w || y >= h) return;
-                if (visited[x, y]) return;
-                var c = bmp.GetPixel(x, y);
-                if (!ColorClose(c, seed, 20)) return;
-                visited[x, y] = true;
-                q.Enqueue((x, y));
-            }
-
-            for (int x = 0; x < w; x++)
-            {
-                EnqueueIfMatch(x, 0);
-                EnqueueIfMatch(x, h - 1);
-            }
+            int w = bmp.Width;
             for (int y = 0; y < h; y++)
             {
-                EnqueueIfMatch(0, y);
-                EnqueueIfMatch(w - 1, y);
+                byte* row = ptr + y * stride;
+                for (int x = 0; x < w; x++)
+                {
+                    if (row[x * 4 + 3] < 250)
+                        return true;
+                }
             }
-
-            while (q.Count > 0)
-            {
-                var p = q.Dequeue();
-                var c = bmp.GetPixel(p.X, p.Y);
-                bmp.SetPixel(p.X, p.Y, Color.FromArgb(0, c.R, c.G, c.B));
-                EnqueueIfMatch(p.X - 1, p.Y);
-                EnqueueIfMatch(p.X + 1, p.Y);
-                EnqueueIfMatch(p.X, p.Y - 1);
-                EnqueueIfMatch(p.X, p.Y + 1);
-            }
+            return false;
         }
-        catch
-        {
-            // Best effort only.
-        }
-    }
-
-    private static bool HasAnyTransparency(Bitmap bmp)
-    {
-        for (int y = 0; y < bmp.Height; y++)
-        {
-            for (int x = 0; x < bmp.Width; x++)
-            {
-                if (bmp.GetPixel(x, y).A < 250)
-                    return true;
-            }
-        }
-        return false;
-    }
-
-    private static bool BorderMostlyMatches(Bitmap bmp, Color seed, int tolerance)
-    {
-        int total = 0;
-        int matches = 0;
-        int w = bmp.Width;
-        int h = bmp.Height;
-
-        for (int x = 0; x < w; x++)
-        {
-            total += 2;
-            if (ColorClose(bmp.GetPixel(x, 0), seed, tolerance)) matches++;
-            if (ColorClose(bmp.GetPixel(x, h - 1), seed, tolerance)) matches++;
-        }
-        for (int y = 1; y < h - 1; y++)
-        {
-            total += 2;
-            if (ColorClose(bmp.GetPixel(0, y), seed, tolerance)) matches++;
-            if (ColorClose(bmp.GetPixel(w - 1, y), seed, tolerance)) matches++;
-        }
-
-        return total > 0 && matches >= (int)(total * 0.93);
-    }
-
-    private static bool ColorClose(Color a, Color b, int tolerance)
-    {
-        return Math.Abs(a.R - b.R) <= tolerance &&
-               Math.Abs(a.G - b.G) <= tolerance &&
-               Math.Abs(a.B - b.B) <= tolerance;
+        catch { return false; }
+        finally { bmp.UnlockBits(data); }
     }
 
     private static Bitmap ResizeBitmap(Bitmap source, int size)
@@ -710,25 +728,42 @@ public static class IconHelper
         }
     }
 
-    private static Rectangle GetAlphaContentBounds(Bitmap bmp)
+    private static unsafe Rectangle GetAlphaContentBounds(Bitmap bmp)
     {
+        if (bmp.Width <= 0 || bmp.Height <= 0) return Rectangle.Empty;
+
         int minX = bmp.Width;
         int minY = bmp.Height;
         int maxX = -1;
         int maxY = -1;
 
-        for (int y = 0; y < bmp.Height; y++)
+        var data = bmp.LockBits(new Rectangle(0, 0, bmp.Width, bmp.Height), ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+        try
         {
-            for (int x = 0; x < bmp.Width; x++)
+            byte* ptr = (byte*)data.Scan0;
+            int stride = data.Stride;
+            int w = bmp.Width;
+            int h = bmp.Height;
+
+            for (int y = 0; y < h; y++)
             {
-                if (bmp.GetPixel(x, y).A > 10)
+                byte* row = ptr + y * stride;
+                for (int x = 0; x < w; x++)
                 {
-                    if (x < minX) minX = x;
-                    if (y < minY) minY = y;
-                    if (x > maxX) maxX = x;
-                    if (y > maxY) maxY = y;
+                    if (row[x * 4 + 3] > 10)
+                    {
+                        if (x < minX) minX = x;
+                        if (y < minY) minY = y;
+                        if (x > maxX) maxX = x;
+                        if (y > maxY) maxY = y;
+                    }
                 }
             }
+        }
+        catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+        finally
+        {
+            bmp.UnlockBits(data);
         }
 
         if (maxX < minX || maxY < minY)
@@ -804,12 +839,12 @@ public static class IconHelper
                     }
                 }
             }
-            catch { }
+            catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
             finally
             {
                 if (factory != null)
                 {
-                    try { Marshal.ReleaseComObject(factory); } catch { }
+                    try { Marshal.ReleaseComObject(factory); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                 }
             }
             return null;

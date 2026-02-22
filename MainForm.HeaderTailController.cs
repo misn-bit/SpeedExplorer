@@ -27,7 +27,7 @@ public partial class MainForm
             if (headerHwnd == IntPtr.Zero) return;
             if (_hwnd == headerHwnd) return;
 
-            try { ReleaseHandle(); } catch { }
+            try { ReleaseHandle(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
             _hwnd = headerHwnd;
             AssignHandle(headerHwnd);
         }
@@ -35,12 +35,12 @@ public partial class MainForm
         public void Invalidate()
         {
             if (_hwnd == IntPtr.Zero) return;
-            try { InvalidateRect(_hwnd, IntPtr.Zero, false); } catch { }
+            try { InvalidateRect(_hwnd, IntPtr.Zero, false); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
         }
 
         public void Dispose()
         {
-            try { ReleaseHandle(); } catch { }
+            try { ReleaseHandle(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
             _hwnd = IntPtr.Zero;
         }
 

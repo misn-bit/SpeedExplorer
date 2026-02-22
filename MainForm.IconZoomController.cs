@@ -31,9 +31,9 @@ public partial class MainForm
 
         public void Dispose()
         {
-            try { CommitPendingZoom(applyUi: false); } catch { }
-            try { _applyTimer.Stop(); } catch { }
-            try { _applyTimer.Dispose(); } catch { }
+            try { CommitPendingZoom(applyUi: false); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+            try { _applyTimer.Stop(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+            try { _applyTimer.Dispose(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
             try
             {
                 if (_previewOverlay != null)
@@ -44,7 +44,7 @@ public partial class MainForm
                     _previewOverlay = null;
                 }
             }
-            catch { }
+            catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
         }
 
         public void HandleMouseWheel(object? sender, MouseEventArgs e)
@@ -135,7 +135,7 @@ public partial class MainForm
 
         private void CommitPendingZoom(bool applyUi)
         {
-            try { HideZoomPreview(); } catch { }
+            try { HideZoomPreview(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
 
             var s = AppSettings.Current;
             int target = _pendingSize > 0 ? _pendingSize : Math.Clamp(s.IconSize, MinIconSize, MaxIconSize);

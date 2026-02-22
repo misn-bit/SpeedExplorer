@@ -70,14 +70,14 @@ public partial class MainForm
 
             if (_quickLook != null && !_quickLook.IsDisposed)
             {
-                try { _quickLook.Hide(); } catch { }
+                try { _quickLook.Hide(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
             }
         }
 
         public void Dispose()
         {
-            try { Hide(); } catch { }
-            try { _timer.Dispose(); } catch { }
+            try { Hide(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+            try { _timer.Dispose(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
 
             try
             {
@@ -87,7 +87,7 @@ public partial class MainForm
                     _quickLook.Dispose();
                 }
             }
-            catch { }
+            catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
 
             _quickLook = null;
         }

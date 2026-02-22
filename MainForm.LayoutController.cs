@@ -348,7 +348,7 @@ public partial class MainForm
                             _owner._listView.Update();
                         }
                     }
-                    catch { }
+                    catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                 }));
             }
             _owner._llmChatPanel.VisibleChanged += (s, e) => InvalidateListAfterChatLayoutChange();
@@ -461,7 +461,7 @@ public partial class MainForm
                                     _owner._listView.Update();
                                 }
                             }
-                            catch { }
+                            catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                         }));
 
                         // And a couple delayed passes after layout/paint settles.
@@ -480,7 +480,7 @@ public partial class MainForm
                                     }
                                 }));
                             }
-                            catch { }
+                            catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
 
                             await Task.Delay(140).ConfigureAwait(false);
                             try
@@ -494,7 +494,7 @@ public partial class MainForm
                                     }
                                 }));
                             }
-                            catch { }
+                            catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                         });
                     }
                 }
@@ -523,12 +523,12 @@ public partial class MainForm
                 _owner._loadCts?.Cancel();
                 _owner._searchController.CancelActive();
                 _owner._repaintTimer?.Stop();
-                try { _owner._watcherController.Dispose(); } catch { }
-                try { _owner._dragDropController.Dispose(); } catch { }
-                try { _owner._quickLookController.Dispose(); } catch { }
-                try { _owner._iconZoomController.Dispose(); } catch { }
-                try { _owner._headerTailController.Dispose(); } catch { }
-                try { _owner._iconLoadService?.Dispose(); } catch { }
+                try { _owner._watcherController.Dispose(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+                try { _owner._dragDropController.Dispose(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+                try { _owner._quickLookController.Dispose(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+                try { _owner._iconZoomController.Dispose(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+                try { _owner._headerTailController.Dispose(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+                try { _owner._iconLoadService?.Dispose(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
             };
         }
 
@@ -540,7 +540,7 @@ public partial class MainForm
                 if (icon != null)
                     _owner.Icon = icon;
             }
-            catch { }
+            catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
         }
 
         private void InitializeUiServices()

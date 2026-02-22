@@ -172,7 +172,7 @@ public partial class MainForm
                     if (_owner._listView.Items.Count > 0 && _owner._listView.SelectedIndices.Count == 0)
                     {
                         _owner._listView.SelectedIndices.Add(0);
-                        try { _owner._listView.Items[0].EnsureVisible(); } catch { }
+                        try { _owner._listView.Items[0].EnsureVisible(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                     }
                     break;
                 case "FocusAI":

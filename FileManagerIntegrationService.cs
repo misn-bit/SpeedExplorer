@@ -49,7 +49,7 @@ public static class FileManagerIntegrationService
 
         bool hkcuOk = IsRegistryApplied(Registry.CurrentUser, expected);
         bool hklmOk = false;
-        try { hklmOk = IsRegistryApplied(Registry.LocalMachine, expected); } catch { }
+        try { hklmOk = IsRegistryApplied(Registry.LocalMachine, expected); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
 
         if (hkcuOk && hklmOk) return IntegrationStatus.AppliedHkcuHklm;
         if (hkcuOk) return IntegrationStatus.AppliedHkcu;
@@ -110,7 +110,7 @@ public static class FileManagerIntegrationService
                     WriteContextMenu(Registry.LocalMachine, exePath);
                     result.HklmApplied = true;
                 }
-                catch { }
+                catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
             }
 
             AppSettings.Current.DefaultFileManagerBackupJson = JsonSerializer.Serialize(backup);
@@ -135,7 +135,7 @@ public static class FileManagerIntegrationService
                         RestoreExplorerDefaults(Registry.LocalMachine);
                         result.HklmApplied = true;
                     }
-                    catch { }
+                    catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                 }
             }
             else
@@ -154,7 +154,7 @@ public static class FileManagerIntegrationService
                         RemoveContextMenu(Registry.LocalMachine);
                         result.HklmApplied = true;
                     }
-                    catch { }
+                    catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                 }
             }
 
@@ -201,8 +201,8 @@ public static class FileManagerIntegrationService
         cmd?.DeleteValue("DelegateExecute", false);
         cmd?.DeleteValue("ExplorerCommandHandler", false);
 
-        try { root.DeleteSubKeyTree($"{basePath}\\shell\\{verb}\\DropTarget", false); } catch { }
-        try { root.DeleteSubKeyTree($"{basePath}\\shell\\{verb}\\ddeexec", false); } catch { }
+        try { root.DeleteSubKeyTree($"{basePath}\\shell\\{verb}\\DropTarget", false); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+        try { root.DeleteSubKeyTree($"{basePath}\\shell\\{verb}\\ddeexec", false); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
     }
 
     private static void ClearCommandOverrideIfMatches(RegistryKey root, string basePath, string verb, string command)
@@ -219,7 +219,7 @@ public static class FileManagerIntegrationService
             cmd.DeleteValue("DelegateExecute", false);
             cmd.DeleteValue("ExplorerCommandHandler", false);
         }
-        catch { }
+        catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
     }
 
     private static bool IsRegistryApplied(RegistryKey root, string expectedCommand)
@@ -256,7 +256,7 @@ public static class FileManagerIntegrationService
         foreach (var basePath in TargetRoots)
         {
             try { root.DeleteSubKeyTree($"{basePath}\\shell\\open_speed_explorer", false); }
-            catch { }
+            catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
         }
     }
 
@@ -386,7 +386,7 @@ public static class FileManagerIntegrationService
                 var kind = RegistryValueKind.String;
                 if (value != null)
                 {
-                    try { kind = key.GetValueKind(valueName); } catch { }
+                    try { kind = key.GetValueKind(valueName); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                 }
                 snapshot.Values.Add(new RegistryValueSnapshot
                 {
@@ -453,7 +453,7 @@ public static class FileManagerIntegrationService
                     root.DeleteSubKey(snapshot.Path, false);
                 }
             }
-            catch { }
+            catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
         }
     }
 
@@ -472,7 +472,7 @@ public static class FileManagerIntegrationService
                     key.SetValue(value.Name, value.Value ?? "", value.Kind);
                 }
             }
-            catch { }
+            catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
         }
     }
 

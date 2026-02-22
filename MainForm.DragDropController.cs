@@ -183,7 +183,7 @@ public partial class MainForm
                             return DragDropEffects.Copy;
                         }
                     }
-                    catch { }
+                    catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                 }
             }
 
@@ -308,8 +308,8 @@ public partial class MainForm
 
         public void Dispose()
         {
-            try { EndListViewDragImage(); } catch { }
-            try { ClearListViewDragHover(); } catch { }
+            try { EndListViewDragImage(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+            try { ClearListViewDragHover(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
         }
 
         private sealed class DragGhostForm : Form

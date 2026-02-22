@@ -47,7 +47,7 @@ public partial class MainForm
                     if (uri.IsFile)
                         raw = uri.LocalPath;
                 }
-                catch { }
+                catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
             }
 
             if (!File.Exists(raw) && !Directory.Exists(raw))
@@ -140,7 +140,7 @@ public partial class MainForm
                         bestTimeUtc = candidateUtc;
                         bestPath = file;
                     }
-                    catch { }
+                    catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                 }
             }
             catch
@@ -239,7 +239,7 @@ public partial class MainForm
                 if (sys != null)
                     return sys;
             }
-            catch { }
+            catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
 
             var bmp = new Bitmap(size, size);
             using var g = Graphics.FromImage(bmp);

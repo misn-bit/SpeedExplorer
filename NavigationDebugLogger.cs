@@ -19,9 +19,7 @@ internal static class NavigationDebugLogger
                 File.AppendAllText(LogPath, line + Environment.NewLine);
             }
         }
-        catch
-        {
-        }
+        catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
     }
 }
 

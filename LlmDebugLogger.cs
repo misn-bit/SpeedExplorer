@@ -107,7 +107,7 @@ public static class LlmDebugLogger
                 if (File.Exists(LogPath))
                     File.Delete(LogPath);
             }
-            catch { }
+            catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
         }
     }
 
@@ -123,14 +123,14 @@ public static class LlmDebugLogger
                     return dir;
             }
         }
-        catch { }
+        catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
 
         try
         {
             if (!string.IsNullOrWhiteSpace(AppContext.BaseDirectory))
                 return AppContext.BaseDirectory;
         }
-        catch { }
+        catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
 
         return Environment.CurrentDirectory;
     }

@@ -9,18 +9,22 @@ namespace SpeedExplorer;
 
 public partial class MainForm
 {
-    private sealed class ContextMenuController
+    private sealed class ContextMenuController : IDisposable
     {
         private readonly MainForm _owner;
 
         public ContextMenuStrip Menu { get; }
 
+        private ToolStripSeparator _sep4 = null!;
+        private ToolStripMenuItem _shellWinItem = null!;
+
+        private readonly Font _boldFont;
         private readonly ToolStripMenuItem _openItem;
-        private readonly ToolStripMenuItem _openWithItem;
-        private readonly ToolStripMenuItem _showInExplorerItem;
-        private readonly ToolStripMenuItem _openInOtherItem;
-        private readonly ToolStripMenuItem _copyPathItem;
-        private readonly ToolStripMenuItem _propertiesItem;
+        private ToolStripMenuItem _openWithItem;
+        private ToolStripMenuItem _showInExplorerItem;
+        private ToolStripMenuItem _openInOtherItem;
+        private ToolStripMenuItem _copyPathItem;
+        private ToolStripMenuItem _propertiesItem;
 
         private readonly ToolStripMenuItem _cutItem;
         private readonly ToolStripMenuItem _copyItem;
@@ -62,10 +66,13 @@ public partial class MainForm
                 ShowImageMargin = false,
                 BackColor = Color.FromArgb(30, 30, 30)
             };
+            Menu.Opening += ContextMenu_Opening;
+
+            _boldFont = new Font("Segoe UI", 10, FontStyle.Bold);
 
             _openItem = new ToolStripMenuItem(Localization.T("open"), null, (s, e) => _owner.OpenSelectedItem())
             {
-                Font = new Font("Segoe UI", 10, FontStyle.Bold)
+                Font = _boldFont
             };
             _openWithItem = new ToolStripMenuItem(Localization.T("open_with"), null, (s, e) => _owner.OpenWithDialog());
             _showInExplorerItem = new ToolStripMenuItem(Localization.T("show_in_explorer"), null, (s, e) => _owner.ShowInExplorer());
@@ -125,8 +132,6 @@ public partial class MainForm
             _batchAiSeparator = new ToolStripSeparator() { Visible = false };
             _batchAiItem = new ToolStripMenuItem(Localization.T("batch_ai"), null, _owner.BatchProcess_Click) { Visible = false };
 
-            Menu.Opening += ContextMenu_Opening;
-
             Menu.Items.AddRange(new ToolStripItem[]
             {
                 _openItem,
@@ -169,8 +174,8 @@ public partial class MainForm
             string? firstPath = paths.FirstOrDefault();
             bool isShell = IsShellPath(_owner._currentPath);
             bool allFileSystem = hasSelection 
-                ? paths.All(p => File.Exists(p) || Directory.Exists(p))
-                : (!string.IsNullOrEmpty(_owner._currentPath) && Directory.Exists(_owner._currentPath));
+                ? !isShell
+                : (!string.IsNullOrEmpty(_owner._currentPath) && !isShell);
 
             if (AppSettings.Current.UseWindowsContextMenu && hasSelection && allFileSystem && !isShell)
             {
@@ -346,6 +351,16 @@ public partial class MainForm
                     visibleItemAbove = true;
                 }
             }
+        }
+
+        public void Dispose()
+        {
+            if (Menu != null)
+            {
+                Menu.Opening -= ContextMenu_Opening;
+                Menu.Dispose();
+            }
+            _boldFont?.Dispose();
         }
     }
 }

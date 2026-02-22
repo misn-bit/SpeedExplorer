@@ -404,15 +404,15 @@ public partial class MainForm
             else
             {
                 // File Columns: Name, Location, Size, Date Modified, Date Created, Type, Tags.
-                lvi.SubItems.Add(item.IsShellItem ? item.DisplayPath : (Path.GetDirectoryName(item.FullPath) ?? ""));
+                lvi.SubItems.Add(item.DirectoryNameDisplay);
 
                 if (item.IsDirectory)
                     lvi.SubItems.Add("");
                 else
                     lvi.SubItems.Add(item.SizeDisplay);
 
-                lvi.SubItems.Add(item.DateModified == DateTime.MinValue ? "" : item.DateModified.ToString("g"));
-                lvi.SubItems.Add(item.DateCreated == DateTime.MinValue ? "" : item.DateCreated.ToString("g"));
+                lvi.SubItems.Add(item.DateModifiedDisplay);
+                lvi.SubItems.Add(item.DateCreatedDisplay);
                 lvi.SubItems.Add(item.TypeDisplay);
 
                 var tagStr = "";
@@ -435,9 +435,9 @@ public partial class MainForm
         
         private static string BuildDriveTileIconKey(FileItem item)
         {
-            int hash = (item.FullPath ?? "").GetHashCode(StringComparison.OrdinalIgnoreCase);
+            string cleanPath = (item.FullPath ?? "").Replace(":\\", "").ToLowerInvariant();
             string type = item.Extension == ".usb" ? "u" : "d";
-            return $"drvbar_{type}_{hash}_{item.Size}_{item.FreeSpace}";
+            return $"drvbar_{type}_{cleanPath}_{item.Size}_{item.FreeSpace}";
         }
 
         private void EnsureDriveTileIcon(string key, FileItem item)
@@ -536,7 +536,7 @@ public partial class MainForm
                 // WinForms ListView.HitTest can internally crash with index -1 in some resize/virtual scenarios.
                 _owner._hoveredIndex = -1;
             }
-            catch { }
+            catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
         }
 
         public void InvalidateListItem(int index)
@@ -550,7 +550,7 @@ public partial class MainForm
                     rect.Width = _owner._listView.ClientSize.Width;
                     _owner._listView.Invalidate(rect);
                 }
-                catch { }
+                catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
             }
         }
 
@@ -588,7 +588,7 @@ public partial class MainForm
                 _owner._hoveredIndex = newHover;
                 InvalidateHoverTransition(oldHover, _owner._hoveredIndex);
             }
-            catch { }
+            catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
         }
 
         private void InvalidateHoverTransition(int oldIndex, int newIndex)
@@ -704,7 +704,7 @@ public partial class MainForm
                 {
                     _owner._listView.SelectedIndices.Clear();
                     _owner._listView.SelectedIndices.Add(idx);
-                    try { _owner._listView.FocusedItem = _owner._listView.Items[idx]; } catch { }
+                    try { _owner._listView.FocusedItem = _owner._listView.Items[idx]; } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                     _owner._listView.EnsureVisible(idx);
                     _owner._lastSearchIndex = idx;
                     return;

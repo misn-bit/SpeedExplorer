@@ -266,7 +266,7 @@ public partial class MainForm
                 _statusBar?.Invalidate();
                 _statusBar?.Update();
             }
-            catch { }
+            catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
             try
             {
                 bool preserveAiPanelFocus = _llmChatPanel != null && _llmChatPanel.IsExpanded;
@@ -274,7 +274,7 @@ public partial class MainForm
                 if (!preserveAiPanelFocus && !isRenaming && _listView.Visible && _listView.CanFocus)
                     _listView.Focus();
             }
-            catch { }
+            catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
             await Task.Yield();
 
             _tileViewController.ApplyViewModeForNavigation();
@@ -345,7 +345,7 @@ public partial class MainForm
 
             _statusLabel.Text = Localization.T("status_loading_items");
             // Avoid Application.DoEvents re-entrancy; just force a paint and yield once.
-            try { _statusBar?.Invalidate(); _statusBar?.Update(); } catch { }
+            try { _statusBar?.Invalidate(); _statusBar?.Update(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
             await Task.Yield();
 
             // Cancel previous load
@@ -444,7 +444,7 @@ public partial class MainForm
                 }
             }
             catch (Exception ex) { Debug.WriteLine($"NAV finally focus failed: {ex.Message}"); }
-            try { _listView?.Invalidate(); } catch { }
+            try { _listView?.Invalidate(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
             NavigationDebugLogger.Log($"NAV#{navTraceId} EXIT totalMs={totalSw.ElapsedMilliseconds}");
             ResetNavigationState();
         }
@@ -625,7 +625,7 @@ public partial class MainForm
                         else
                             _listView.EnsureVisible(_pendingTabTopRestoreIndex);
                     }
-                    catch { }
+                    catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                     finally
                     {
                         _pendingTabTopRestorePath = null;
@@ -728,7 +728,7 @@ public partial class MainForm
             const int LVM_SETSELECTIONMARK = 0x1043;
             SendMessage(_listView.Handle, LVM_SETSELECTIONMARK, 0, index);
         }
-        catch { }
+        catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
     }
 
     private void FocusAndAnchorListIndex(int index, bool ensureVisible = true)
@@ -738,11 +738,11 @@ public partial class MainForm
         if (index < 0 || index >= _items.Count)
             return;
 
-        try { _listView.FocusedItem = _listView.Items[index]; } catch { }
+        try { _listView.FocusedItem = _listView.Items[index]; } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
         SetListSelectionAnchor(index);
         if (ensureVisible)
         {
-            try { _listView.EnsureVisible(index); } catch { }
+            try { _listView.EnsureVisible(index); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
         }
     }
 
@@ -796,9 +796,9 @@ public partial class MainForm
             target = 0;
 
         NavigationDebugLogger.Log($"{scope}#{navTraceId} VIEWPORT_FIX top={top} count={_items.Count} sel={target}");
-        try { SendMessage(_listView.Handle, WM_VSCROLL, SB_TOP, 0); } catch { }
-        try { SendMessage(_listView.Handle, LVM_ENSUREVISIBLE, target, 0); } catch { }
-        try { _listView.EnsureVisible(target); } catch { }
+        try { SendMessage(_listView.Handle, WM_VSCROLL, SB_TOP, 0); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+        try { SendMessage(_listView.Handle, LVM_ENSUREVISIBLE, target, 0); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+        try { _listView.EnsureVisible(target); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
 
         int after = SendMessage(_listView.Handle, LVM_GETTOPINDEX, 0, 0);
         if (after >= 0 && after < _items.Count)
@@ -820,7 +820,7 @@ public partial class MainForm
             _listView.EndUpdate();
         }
 
-        try { _listView.EnsureVisible(target); } catch { }
+        try { _listView.EnsureVisible(target); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
         int done = SendMessage(_listView.Handle, LVM_GETTOPINDEX, 0, 0);
         NavigationDebugLogger.Log($"{scope}#{navTraceId} VIEWPORT_FIX_DONE top={done} count={_items.Count} sel={target}");
         if (done < 0 || done >= _items.Count)
@@ -845,9 +845,9 @@ public partial class MainForm
         NavigationDebugLogger.Log($"{scope}#{navTraceId} VIEWPORT_HARD_RESET start count={_items.Count} sel={target}");
 
         // Step 1: safe scroll normalization.
-        try { SendMessage(_listView.Handle, WM_VSCROLL, SB_TOP, 0); } catch { }
-        try { SendMessage(_listView.Handle, LVM_ENSUREVISIBLE, target, 0); } catch { }
-        try { _listView.EnsureVisible(target); } catch { }
+        try { SendMessage(_listView.Handle, WM_VSCROLL, SB_TOP, 0); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+        try { SendMessage(_listView.Handle, LVM_ENSUREVISIBLE, target, 0); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+        try { _listView.EnsureVisible(target); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
 
         int top = SendMessage(_listView.Handle, LVM_GETTOPINDEX, 0, 0);
         if (top >= 0 && top < _items.Count)
@@ -874,12 +874,12 @@ public partial class MainForm
                 _listView.EndUpdate();
             }
         }
-        catch { }
+        catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
 
-        try { SendMessage(_listView.Handle, WM_VSCROLL, SB_TOP, 0); } catch { }
-        try { SendMessage(_listView.Handle, LVM_ENSUREVISIBLE, target, 0); } catch { }
-        try { _listView.EnsureVisible(target); } catch { }
-        try { _listView.Invalidate(); _listView.Update(); } catch { }
+        try { SendMessage(_listView.Handle, WM_VSCROLL, SB_TOP, 0); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+        try { SendMessage(_listView.Handle, LVM_ENSUREVISIBLE, target, 0); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+        try { _listView.EnsureVisible(target); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+        try { _listView.Invalidate(); _listView.Update(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
 
         int done = SendMessage(_listView.Handle, LVM_GETTOPINDEX, 0, 0);
         NavigationDebugLogger.Log($"{scope}#{navTraceId} VIEWPORT_HARD_RESET done top={done} count={_items.Count} sel={target}");
@@ -920,12 +920,12 @@ public partial class MainForm
                 _listView.EndUpdate();
             }
         }
-        catch { }
+        catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
 
-        try { SendMessage(_listView.Handle, WM_VSCROLL, SB_TOP, 0); } catch { }
-        try { SendMessage(_listView.Handle, LVM_ENSUREVISIBLE, target, 0); } catch { }
-        try { _listView.EnsureVisible(target); } catch { }
-        try { _listView.Invalidate(); _listView.Update(); } catch { }
+        try { SendMessage(_listView.Handle, WM_VSCROLL, SB_TOP, 0); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+        try { SendMessage(_listView.Handle, LVM_ENSUREVISIBLE, target, 0); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+        try { _listView.EnsureVisible(target); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+        try { _listView.Invalidate(); _listView.Update(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
 
         int doneAfterRecreate = SendMessage(_listView.Handle, LVM_GETTOPINDEX, 0, 0);
         NavigationDebugLogger.Log($"{scope}#{navTraceId} VIEWPORT_HARD_RESET_RECREATE done top={doneAfterRecreate} count={_items.Count} sel={target}");
@@ -988,7 +988,7 @@ public partial class MainForm
             if (_listView.SelectedIndices.Count > 0)
                 selected = _listView.SelectedIndices[0];
         }
-        catch { }
+        catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
         if (selected < 0 || selected >= _items.Count)
             selected = 0;
 
@@ -1009,7 +1009,7 @@ public partial class MainForm
                 _listView.EndUpdate();
             }
 
-            try { _listView.EnsureVisible(selected); } catch { }
+            try { _listView.EnsureVisible(selected); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
             _listView.Invalidate();
             _listView.Update();
             LogListViewState("STARTUP", "stabilize");

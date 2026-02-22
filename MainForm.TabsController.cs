@@ -123,7 +123,7 @@ public partial class MainForm
         {
             if (Program.IsExplorerShellArgument(rawPath))
             {
-                try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("explorer.exe", rawPath!) { UseShellExecute = true }); } catch { }
+                try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("explorer.exe", rawPath!) { UseShellExecute = true }); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                 return;
             }
             if (string.IsNullOrWhiteSpace(rawPath)) return;
@@ -163,7 +163,7 @@ public partial class MainForm
                             if (listView != null && !listView.IsDisposed && listView.Visible && listView.CanFocus)
                                 listView.Focus();
                         }
-                        catch { }
+                        catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                     }
                     if (!string.IsNullOrWhiteSpace(imagePathForViewer))
                     {
@@ -444,7 +444,7 @@ public partial class MainForm
                     _owner._listView.Invalidate();
                     _owner._listView.Update();
                 }
-                catch { }
+                catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                 _owner.LogListViewState("TAB", $"load-end req={requestId}");
             }));
         }
@@ -521,18 +521,18 @@ public partial class MainForm
                     }
                 }
             }
-            catch { }
+            catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
 
             try
             {
                 if (_owner._listView.TopItem != null)
                     tab.TopItemIndex = _owner._listView.TopItem.Index;
             }
-            catch { }
+            catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
 
             if (tab.TopItemIndex < 0 && _owner._listView.SelectedIndices.Count > 0)
             {
-                try { tab.TopItemIndex = _owner._listView.SelectedIndices[0]; } catch { }
+                try { tab.TopItemIndex = _owner._listView.SelectedIndices[0]; } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
             }
         }
 

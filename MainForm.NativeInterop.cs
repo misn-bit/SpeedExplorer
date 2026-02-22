@@ -128,9 +128,7 @@ public partial class MainForm
                     return;
             }
         }
-        catch
-        {
-        }
+        catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
 
         try
         {

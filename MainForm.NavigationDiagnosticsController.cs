@@ -34,9 +34,7 @@ public partial class MainForm
                 NavigationDebugLogger.Log($"{scope}#{navTraceId} UIQ stage={stage} delayMs={sw.ElapsedMilliseconds}");
             }));
         }
-        catch
-        {
-        }
+        catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
     }
 
     private void StartPostBindProbe(long navTraceId, string scope)
@@ -103,14 +101,14 @@ public partial class MainForm
                 perPage = SendMessage(_listView.Handle, LVM_GETCOUNTPERPAGE, 0, 0);
             }
         }
-        catch { }
+        catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
 
         try
         {
             if (_listView.SelectedIndices.Count > 0)
                 firstSel = _listView.SelectedIndices[0];
         }
-        catch { }
+        catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
 
         NavigationDebugLogger.Log(
             $"{scope} LV stage={stage} view={_listView.View} ownerDraw={_listView.OwnerDraw} virtual={_listView.VirtualMode} " +
@@ -132,9 +130,7 @@ public partial class MainForm
                 if (ex != null)
                     NavigationDebugLogger.Log($"{source} TASK_ERROR \"{TraceText(ex.Message)}\"");
             }
-            catch
-            {
-            }
+            catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
         }, TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously);
     }
 }

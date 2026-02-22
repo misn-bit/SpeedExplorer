@@ -133,7 +133,7 @@ public partial class MainForm
                 _owner._statusLabel.Text = string.Format(Localization.T("status_extracting"), index, total, entry.FullName);
                 if (index % 8 == 0)
                 {
-                    try { _owner._statusBar?.Invalidate(); _owner._statusBar?.Update(); } catch { }
+                    try { _owner._statusBar?.Invalidate(); _owner._statusBar?.Update(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                 }
 
                 string targetPath = Path.Combine(destination, entry.FullName);
@@ -182,7 +182,7 @@ public partial class MainForm
                 _owner._statusLabel.Text = string.Format(Localization.T("status_compressing"), index, total, entryName);
                 if (index % 8 == 0)
                 {
-                    try { _owner._statusBar?.Invalidate(); _owner._statusBar?.Update(); } catch { }
+                    try { _owner._statusBar?.Invalidate(); _owner._statusBar?.Update(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                 }
                 zip.CreateEntryFromFile(filePath, entryName, level);
             }

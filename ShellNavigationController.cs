@@ -100,7 +100,7 @@ internal sealed class ShellNavigationController
                     string itemName = d.Name;
                     if (!string.IsNullOrEmpty(itemName)) return itemName;
                 }
-                catch { }
+                catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
             }
             else if (IsShellIdPath(shellPath))
             {
@@ -132,7 +132,7 @@ internal sealed class ShellNavigationController
                 if (folder != null)
                 {
                     object? selfObj = null;
-                    try { selfObj = folder.Self; } catch { }
+                    try { selfObj = folder.Self; } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                     if (selfObj != null)
                     {
                         dynamic self = selfObj;
@@ -141,7 +141,7 @@ internal sealed class ShellNavigationController
                 }
             }
         }
-        catch { }
+        catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
 
         return "Portable Device";
     }
@@ -171,12 +171,12 @@ internal sealed class ShellNavigationController
                 if (folder == null) return null;
 
                 object? parentObj = null;
-                try { parentObj = folder.ParentFolder; } catch { }
+                try { parentObj = folder.ParentFolder; } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                 if (parentObj != null)
                 {
                     dynamic parent = parentObj;
                     object? selfObj = null;
-                    try { selfObj = parent.Self; } catch { }
+                    try { selfObj = parent.Self; } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                     if (selfObj != null)
                     {
                         dynamic self = selfObj;
@@ -187,7 +187,7 @@ internal sealed class ShellNavigationController
                 }
             }
         }
-        catch { }
+        catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
 
         return null;
     }
@@ -209,7 +209,7 @@ internal sealed class ShellNavigationController
                 {
                     var msg = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] [Shell] Resolve NameSpace OK: {rawPath}";
                     Debug.WriteLine(msg);
-                    try { File.AppendAllText(debugShellLog, msg + Environment.NewLine); } catch { }
+                    try { File.AppendAllText(debugShellLog, msg + Environment.NewLine); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                 }
                 return folder;
             }
@@ -217,7 +217,7 @@ internal sealed class ShellNavigationController
             {
                 var msg = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] [Shell] Resolve NameSpace NULL: {rawPath}";
                 Debug.WriteLine(msg);
-                try { File.AppendAllText(debugShellLog, msg + Environment.NewLine); } catch { }
+                try { File.AppendAllText(debugShellLog, msg + Environment.NewLine); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
             }
 
             // Fallback: search "This PC" items by exact Path.
@@ -235,19 +235,19 @@ internal sealed class ShellNavigationController
                             {
                                 var msg = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] [Shell] Resolve Drives Match: {rawPath}";
                                 Debug.WriteLine(msg);
-                                try { File.AppendAllText(debugShellLog, msg + Environment.NewLine); } catch { }
+                                try { File.AppendAllText(debugShellLog, msg + Environment.NewLine); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                             }
                             return driveItem.GetFolder;
                         }
                     }
-                    catch { }
+                    catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                 }
             }
             if (debugShell)
             {
                 var msg = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] [Shell] Resolve Drives NoMatch: {rawPath}";
                 Debug.WriteLine(msg);
-                try { File.AppendAllText(debugShellLog, msg + Environment.NewLine); } catch { }
+                try { File.AppendAllText(debugShellLog, msg + Environment.NewLine); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
             }
 
             // Fallback: resolve via Desktop ParseName for shell-only paths.
@@ -261,7 +261,7 @@ internal sealed class ShellNavigationController
             {
                 var msg = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] [Shell] Resolve Desktop Parse OK: {rawPath}";
                 Debug.WriteLine(msg);
-                try { File.AppendAllText(debugShellLog, msg + Environment.NewLine); } catch { }
+                try { File.AppendAllText(debugShellLog, msg + Environment.NewLine); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
             }
             return desktopItem.GetFolder;
         }
@@ -286,13 +286,13 @@ internal sealed class ShellNavigationController
             {
                 if (shellObj == null) return items;
                 dynamic d = shellObj;
-                try { folder = d.Folder; } catch { }
+                try { folder = d.Folder; } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                 if (folder == null)
                 {
-                    try { folder = d.GetFolder; } catch { }
+                    try { folder = d.GetFolder; } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                 }
             }
-            catch { }
+            catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
 
             if (folder == null)
             {
@@ -300,7 +300,7 @@ internal sealed class ShellNavigationController
                 {
                     var msg = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] [Shell] Folder null for {shellPath}";
                     Debug.WriteLine(msg);
-                    try { File.AppendAllText(debugShellLog, msg + Environment.NewLine); } catch { }
+                    try { File.AppendAllText(debugShellLog, msg + Environment.NewLine); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                 }
                 return items;
             }
@@ -317,7 +317,7 @@ internal sealed class ShellNavigationController
                     {
                         var msg = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] [Shell] Item: {itemName} Path: {path} IsFolder: {item.IsFolder}";
                         Debug.WriteLine(msg);
-                        try { File.AppendAllText(debugShellLog, msg + Environment.NewLine); } catch { }
+                        try { File.AppendAllText(debugShellLog, msg + Environment.NewLine); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                     }
                     if (string.IsNullOrEmpty(itemName)) continue;
 
@@ -341,14 +341,14 @@ internal sealed class ShellNavigationController
                     });
                     count++;
                 }
-                catch { }
+                catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
             }
 
             if (debugShell)
             {
                 var msg = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] [Shell] Items count: {items.Count}";
                 Debug.WriteLine(msg);
-                try { File.AppendAllText(debugShellLog, msg + Environment.NewLine); } catch { }
+                try { File.AppendAllText(debugShellLog, msg + Environment.NewLine); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
             }
         }
         catch (OperationCanceledException)
@@ -375,7 +375,7 @@ internal sealed class ShellNavigationController
             {
                 var msg = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] [Shell] Navigate: {shellPath}";
                 Debug.WriteLine(msg);
-                try { File.AppendAllText(debugShellLog, msg + Environment.NewLine); } catch { }
+                try { File.AppendAllText(debugShellLog, msg + Environment.NewLine); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
             }
 
             var result = EnumerateShellItemsOnCurrentThread(shellPath, ct, displayPath, debugShell, debugShellLog);
@@ -410,7 +410,7 @@ internal sealed class ShellNavigationController
                 {
                     var msg = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] [Shell] Navigate: {shellPath}";
                     Debug.WriteLine(msg);
-                    try { File.AppendAllText(debugShellLog, msg + Environment.NewLine); } catch { }
+                    try { File.AppendAllText(debugShellLog, msg + Environment.NewLine); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                 }
 
                 if (IsShellIdPath(shellPath))
@@ -425,14 +425,14 @@ internal sealed class ShellNavigationController
                                 return;
                             }
                             dynamic d = shellObj;
-                            try { folder = d.Folder; } catch { }
+                            try { folder = d.Folder; } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
 
                             if (folder == null)
                             {
-                                try { folder = d.GetFolder; } catch { }
+                                try { folder = d.GetFolder; } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                             }
                         }
-                        catch { }
+                        catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                     }
                     else
                     {
@@ -448,7 +448,7 @@ internal sealed class ShellNavigationController
                     {
                         var msg = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] [Shell] Parent: {parentRaw} Name: {name} ParentFolder: {(parentFolder != null)}";
                         Debug.WriteLine(msg);
-                        try { File.AppendAllText(debugShellLog, msg + Environment.NewLine); } catch { }
+                        try { File.AppendAllText(debugShellLog, msg + Environment.NewLine); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                     }
                     if (parentFolder != null)
                     {
@@ -457,7 +457,7 @@ internal sealed class ShellNavigationController
                         {
                             var msg = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] [Shell] ChildItem: {(childItem != null)}";
                             Debug.WriteLine(msg);
-                            try { File.AppendAllText(debugShellLog, msg + Environment.NewLine); } catch { }
+                            try { File.AppendAllText(debugShellLog, msg + Environment.NewLine); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                         }
                         if (childItem != null)
                             folder = childItem.GetFolder;
@@ -470,7 +470,7 @@ internal sealed class ShellNavigationController
                     {
                         var msg = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] [Shell] NameSpace: {FromShellPath(shellPath)} Folder: {(folder != null)}";
                         Debug.WriteLine(msg);
-                        try { File.AppendAllText(debugShellLog, msg + Environment.NewLine); } catch { }
+                        try { File.AppendAllText(debugShellLog, msg + Environment.NewLine); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                     }
                 }
 
@@ -480,7 +480,7 @@ internal sealed class ShellNavigationController
                     {
                         var msg = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] [Shell] Folder null for {shellPath}";
                         Debug.WriteLine(msg);
-                        try { File.AppendAllText(debugShellLog, msg + Environment.NewLine); } catch { }
+                        try { File.AppendAllText(debugShellLog, msg + Environment.NewLine); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                     }
                     tcs.SetResult(items);
                     return;
@@ -497,7 +497,7 @@ internal sealed class ShellNavigationController
                             parentRawPath = FromShellPath(shellPath);
                     }
                 }
-                catch { }
+                catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
 
                 int count = 0;
                 foreach (var item in folder.Items())
@@ -511,7 +511,7 @@ internal sealed class ShellNavigationController
                         {
                             var msg = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] [Shell] Item: {itemName} Path: {path} IsFolder: {item.IsFolder}";
                             Debug.WriteLine(msg);
-                            try { File.AppendAllText(debugShellLog, msg + Environment.NewLine); } catch { }
+                            try { File.AppendAllText(debugShellLog, msg + Environment.NewLine); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                         }
                         if (string.IsNullOrEmpty(itemName)) continue;
                         if (string.IsNullOrEmpty(path))
@@ -541,14 +541,14 @@ internal sealed class ShellNavigationController
                         });
                         count++;
                     }
-                    catch { }
+                    catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                 }
 
                 if (debugShell)
                 {
                     var msg = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] [Shell] Items count: {items.Count}";
                     Debug.WriteLine(msg);
-                    try { File.AppendAllText(debugShellLog, msg + Environment.NewLine); } catch { }
+                    try { File.AppendAllText(debugShellLog, msg + Environment.NewLine); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                 }
                 tcs.SetResult(items);
             }
@@ -598,6 +598,6 @@ internal sealed class ShellNavigationController
                 Process.Start(new ProcessStartInfo("explorer.exe", FromShellPath(shellPath)) { UseShellExecute = true });
             }
         }
-        catch { }
+        catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
     }
 }

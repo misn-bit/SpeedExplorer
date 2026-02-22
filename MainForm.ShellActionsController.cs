@@ -33,7 +33,7 @@ public partial class MainForm
             {
                 Process.Start(new ProcessStartInfo("rundll32.exe", $"shell32.dll,OpenAs_RunDLL {path}") { UseShellExecute = true });
             }
-            catch { }
+            catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
         }
 
         public void ShowInExplorer()
@@ -60,7 +60,7 @@ public partial class MainForm
                 else
                     Process.Start("explorer.exe", $"/select,\"{path}\"");
             }
-            catch { }
+            catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
         }
 
         public void CopyPathToClipboard()

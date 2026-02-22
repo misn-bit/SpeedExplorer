@@ -97,7 +97,7 @@ public partial class MainForm
                 {
                     if (File.Exists(path))
                     {
-                        try { Process.Start(new ProcessStartInfo(path) { UseShellExecute = true }); } catch { }
+                        try { Process.Start(new ProcessStartInfo(path) { UseShellExecute = true }); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                         _owner._listView.Focus();
                     }
                 }
@@ -135,7 +135,7 @@ public partial class MainForm
                     if (tree.SelectedNode?.Tag is string path && !IsSeparatorTag(path))
                     {
                         if (File.Exists(path))
-                            try { Process.Start(new ProcessStartInfo(path) { UseShellExecute = true }); } catch { }
+                            try { Process.Start(new ProcessStartInfo(path) { UseShellExecute = true }); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                         else
                             _owner.ObserveTask(_owner.NavigateTo(path), "Sidebar.NodeNavigate");
 
@@ -223,12 +223,10 @@ public partial class MainForm
                     SetWindowPos(tree.Handle, IntPtr.Zero, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
                 }
             }
-            catch
-            {
-            }
+            catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
 
-            try { ShowScrollBar(tree.Handle, SB_HORZ, false); } catch { }
-            try { ShowScrollBar(tree.Handle, SB_VERT, AppSettings.Current.ShowSidebarVerticalScrollbar); } catch { }
+            try { ShowScrollBar(tree.Handle, SB_HORZ, false); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+            try { ShowScrollBar(tree.Handle, SB_VERT, AppSettings.Current.ShowSidebarVerticalScrollbar); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
         }
 
         public void PopulateSidebar()
@@ -496,10 +494,10 @@ public partial class MainForm
                         if (!isFileSystem && !string.IsNullOrEmpty(name))
                             devices.Add((name, item));
                     }
-                    catch { }
+                    catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                 }
             }
-            catch { }
+            catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
 
             return devices;
         }

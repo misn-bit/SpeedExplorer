@@ -447,7 +447,7 @@ public class LlmChatPanel : Panel
             _historyContainer.Dock = DockStyle.None;
             this.Parent.Controls.Add(_historyContainer);
         }
-        catch { }
+        catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
     }
 
     private void ReturnHistoryContainerToSelf()
@@ -460,7 +460,7 @@ public class LlmChatPanel : Panel
             _historyContainer.Dock = DockStyle.Fill;
             this.Controls.Add(_historyContainer);
         }
-        catch { }
+        catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
     }
 
     private void UpdateHistoryOverlayBounds()
@@ -707,7 +707,7 @@ public class LlmChatPanel : Panel
             {
                  files = Directory.GetFileSystemEntries(currentDir).Select(Path.GetFileName).ToList()!;
             }
-            catch { }
+            catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
 
             string fileContext = string.Join(", ", files.Take(200)); 
             if (files.Count > 200) fileContext += $" ... and {files.Count - 200} more";

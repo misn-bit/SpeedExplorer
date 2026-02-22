@@ -220,7 +220,7 @@ public class CreateFileOperation : FileOperation
             if (File.Exists(FilePath))
                 return;
         }
-        catch { }
+        catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
 
         // Fallback: re-create the file with the cached content.
         try

@@ -65,7 +65,7 @@ public partial class MainForm
                 if (_owner._listView.SelectedIndices.Count > 0)
                     selectedIndexBefore = _owner._listView.SelectedIndices[0];
             }
-            catch { }
+            catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
 
             _owner._listView.BeginUpdate();
             try
@@ -117,7 +117,7 @@ public partial class MainForm
                     if (smallGray != null) _owner._smallIcons.Images.Add("gray_folder", smallGray);
                     if (largeGray != null) _owner._largeIcons.Images.Add("gray_folder", largeGray);
                 }
-                catch { }
+                catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
 
                 _owner._listView.SmallImageList = _owner._smallIcons;
                 _owner._listView.LargeImageList = _owner._largeIcons;
@@ -136,11 +136,11 @@ public partial class MainForm
                             int idx = selectedIndexBefore >= 0 && selectedIndexBefore < _owner._items.Count ? selectedIndexBefore : 0;
                             _owner._listView.SelectedIndices.Clear();
                             _owner._listView.SelectedIndices.Add(idx);
-                            try { _owner._listView.FocusedItem = _owner._listView.Items[idx]; } catch { }
-                            try { _owner._listView.EnsureVisible(idx); } catch { }
+                            try { _owner._listView.FocusedItem = _owner._listView.Items[idx]; } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+                            try { _owner._listView.EnsureVisible(idx); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                         }
                     }
-                    catch { }
+                    catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                 }
             }
             finally
@@ -164,7 +164,7 @@ public partial class MainForm
                     if (_owner.IsHandleCreated && !_owner.IsDisposed)
                         _owner.BeginInvoke((Action)(() => _owner.EnsureListViewportAndPaint("SETTINGS-post-refresh")));
                 }
-                catch { }
+                catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
             }, System.Threading.Tasks.TaskScheduler.Default);
         }
     }

@@ -11,6 +11,8 @@ namespace SpeedExplorer;
 
 public partial class MainForm
 {
+    private Font? _searchOverlayFont;
+
     private void InitializeSearchOverlay()
     {
         _searchingOverlay = new Label
@@ -38,11 +40,13 @@ public partial class MainForm
         _searchingOverlay.ForeColor = Color.FromArgb(190, 190, 190);
 
         float targetSize = Math.Max(18f, _listView.Font.Size * 2.1f);
-        if (_searchingOverlay.Font == null ||
-            Math.Abs(_searchingOverlay.Font.Size - targetSize) > 0.1f ||
-            _searchingOverlay.Font.Style != FontStyle.Bold)
+        if (_searchOverlayFont == null ||
+            Math.Abs(_searchOverlayFont.Size - targetSize) > 0.1f)
         {
-            _searchingOverlay.Font = new Font("Segoe UI", targetSize, FontStyle.Bold, GraphicsUnit.Point);
+            var oldFont = _searchOverlayFont;
+            _searchOverlayFont = new Font("Segoe UI", targetSize, FontStyle.Bold, GraphicsUnit.Point);
+            _searchingOverlay.Font = _searchOverlayFont;
+            oldFont?.Dispose();
         }
     }
 
@@ -92,13 +96,13 @@ public partial class MainForm
 
         public void CancelActive()
         {
-            try { _cts?.Cancel(); } catch { }
+            try { _cts?.Cancel(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
         }
 
         public bool TryCancelActiveSearch()
         {
             if (!IsSearchMode || _cts == null) return false;
-            try { _cts.Cancel(); } catch { }
+            try { _cts.Cancel(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
             return true;
         }
 
@@ -194,13 +198,13 @@ public partial class MainForm
                     _owner._listView.VirtualListSize = _owner._items.Count;
                     if (_owner._items.Count > 0)
                     {
-                        try { SendMessage(_owner._listView.Handle, 0x1013 /* LVM_ENSUREVISIBLE */, 0, 0); } catch { }
-                        try { _owner._listView.EnsureVisible(0); } catch { }
+                        try { SendMessage(_owner._listView.Handle, 0x1013 /* LVM_ENSUREVISIBLE */, 0, 0); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+                        try { _owner._listView.EnsureVisible(0); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                     }
                     _owner._listView.Invalidate();
                     _owner._listView.Update();
                 }
-                catch { }
+                catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
             }));
 
             _owner._statusLabel.Text = string.Format(Localization.T("status_ready_items"), _owner._items.Count);
@@ -340,7 +344,7 @@ public partial class MainForm
                             SetSearchStatus(Localization.T("status_searching_drive"), drive, results.Count, totalSearched);
                         }
                         catch (OperationCanceledException) { break; }
-                        catch { }
+                        catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                     }
                     finalScanned = totalSearched;
                 }
@@ -378,8 +382,8 @@ public partial class MainForm
                     _owner._listView.VirtualListSize = _owner._items.Count;
                     if (_owner._items.Count > 0)
                     {
-                        try { _owner._listView.TopItem = _owner._listView.Items[0]; } catch { }
-                        try { _owner._listView.Items[0].EnsureVisible(); } catch { }
+                        try { _owner._listView.TopItem = _owner._listView.Items[0]; } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+                        try { _owner._listView.Items[0].EnsureVisible(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                     }
                 }
                 finally

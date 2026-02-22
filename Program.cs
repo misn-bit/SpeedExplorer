@@ -192,7 +192,7 @@ static class Program
             if (IsExplorerShellArgument(startPath))
             {
                 LogCrash("Program.Main", null, $"ExplorerShellArg redirect path=\"{startPath}\"");
-                try { Process.Start(new ProcessStartInfo("explorer.exe", startPath!) { UseShellExecute = true }); } catch { }
+                try { Process.Start(new ProcessStartInfo("explorer.exe", startPath!) { UseShellExecute = true }); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                 return;
             }
 
@@ -246,9 +246,7 @@ static class Program
             lines.AppendLine();
             File.AppendAllText(GetCrashLogPath(), lines.ToString());
         }
-        catch
-        {
-        }
+        catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
     }
 
     private static void WriteMiniDump(string source)
@@ -346,9 +344,7 @@ static class Program
                 return;
             Environment.CurrentDirectory = exeDir;
         }
-        catch
-        {
-        }
+        catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
     }
 
     private static string GetExecutableDirectory()
@@ -363,9 +359,7 @@ static class Program
                     return dir;
             }
         }
-        catch
-        {
-        }
+        catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
 
         try
         {
@@ -377,9 +371,7 @@ static class Program
                     return dir;
             }
         }
-        catch
-        {
-        }
+        catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
 
         return AppContext.BaseDirectory;
     }
@@ -401,7 +393,7 @@ static class Program
             var pathArg = ExtractStartPathFromArgs(args) ?? "";
             if (IsExplorerShellArgument(pathArg))
             {
-                try { Process.Start(new ProcessStartInfo("explorer.exe", pathArg) { UseShellExecute = true }); } catch { }
+                try { Process.Start(new ProcessStartInfo("explorer.exe", pathArg) { UseShellExecute = true }); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                 return;
             }
 
@@ -448,7 +440,7 @@ static class Program
                         LogCrash("Pipe.Receive", null, $"raw=\"{raw}\" startPath=\"{startPath}\"");
                         if (IsExplorerShellArgument(startPath))
                         {
-                            try { Process.Start(new ProcessStartInfo("explorer.exe", startPath!) { UseShellExecute = true }); } catch { }
+                            try { Process.Start(new ProcessStartInfo("explorer.exe", startPath!) { UseShellExecute = true }); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                             return;
                         }
 
@@ -593,7 +585,7 @@ static class Program
                 string exePath = Application.ExecutablePath;
                 _trayIcon.Icon = Icon.ExtractAssociatedIcon(exePath);
             }
-            catch { }
+            catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
         }
 
         public void SetTrayIconVisible(bool visible)
@@ -853,7 +845,7 @@ static class Program
                 if (uri.IsFile)
                     candidate = uri.LocalPath;
             }
-            catch { }
+            catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
         }
 
         int quotedArgSplit = candidate.IndexOf("\" ", StringComparison.Ordinal);
@@ -968,7 +960,7 @@ static class Program
         {
             normalizedImagePath = Path.GetFullPath(normalizedImagePath);
         }
-        catch { }
+        catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
 
         if (!File.Exists(normalizedImagePath))
             return false;

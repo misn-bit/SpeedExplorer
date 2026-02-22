@@ -98,7 +98,7 @@ public static class ImageViewerAssociationService
         else
             BestEffortRestore(root);
 
-        try { root.DeleteSubKeyTree($"Software\\Classes\\{ProgId}", false); } catch { }
+        try { root.DeleteSubKeyTree($"Software\\Classes\\{ProgId}", false); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
 
         AppSettings.Current.ImageViewerFileAssocBackupJson = "";
         AppSettings.Current.ImageViewerFileAssocEnabled = false;
@@ -176,7 +176,7 @@ public static class ImageViewerAssociationService
                     key.SetValue("", snap.Value ?? "", snap.Kind);
                 }
             }
-            catch { }
+            catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
         }
     }
 
@@ -193,7 +193,7 @@ public static class ImageViewerAssociationService
                 if (string.Equals(current, ProgId, StringComparison.OrdinalIgnoreCase))
                     key.DeleteValue("", false);
             }
-            catch { }
+            catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
         }
     }
 

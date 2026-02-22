@@ -88,7 +88,7 @@ public partial class MainForm
                 };
                 _watcher.Error += (s, e) => RequestWatcherRefresh();
             }
-            catch { }
+            catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
         }
 
         public void RequestWatcherRefresh()
@@ -105,7 +105,7 @@ public partial class MainForm
                     _pendingChanges.Add(change);
                 }
             }
-            catch { }
+            catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
             RestartTimer();
         }
 
@@ -125,7 +125,7 @@ public partial class MainForm
                 _watcherTimer.Stop();
                 _watcherTimer.Start();
             }
-            catch { }
+            catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
         }
 
         private List<PendingChange> DrainPendingChanges()
@@ -182,7 +182,7 @@ public partial class MainForm
                 if (_owner._listView.TopItem?.Tag is FileItem topItem && !string.IsNullOrWhiteSpace(topItem.FullPath))
                     topPath = topItem.FullPath;
             }
-            catch { }
+            catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
 
             var map = new Dictionary<string, FileItem>(StringComparer.OrdinalIgnoreCase);
             foreach (var item in _owner._allItems)
@@ -282,7 +282,7 @@ public partial class MainForm
                         else
                             _owner._listView.EnsureVisible(topIndex);
                     }
-                    catch { }
+                    catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                 }
             }
 
@@ -354,7 +354,7 @@ public partial class MainForm
                     return true;
                 }
             }
-            catch { }
+            catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
 
             return false;
         }
@@ -366,7 +366,7 @@ public partial class MainForm
                 _watcherTimer.Stop();
                 _watcherTimer.Dispose();
             }
-            catch { }
+            catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
 
             try
             {
@@ -377,7 +377,7 @@ public partial class MainForm
                     _watcher = null;
                 }
             }
-            catch { }
+            catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
         }
     }
 }

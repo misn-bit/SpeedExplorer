@@ -9,6 +9,7 @@
     <AssemblyName>SpeedExplorer</AssemblyName>
     <RootNamespace>SpeedExplorer</RootNamespace>
     <ApplicationIcon>Icons\app_icon_2.ico</ApplicationIcon>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>

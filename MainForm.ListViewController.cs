@@ -140,7 +140,7 @@ public partial class MainForm
                         AppSettings.Current.Save();
                     }
                 }
-                catch { }
+                catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
             };
 
             lv.HandleCreated += (s, e) =>
@@ -155,7 +155,7 @@ public partial class MainForm
                     const int LVS_EX_MARQUEESELECTION = 0x8;
                     const int LVS_EX_DOUBLEBUFFER = 0x10000;
 
-                    try { lv.GridLines = false; } catch { }
+                    try { lv.GridLines = false; } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
 
                     int ex = SendMessage(lv.Handle, LVM_GETEXTENDEDLISTVIEWSTYLE, 0, 0);
                     ex &= ~LVS_EX_GRIDLINES;
@@ -200,7 +200,7 @@ public partial class MainForm
             if (headerHandle == IntPtr.Zero) return;
 
             _owner._headerHandle = headerHandle;
-            try { SetWindowTheme(headerHandle, "DarkMode_Explorer", null); } catch { }
+            try { SetWindowTheme(headerHandle, "DarkMode_Explorer", null); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
             _owner._headerTailController.Attach(headerHandle);
             _owner._headerTailController.Invalidate();
         }

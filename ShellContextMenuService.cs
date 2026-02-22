@@ -130,7 +130,7 @@ public static class ShellContextMenuService
                 FreeLibrary(hUx);
             }
         }
-        catch { }
+        catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
     }
 
     private static bool AllSameParent(string[] paths)
