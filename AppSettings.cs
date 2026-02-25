@@ -108,10 +108,12 @@ public class AppSettings
     public int LlmMaxTokens { get; set; } = 4096;
     public double LlmTemperature { get; set; } = 0.3;
     
-    // Chat Mode Settings
+    // Chat & Agent Mode Settings
     public string LlmChatApiUrl { get; set; } = "http://localhost:1234/api/v1/chat";
     public bool ChatModeEnabled { get; set; } = false;
     public double LlmChatPanelHeightRatio { get; set; } = 0.5; // Stored ratio for history panel height
+    public int LlmAgentMaxLoops { get; set; } = 3; // Maximum loops in autonomous agent mode
+    public bool LlmAgentModeEnabled { get; set; } = false;
     // LLM UI Toggles
     public bool LlmSearchEnabled { get; set; } = true;
     public bool LlmTaggingEnabled { get; set; } = true;

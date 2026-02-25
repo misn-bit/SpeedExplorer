@@ -77,6 +77,7 @@ public class SettingsForm : Form
     private ComboBox _llmModelComboBox = null!;
     private ComboBox _llmBatchVisionModelComboBox = null!;
     private NumericUpDown _llmMaxTokensNum = null!;
+    private NumericUpDown _llmAgentMaxLoopsNum = null!;
     private NumericUpDown _llmTempNum = null!;
 
     private Dictionary<string, Button> _hotkeyButtons = new();
@@ -669,6 +670,15 @@ public class SettingsForm : Form
         };
         tempPanel.Controls.Add(_llmTempNum);
         panel.Controls.Add(tempPanel);
+
+        // Max Agent Loops
+        var loopPanel = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.LeftToRight, WrapContents = false };
+        loopPanel.Controls.Add(CreateLabel("Max Agent Loops", new Point(0, Scale(5))));
+        _llmAgentMaxLoopsNum = CreateNumeric(1, 10, Point.Empty);
+        _llmAgentMaxLoopsNum.Width = Scale(60);
+        loopPanel.Controls.Add(_llmAgentMaxLoopsNum);
+        panel.Controls.Add(loopPanel);
+
         panel.Controls.Add(new Panel { Height = Scale(16), Width = Scale(1), BackColor = tab.BackColor });
     }
 
@@ -1016,6 +1026,7 @@ public class SettingsForm : Form
         _llmBatchVisionModelComboBox.Text = s.LlmBatchVisionModelName;
         _llmMaxTokensNum.Value = Math.Clamp(s.LlmMaxTokens, 100, 32000);
         _llmTempNum.Value = (decimal)Math.Clamp(s.LlmTemperature, 0, 2.0);
+        _llmAgentMaxLoopsNum.Value = Math.Clamp(s.LlmAgentMaxLoops, 1, 10);
 
         PopulateHotkeys();
         UpdateToggles();
@@ -1282,6 +1293,7 @@ public class SettingsForm : Form
         s.LlmBatchVisionModelName = _llmBatchVisionModelComboBox.Text.Trim();
         s.LlmMaxTokens = (int)_llmMaxTokensNum.Value;
         s.LlmTemperature = (double)_llmTempNum.Value;
+        s.LlmAgentMaxLoops = (int)_llmAgentMaxLoopsNum.Value;
 
         s.RunAtStartup = _runAtStartupChk.Checked;
         s.StartMinimized = _startMinimizedChk.Checked;

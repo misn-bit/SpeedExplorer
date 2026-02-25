@@ -124,6 +124,214 @@ public class LlmExecutor
     }
 
     /// <summary>
+    /// Executes commands inside an agent loop block and returns string feedback for the LLM.
+    /// </summary>
+    public (List<string> Feedback, List<FileOperation> Operations) ExecuteAgenticCommands(List<LlmCommand> commands)
+    {
+        var feedback = new List<string>();
+        var writeCommands = new List<LlmCommand>();
+        var ops = new List<FileOperation>();
+
+        foreach (var cmd in commands)
+        {
+            try
+            {
+                switch (cmd.Cmd?.ToLowerInvariant())
+                {
+                    case "list_dir":
+                        feedback.Add(ExecuteListDir(cmd));
+                        break;
+                    case "search":
+                        feedback.Add(ExecuteSearch(cmd));
+                        break;
+                    case "search_tags":
+                        feedback.Add(ExecuteSearchTags(cmd));
+                        break;
+                    case "move":
+                        if (string.IsNullOrWhiteSpace(cmd.To))
+                        {
+                            feedback.Add("[move] Missing destination path ('to').");
+                            break;
+                        }
+                        if ((cmd.Files == null || cmd.Files.Count == 0) && string.IsNullOrWhiteSpace(cmd.Pattern))
+                        {
+                            feedback.Add("[move] Missing source selection. Provide either 'files' or 'pattern'.");
+                            break;
+                        }
+
+                        var resolved = ResolveFiles(cmd);
+                        if (resolved.Count == 0)
+                        {
+                            string selector = !string.IsNullOrWhiteSpace(cmd.Pattern)
+                                ? $"pattern '{cmd.Pattern}'"
+                                : "provided file names";
+                            feedback.Add($"[move] No source files matched for {selector}. This may mean files are already moved. Use list_dir/search to confirm.");
+                            break;
+                        }
+
+                        writeCommands.Add(cmd);
+                        break;
+                    default:
+                        writeCommands.Add(cmd);
+                        break;
+                }
+            }
+            catch (Exception ex)
+            {
+                feedback.Add($"[{cmd.Cmd}] Error: {ex.Message}");
+            }
+        }
+
+        if (writeCommands.Any())
+        {
+            string attempted = SummarizeWriteCommands(writeCommands);
+            if (!string.IsNullOrWhiteSpace(attempted))
+                feedback.Add($"Write commands attempted: {attempted}");
+
+            ops = ExecuteCommands(writeCommands).ToList(); // .ToList() creates a copy since ExecuteCommands returns a reference to _operations
+
+            if (ops.Count > 0)
+            {
+                feedback.Add($"Processed {writeCommands.Count} write command(s) successfully; {ops.Count} undo operation record(s) created.");
+                feedback.Add("If this fulfills the user request, set is_done=true and return no further commands.");
+            }
+            else
+            {
+                feedback.Add($"Processed {writeCommands.Count} write command(s), but no new changes were applied.");
+                feedback.Add("If files were already moved/renamed and request is satisfied, set is_done=true and return no further commands.");
+            }
+        }
+
+        return (feedback, ops);
+    }
+
+    private static string SummarizeWriteCommands(List<LlmCommand> commands)
+    {
+        if (commands == null || commands.Count == 0)
+            return "";
+
+        var parts = new List<string>();
+        foreach (var cmd in commands.Take(8))
+        {
+            string name = (cmd.Cmd ?? "").Trim().ToLowerInvariant();
+            switch (name)
+            {
+                case "move":
+                    string sourcePart;
+                    if (cmd.Files != null && cmd.Files.Count > 0)
+                    {
+                        sourcePart = cmd.Files.Count <= 2
+                            ? string.Join(", ", cmd.Files.Select(f => Path.GetFileName(f ?? "")))
+                            : $"{cmd.Files.Count} file(s)";
+                    }
+                    else if (!string.IsNullOrWhiteSpace(cmd.Pattern))
+                    {
+                        sourcePart = $"pattern '{cmd.Pattern}'";
+                    }
+                    else
+                    {
+                        sourcePart = "unspecified source";
+                    }
+                    parts.Add($"move {sourcePart} -> {cmd.To}");
+                    break;
+                case "create_folder":
+                    parts.Add($"create_folder {cmd.Path}");
+                    break;
+                case "rename":
+                    parts.Add($"rename {cmd.File} -> {cmd.NewName}");
+                    break;
+                case "create_file":
+                    parts.Add($"create_file {cmd.Name}");
+                    break;
+                case "tag":
+                    parts.Add($"tag {cmd.Files?.Count ?? 0} file(s)");
+                    break;
+                default:
+                    parts.Add(name);
+                    break;
+            }
+        }
+
+        if (commands.Count > 8)
+            parts.Add($"+{commands.Count - 8} more");
+
+        return string.Join("; ", parts);
+    }
+
+    private string ExecuteListDir(LlmCommand cmd)
+    {
+        string path = ResolvePath(cmd.Path);
+        if (!Directory.Exists(path)) return $"[list_dir] Path not found: {path}";
+        var items = new DirectoryInfo(path).GetFileSystemInfos("*", SearchOption.TopDirectoryOnly);
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine($"[list_dir {path}]:");
+        foreach(var item in items)
+        {
+            if (cmd.IncludeMetadata)
+            {
+                if (item is FileInfo fi)
+                    sb.AppendLine($"[FILE] {item.Name} ({fi.Length} bytes, {fi.LastWriteTimeUtc:yyyy-MM-dd})");
+                else
+                    sb.AppendLine($"[DIR]  {item.Name}");
+            }
+            else
+            {
+                sb.AppendLine($"{(item is DirectoryInfo ? "[DIR]" : "[FILE]")} {item.Name}");
+            }
+        }
+        sb.AppendLine($"[summary] total_items={items.Length}");
+        return sb.ToString().TrimEnd();
+    }
+
+    private string ExecuteSearch(LlmCommand cmd)
+    {
+        string root = ResolvePath(cmd.Root);
+        if (!Directory.Exists(root)) return $"[search] Root not found: {root}";
+        if (string.IsNullOrWhiteSpace(cmd.Pattern)) return "[search] Missing pattern";
+        string pattern = cmd.Pattern.Trim();
+        if (pattern == "..." || pattern == "?" || pattern == "??" || pattern == ".." || pattern == ".")
+            return "[search] Invalid placeholder pattern. Use real glob patterns like *.jpeg or *.jpg.";
+
+        var matches = Directory.GetFiles(root, pattern, SearchOption.AllDirectories).Take(50).ToList();
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine($"[search {pattern} in {root}]:");
+        foreach(var m in matches) sb.AppendLine(Path.GetRelativePath(_baseDirectory, m));
+        if (matches.Count == 50) sb.AppendLine("...(truncated to 50 results)");
+        string res = sb.ToString().TrimEnd();
+        return res == $"[search {pattern} in {root}]:" ? $"[search {pattern}]: No matches found." : res;
+    }
+
+    private string ExecuteSearchTags(LlmCommand cmd)
+    {
+        if (cmd.Tags == null || !cmd.Tags.Any()) return "[search_tags] No tags specified";
+
+        var tagFilters = cmd.Tags
+            .Where(t => !string.IsNullOrWhiteSpace(t))
+            .Select(t => t.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (!tagFilters.Any()) return "[search_tags] No valid tags specified";
+
+        IEnumerable<string>? matchSet = null;
+        foreach (var tag in tagFilters)
+        {
+            var tagMatches = TagManager.Instance.GetPathsWithTag(_baseDirectory, tag);
+            matchSet = matchSet == null
+                ? tagMatches
+                : matchSet.Intersect(tagMatches, StringComparer.OrdinalIgnoreCase);
+        }
+
+        var results = (matchSet ?? Enumerable.Empty<string>()).Take(50).ToList();
+        var sb = new System.Text.StringBuilder();
+        var searchStr = string.Join(",", tagFilters);
+        sb.AppendLine($"[search_tags {searchStr}]:");
+        foreach(var r in results) sb.AppendLine(Path.GetRelativePath(_baseDirectory, r));
+        if (results.Count == 50) sb.AppendLine("...(truncated to 50 results)");
+        string res = sb.ToString().TrimEnd();
+        return res == $"[search_tags {searchStr}]:" ? $"[search_tags]: No matches found." : res;
+    }
+
+    /// <summary>
     /// Resolves files from a move command (by files list or pattern).
     /// </summary>
     private List<string> ResolveFiles(LlmCommand cmd)
@@ -135,12 +343,14 @@ public class LlmExecutor
         {
             foreach (var fileName in cmd.Files)
             {
-                var cleanName = Path.GetFileName(fileName);
-                var fullPath = Path.Combine(_baseDirectory, cleanName);
-                if (File.Exists(fullPath))
+                if (TryResolveFileReference(fileName, out var fullPath))
+                {
                     result.Add(fullPath);
+                }
                 else
-                    LlmDebugLogger.LogExecution($"File not found: {fileName}", false);
+                {
+                    LlmDebugLogger.LogExecution($"File not found or out of scope: {fileName}", false);
+                }
             }
         }
         // Pattern matching
@@ -160,6 +370,49 @@ public class LlmExecutor
         return result;
     }
 
+    private bool TryResolveFileReference(string? fileRef, out string fullPath)
+    {
+        fullPath = "";
+        if (string.IsNullOrWhiteSpace(fileRef))
+            return false;
+
+        var candidates = new List<string>();
+        string trimmed = fileRef.Trim();
+
+        if (Path.IsPathRooted(trimmed))
+        {
+            candidates.Add(trimmed);
+        }
+        else
+        {
+            // Preferred: honor subfolder-relative references under base directory.
+            candidates.Add(Path.Combine(_baseDirectory, trimmed));
+            // Backward compatibility: plain basename in current directory.
+            candidates.Add(Path.Combine(_baseDirectory, Path.GetFileName(trimmed)));
+        }
+
+        foreach (var candidate in candidates)
+        {
+            try
+            {
+                string normalized = Path.GetFullPath(candidate);
+                if (!normalized.StartsWith(_baseDirectory, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if (!File.Exists(normalized))
+                    continue;
+
+                fullPath = normalized;
+                return true;
+            }
+            catch
+            {
+                // Ignore bad candidate and continue.
+            }
+        }
+
+        return false;
+    }
+
     /// <summary>
     /// Resolves a path that can be relative or absolute.
     /// </summary>
@@ -168,12 +421,28 @@ public class LlmExecutor
         if (string.IsNullOrEmpty(path))
             return _baseDirectory;
 
+        string trimmed = path.Trim();
+        if (trimmed == "~" || trimmed == "." || trimmed == "./" || trimmed == ".\\")
+            return _baseDirectory;
+
+        if (trimmed.StartsWith("~/", StringComparison.Ordinal) || trimmed.StartsWith("~\\", StringComparison.Ordinal))
+            trimmed = "." + trimmed.Substring(1);
+
+        // Handle malformed mixed forms emitted by models like "./H:\\Testing" or ".\\C:\\Data".
+        if ((trimmed.StartsWith("./", StringComparison.Ordinal) || trimmed.StartsWith(".\\", StringComparison.Ordinal)) &&
+            trimmed.Length > 2)
+        {
+            string afterDot = trimmed.Substring(2);
+            if (Path.IsPathRooted(afterDot))
+                return Path.GetFullPath(afterDot);
+        }
+
         // Absolute path
-        if (Path.IsPathRooted(path))
-            return Path.GetFullPath(path);
+        if (Path.IsPathRooted(trimmed))
+            return Path.GetFullPath(trimmed);
 
         // Relative path (./Folder, Folder, ..\Folder)
-        return Path.GetFullPath(Path.Combine(_baseDirectory, path));
+        return Path.GetFullPath(Path.Combine(_baseDirectory, trimmed));
     }
 
     private void ExecuteCreateFolder(string? path)

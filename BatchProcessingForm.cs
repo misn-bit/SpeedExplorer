@@ -36,7 +36,7 @@ public class BatchProcessingForm : Form
         _files = files;
         _ownerHandle = ownerHandle;
         _llmService = new LlmService();
-        _llmService.ApiUrl = AppSettings.Current.LlmApiUrl; // Ensure init
+        _llmService.ApiUrl = LlmService.GetCompletionsApiUrl(AppSettings.Current.LlmApiUrl, AppSettings.Current.LlmChatApiUrl);
 
         InitializeComponent();
         LoadPrompts();

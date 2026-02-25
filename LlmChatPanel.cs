@@ -47,6 +47,7 @@ public class LlmChatPanel : Panel
     private readonly CheckBox _taggingToggle;
     private readonly CheckBox _searchToggle;
     private readonly CheckBox _thinkingToggle;
+    private readonly CheckBox _agentToggle;
     
     [Browsable(false)]
     [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
@@ -195,18 +196,21 @@ public class LlmChatPanel : Panel
         _taggingToggle = CreateToggle(Localization.T("ai_tagging"), Localization.T("ai_tagging_desc"));
         _searchToggle = CreateToggle(Localization.T("ai_search"), Localization.T("ai_search_desc"));
         _thinkingToggle = CreateToggle(Localization.T("ai_thinking"), Localization.T("ai_thinking_desc"));
+        _agentToggle = CreateToggle("Agent Mode", "Enables autonomous multi-step reasoning loops.");
 
         var s = AppSettings.Current;
         _fullContextToggle.Checked = s.LlmFullContextEnabled;
         _taggingToggle.Checked = s.LlmTaggingEnabled;
         _searchToggle.Checked = s.LlmSearchEnabled;
         _thinkingToggle.Checked = s.LlmThinkingEnabled;
+        _agentToggle.Checked = s.LlmAgentModeEnabled;
 
         // Wire persistence
         _fullContextToggle.CheckedChanged += (src, e) => { AppSettings.Current.LlmFullContextEnabled = _fullContextToggle.Checked; AppSettings.Current.Save(); };
         _taggingToggle.CheckedChanged += (src, e) => { AppSettings.Current.LlmTaggingEnabled = _taggingToggle.Checked; AppSettings.Current.Save(); };
         _searchToggle.CheckedChanged += (src, e) => { AppSettings.Current.LlmSearchEnabled = _searchToggle.Checked; AppSettings.Current.Save(); };
         _thinkingToggle.CheckedChanged += (src, e) => { AppSettings.Current.LlmThinkingEnabled = _thinkingToggle.Checked; AppSettings.Current.Save(); };
+        _agentToggle.CheckedChanged += (src, e) => { AppSettings.Current.LlmAgentModeEnabled = _agentToggle.Checked; AppSettings.Current.Save(); };
 
         // Clear History Button
         _clearHistoryBtn = new Button
@@ -230,6 +234,7 @@ public class LlmChatPanel : Panel
         headerPanel.Controls.Add(_taggingToggle);
         headerPanel.Controls.Add(_searchToggle);
         headerPanel.Controls.Add(_thinkingToggle);
+        headerPanel.Controls.Add(_agentToggle);
         headerPanel.Controls.Add(_clearHistoryBtn);
 
         // Input Box & Send Button
@@ -382,6 +387,12 @@ public class LlmChatPanel : Panel
 
     private void AppendMessage(string role, string text, Color color)
     {
+        if (_historyBox.InvokeRequired)
+        {
+            _historyBox.BeginInvoke(new Action(() => AppendMessage(role, text, color)));
+            return;
+        }
+
         _historyBox.SelectionStart = _historyBox.TextLength;
         _historyBox.SelectionLength = 0;
         
@@ -536,6 +547,7 @@ public class LlmChatPanel : Panel
         _taggingToggle.Checked = AppSettings.Current.LlmTaggingEnabled;
         _searchToggle.Checked = AppSettings.Current.LlmSearchEnabled;
         _thinkingToggle.Checked = AppSettings.Current.LlmThinkingEnabled;
+        _agentToggle.Checked = AppSettings.Current.LlmAgentModeEnabled;
     }
 
     public void FocusInput()
@@ -608,6 +620,16 @@ public class LlmChatPanel : Panel
             
             _statusLabel.Text = Localization.T("ai_thinking_status");
             _statusLabel.ForeColor = Color.Cyan;
+
+            if (_agentToggle.Checked)
+            {
+                await HandleAgentModeChatAsync(prompt, currentDir, selectedModel, wasExpandedAtStart);
+                _statusLabel.Text = Localization.T("ai_idle");
+                _statusLabel.ForeColor = Color.Gray;
+                if (wasExpandedAtStart)
+                    BlockAutoCollapse(1200);
+                return;
+            }
 
             // Get current directory context for the system update
             string currentContext = "";
@@ -760,6 +782,310 @@ public class LlmChatPanel : Panel
             _inputBox.Enabled = true;
             _sendButton.Enabled = true;
         }
+    }
+
+    private async Task HandleAgentModeChatAsync(string userPrompt, string? currentDir, string selectedModel, bool wasExpandedAtStart)
+    {
+        try
+        {
+            string currentContext = BuildCurrentContextSnapshot(currentDir);
+            var decision = await _llmService.SendAgentChatDecisionAsync(
+                _chatHistory,
+                currentDir,
+                currentContext,
+                _taggingToggle.Checked,
+                _searchToggle.Checked,
+                forceReplyOnly: false,
+                modelOverride: selectedModel);
+
+            string action = (decision.Action ?? "reply").Trim().ToLowerInvariant();
+
+            if (action == "quick_commands")
+            {
+                if (decision.Commands.Count == 0)
+                {
+                    AppendMessage("AI", decision.Message, Color.LightGreen);
+                    _chatHistory.Add(new ChatMessage { Role = "assistant", Content = decision.Message });
+                    return;
+                }
+
+                if (!HasUsableDirectory(currentDir))
+                {
+                    string blockedMsg = "I can't run file tools in 'This PC' view. Open a real folder and try again.";
+                    AppendMessage("System", blockedMsg, Color.OrangeRed);
+                    _chatHistory.Add(new ChatMessage { Role = "system", Content = "[TOOL_EXECUTION_BLOCKED]\n" + blockedMsg });
+
+                    var blockedReply = await _llmService.SendAgentChatDecisionAsync(
+                        _chatHistory,
+                        currentDir,
+                        currentContext,
+                        _taggingToggle.Checked,
+                        _searchToggle.Checked,
+                        forceReplyOnly: true,
+                        modelOverride: selectedModel);
+                    AppendMessage("AI", blockedReply.Message, Color.LightGreen);
+                    _chatHistory.Add(new ChatMessage { Role = "assistant", Content = blockedReply.Message });
+                    return;
+                }
+
+                if (!string.IsNullOrWhiteSpace(decision.Message))
+                {
+                    AppendMessage("AI", decision.Message, Color.LightGreen);
+                    _chatHistory.Add(new ChatMessage { Role = "assistant", Content = decision.Message });
+                }
+
+                _statusLabel.Text = "Running quick tools...";
+                _statusLabel.ForeColor = Color.Cyan;
+
+                var executor = new LlmExecutor(currentDir!, GetOwnerHandle?.Invoke() ?? IntPtr.Zero);
+                var (feedback, ops) = executor.ExecuteAgenticCommands(decision.Commands);
+                if (ops.Count > 0)
+                {
+                    if (ops.Count == 1)
+                        UndoRedoManager.Instance.RecordOperation(ops[0]);
+                    else
+                        UndoRedoManager.Instance.RecordOperation(new BatchOperation(ops, $"AI (Quick): {TruncatePrompt(userPrompt)}"));
+                    OnOperationsComplete?.Invoke();
+                }
+
+                string toolResultMessage = BuildQuickToolResultSystemMessage(decision.Commands, feedback, ops.Count);
+                _chatHistory.Add(new ChatMessage { Role = "system", Content = toolResultMessage });
+                AppendMessage("System", $"Quick tools executed: {decision.Commands.Count} command(s).", Color.LightGoldenrodYellow);
+
+                currentContext = BuildCurrentContextSnapshot(currentDir);
+                var finalDecision = await _llmService.SendAgentChatDecisionAsync(
+                    _chatHistory,
+                    currentDir,
+                    currentContext,
+                    _taggingToggle.Checked,
+                    _searchToggle.Checked,
+                    forceReplyOnly: true,
+                    modelOverride: selectedModel);
+
+                AppendMessage("AI", finalDecision.Message, Color.LightGreen);
+                _chatHistory.Add(new ChatMessage { Role = "assistant", Content = finalDecision.Message });
+
+                if (wasExpandedAtStart)
+                {
+                    BlockAutoCollapse(1800);
+                    ExpandPanel();
+                }
+                return;
+            }
+
+            if (action == "start_agent_run")
+            {
+                if (!HasUsableDirectory(currentDir))
+                {
+                    string blockedMsg = "I can't start the agent loop in 'This PC' view. Open a real folder and try again.";
+                    AppendMessage("System", blockedMsg, Color.OrangeRed);
+                    _chatHistory.Add(new ChatMessage { Role = "system", Content = "[AGENT_RUN_BLOCKED]\n" + blockedMsg });
+
+                    var blockedReply = await _llmService.SendAgentChatDecisionAsync(
+                        _chatHistory,
+                        currentDir,
+                        currentContext,
+                        _taggingToggle.Checked,
+                        _searchToggle.Checked,
+                        forceReplyOnly: true,
+                        modelOverride: selectedModel);
+                    AppendMessage("AI", blockedReply.Message, Color.LightGreen);
+                    _chatHistory.Add(new ChatMessage { Role = "assistant", Content = blockedReply.Message });
+                    return;
+                }
+
+                if (!string.IsNullOrWhiteSpace(decision.Message))
+                {
+                    AppendMessage("AI", decision.Message, Color.LightGreen);
+                    _chatHistory.Add(new ChatMessage { Role = "assistant", Content = decision.Message });
+                }
+
+                string runTask = string.IsNullOrWhiteSpace(decision.RunTask) ? userPrompt : decision.RunTask.Trim();
+                _statusLabel.Text = "Agent loop running...";
+                _statusLabel.ForeColor = Color.Cyan;
+
+                var progress = new Progress<string>(statusMsg =>
+                {
+                    AppendMessage("Agent", statusMsg, Color.LightGoldenrodYellow);
+                });
+
+                var loopHistory = new List<ChatMessage>
+                {
+                    new ChatMessage { Role = "user", Content = runTask }
+                };
+
+                var ops = await _llmService.RunAgenticTaskAsync(
+                    loopHistory,
+                    currentDir!,
+                    _taggingToggle.Checked,
+                    _searchToggle.Checked,
+                    new LlmExecutor(currentDir!, GetOwnerHandle?.Invoke() ?? IntPtr.Zero),
+                    progress,
+                    selectedModel);
+
+                if (ops.Count > 0)
+                {
+                    UndoRedoManager.Instance.RecordOperation(new BatchOperation(ops, $"AI (Agent): {TruncatePrompt(userPrompt)}"));
+                    OnOperationsComplete?.Invoke();
+                }
+
+                var report = _llmService.LastAgentRunReport ?? new LlmAgentRunReport
+                {
+                    Request = runTask,
+                    Model = selectedModel,
+                    LoopsUsed = 0,
+                    MaxLoops = AppSettings.Current.LlmAgentMaxLoops,
+                    Completed = ops.Count > 0,
+                    ClosureVerificationRan = false,
+                    CommandsExecuted = 0,
+                    ReadOnlyCommandsExecuted = 0,
+                    WriteCommandsExecuted = 0,
+                    UndoOperationRecords = ops.Count,
+                    StopReason = "Run report unavailable.",
+                    Events = new List<string>(),
+                    ModelSummary = _llmService.LastAgentFinalResponse,
+                    FinishedUtc = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss")
+                };
+
+                _chatHistory.Add(new ChatMessage
+                {
+                    Role = "system",
+                    Content = LlmService.BuildAgentRunReportSystemMessage(report)
+                });
+                _chatHistory.Add(new ChatMessage
+                {
+                    Role = "user",
+                    Content = "The agent run is finished. Based only on the latest [AGENT_RUN_REPORT], provide the final result to the user now."
+                });
+
+                AppendMessage("System", $"Agent run complete: {report.StopReason}", report.Completed ? Color.LightGreen : Color.Goldenrod);
+
+                currentContext = BuildCurrentContextSnapshot(currentDir);
+                var postRunDecision = await _llmService.SendAgentChatDecisionAsync(
+                    _chatHistory,
+                    currentDir,
+                    currentContext,
+                    _taggingToggle.Checked,
+                    _searchToggle.Checked,
+                    forceReplyOnly: true,
+                    modelOverride: selectedModel);
+
+                string finalMessage = string.IsNullOrWhiteSpace(postRunDecision.Message)
+                    ? (report.Completed ? "Task completed." : $"Task stopped: {report.StopReason}")
+                    : postRunDecision.Message;
+                if (LooksLikeFuturePlanReply(finalMessage))
+                    finalMessage = BuildDeterministicPostRunReply(report);
+
+                AppendMessage("AI", finalMessage, Color.LightGreen);
+                _chatHistory.Add(new ChatMessage { Role = "assistant", Content = finalMessage });
+
+                if (wasExpandedAtStart)
+                {
+                    BlockAutoCollapse(2200);
+                    ExpandPanel();
+                }
+                return;
+            }
+
+            AppendMessage("AI", decision.Message, Color.LightGreen);
+            _chatHistory.Add(new ChatMessage { Role = "assistant", Content = decision.Message });
+        }
+        catch (Exception ex)
+        {
+            AppendMessage("System", $"Error in Agent Mode: {ex.Message}", Color.OrangeRed);
+            LlmDebugLogger.LogError($"Agent mode chat failed: {ex}");
+        }
+    }
+
+    private static bool HasUsableDirectory(string? dir)
+    {
+        return !string.IsNullOrWhiteSpace(dir) && !string.Equals(dir, "::ThisPC", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private string BuildCurrentContextSnapshot(string? currentDir)
+    {
+        if (!HasUsableDirectory(currentDir))
+            return "(no active directory context)";
+
+        return _fullContextToggle.Checked
+            ? LlmPromptBuilder.BuildFullDirectoryContext(currentDir!)
+            : LlmPromptBuilder.BuildExtensionContext(currentDir!);
+    }
+
+    private static string BuildQuickToolResultSystemMessage(List<LlmCommand> commands, List<string> feedback, int opsCount)
+    {
+        var commandPayload = commands.Select(c => new
+        {
+            cmd = c.Cmd,
+            path = c.Path,
+            root = c.Root,
+            pattern = c.Pattern,
+            include_metadata = c.IncludeMetadata,
+            tags = c.Tags
+        }).ToList();
+
+        var feedbackPayload = feedback
+            .Select(TrimFeedbackForSystemMessage)
+            .Where(s => !string.IsNullOrWhiteSpace(s))
+            .Take(12)
+            .ToList();
+
+        var payload = new
+        {
+            type = "quick_tool_result",
+            commands = commandPayload,
+            feedback = feedbackPayload,
+            undo_operation_records = opsCount
+        };
+
+        return "[QUICK_TOOL_RESULT]\n" + JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = true });
+    }
+
+    private static string TrimFeedbackForSystemMessage(string input)
+    {
+        if (string.IsNullOrWhiteSpace(input))
+            return "";
+
+        string normalized = input.Replace("\r\n", "\n").Replace('\r', '\n').Trim();
+        const int maxLen = 2200;
+        if (normalized.Length <= maxLen)
+            return normalized;
+        return normalized.Substring(0, maxLen) + "\n...(truncated)";
+    }
+
+    private static bool LooksLikeFuturePlanReply(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return false;
+
+        string t = text.Trim().ToLowerInvariant();
+        if (t.StartsWith("i'll ") || t.StartsWith("i will ") || t.StartsWith("i’m going to ") || t.StartsWith("i am going to "))
+            return true;
+
+        return t.Contains("i'll organize") ||
+               t.Contains("i will organize") ||
+               t.Contains("i'll move") ||
+               t.Contains("i will move");
+    }
+
+    private static string BuildDeterministicPostRunReply(LlmAgentRunReport report)
+    {
+        if (report.Completed)
+        {
+            if (report.UndoOperationRecords > 0)
+            {
+                return $"Task completed. Loops used: {report.LoopsUsed}/{report.MaxLoops}. " +
+                       $"Applied changes with {report.UndoOperationRecords} undo record(s).";
+            }
+
+            return $"Task completed. Loops used: {report.LoopsUsed}/{report.MaxLoops}.";
+        }
+
+        string baseMsg = $"Task stopped before full completion. Stop reason: {report.StopReason}. " +
+                         $"Loops used: {report.LoopsUsed}/{report.MaxLoops}.";
+        if (report.UndoOperationRecords > 0)
+            baseMsg += $" Some changes were applied ({report.UndoOperationRecords} undo record(s)).";
+        return baseMsg;
     }
 
     private string TruncatePrompt(string prompt)
