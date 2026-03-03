@@ -13,7 +13,7 @@ public sealed class LlmModelSelectorForm : Form
     [DllImport("uxtheme.dll", ExactSpelling = true, CharSet = CharSet.Unicode)]
     private static extern int SetWindowTheme(IntPtr hWnd, string? pszSubAppName, string? pszSubIdList);
 
-    private readonly LlmService _service;
+    private readonly LlmModelManager _service;
     private readonly string _apiUrl;
     private readonly LlmUsageKind _usageKind;
     private readonly LlmTaskKind _taskKind;
@@ -43,7 +43,7 @@ public sealed class LlmModelSelectorForm : Form
     private static readonly Color BtnPrimaryBg = Color.FromArgb(0, 120, 212);
 
     public LlmModelSelectorForm(
-        LlmService service,
+        LlmModelManager service,
         string apiUrl,
         LlmUsageKind usageKind,
         LlmTaskKind taskKind,

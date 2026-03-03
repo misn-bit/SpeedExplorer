@@ -61,8 +61,10 @@ public class ImageViewerForm : Form
     private readonly Button _tagBtn;
     private readonly Button _clearOverlayBtn;
     private readonly Button _copyResultBtn;
+    private readonly Button _abortBtn;
     private readonly Button _openSavedOcrFileBtn;
     private readonly LlmService _llmService = new();
+    private CancellationTokenSource? _aiCts;
 
     private float _zoomLevel = 1.0f;
     private Point _panOffset = Point.Empty;
@@ -319,8 +321,14 @@ public class ImageViewerForm : Form
             Margin = Scale(new Padding(0, 5, 8, 0))
         };
         _copyResultBtn = CreateButton("Copy", Scale(56));
+        _abortBtn = CreateButton("Abort", Scale(56));
+        _abortBtn.ForeColor = Color.Salmon;
+        _abortBtn.Visible = false;
+        _abortBtn.Click += (s, e) => AbortAi();
+
         aiToolsRow.Controls.Add(_overlayToggle);
         aiToolsRow.Controls.Add(_copyResultBtn);
+        aiToolsRow.Controls.Add(_abortBtn);
 
         var savedToggleRow = new FlowLayoutPanel
         {
@@ -777,6 +785,7 @@ public class ImageViewerForm : Form
         _translateBtn.Enabled = !busy;
         _tagBtn.Enabled = !busy;
         _targetLanguageBox.Enabled = !busy;
+        _abortBtn.Visible = busy;
         _overlayToggle.Enabled = !busy;
         _showSavedOcrCheck.Enabled = !busy;
         _showSavedTranslationCheck.Enabled = !busy;
@@ -784,7 +793,10 @@ public class ImageViewerForm : Form
         _openSavedOcrFileBtn.Enabled = !busy;
         _copyResultBtn.Enabled = !busy;
         _aiStatusLabel.Text = statusText;
-        Cursor = busy ? Cursors.WaitCursor : Cursors.Default;
+        if (busy)
+            _aiOutputBox.Cursor = Cursors.WaitCursor;
+        else
+            _aiOutputBox.Cursor = Cursors.Default;
         UpdateSavedCacheUiState();
     }
 
@@ -1413,7 +1425,8 @@ public class ImageViewerForm : Form
             }
 
             SetAiBusy(true, "Extracting text...");
-            var ocr = await _llmService.ExtractImageTextAsync(imagePath, model);
+            _aiCts = new CancellationTokenSource();
+            var ocr = await _llmService.ExtractImageTextAsync(imagePath, model, _aiCts.Token);
 
             if (ocr == null)
             {
@@ -1447,7 +1460,7 @@ public class ImageViewerForm : Form
             if (sourceBlocks.Count == 0 && !string.IsNullOrWhiteSpace(ocr.FullText))
                 sourceBlocks.Add(ocr.FullText);
 
-            var translation = await _llmService.TranslateTextBlocksAsync(sourceBlocks, targetLanguage, ocr.DetectedLanguage, model);
+            var translation = await _llmService.TranslateTextBlocksAsync(sourceBlocks, targetLanguage, null, model, _aiCts.Token);
             if (translation == null)
             {
                 SetAiBusy(false, "Translation failed");
@@ -1464,11 +1477,20 @@ public class ImageViewerForm : Form
             SetAiBusy(false, $"Translated to {translation.TargetLanguage}");
             UpdateSavedCacheUiState();
         }
+        catch (OperationCanceledException)
+        {
+            SetAiBusy(false, "Operation aborted");
+        }
         catch (Exception ex)
         {
             SetAiBusy(false, $"AI error: {ex.Message}");
             LlmDebugLogger.LogError($"Image viewer OCR/translate failed: {ex}");
             UpdateSavedCacheUiState();
+        }
+        finally
+        {
+            _aiCts?.Dispose();
+            _aiCts = null;
         }
     }
 
@@ -1492,10 +1514,12 @@ public class ImageViewerForm : Form
             }
 
             SetAiBusy(true, "Generating tags...");
+            _aiCts = new CancellationTokenSource();
             var tags = await _llmService.GetImageTagsAsync(
                 "Analyze this image and return concise descriptive tags only. Prefer 8 to 20 tags.",
                 imagePath,
-                model);
+                model,
+                _aiCts.Token);
 
             if (tags.Count == 0)
             {
@@ -1516,10 +1540,32 @@ public class ImageViewerForm : Form
             _aiOutputBox.Text = "Applied tags:" + Environment.NewLine + string.Join(", ", normalized);
             SetAiBusy(false, $"Applied {normalized.Count} tags");
         }
+        catch (OperationCanceledException)
+        {
+            SetAiBusy(false, "Operation aborted");
+        }
         catch (Exception ex)
         {
             SetAiBusy(false, $"Tagging error: {ex.Message}");
             LlmDebugLogger.LogError($"Image viewer tagging failed: {ex}");
+        }
+        finally
+        {
+            _aiCts?.Dispose();
+            _aiCts = null;
+        }
+    }
+
+    private void AbortAi()
+    {
+        try
+        {
+            _aiCts?.Cancel();
+            _aiStatusLabel.Text = "Aborting...";
+        }
+        catch (Exception ex)
+        {
+            LlmDebugLogger.LogError($"Failed to abort AI: {ex.Message}");
         }
     }
 
@@ -1544,7 +1590,7 @@ public class ImageViewerForm : Form
     {
         _overlayBlocks.Clear();
 
-        bool hasPixelCoordinates = ocr.Blocks.Any(b => b.X > 1.5f || b.Y > 1.5f || b.W > 1.5f || b.H > 1.5f);
+        bool hasPixelCoordinates = ocr.Blocks.Any(b => b.X > 10.0f || b.Y > 10.0f || b.W > 10.0f || b.H > 10.0f);
         float minX = hasPixelCoordinates ? ocr.Blocks.Min(b => b.X) : 0f;
         float minY = hasPixelCoordinates ? ocr.Blocks.Min(b => b.Y) : 0f;
         float maxRight = hasPixelCoordinates ? ocr.Blocks.Max(b => b.X + b.W) : 1f;
@@ -1655,7 +1701,7 @@ public class ImageViewerForm : Form
 
     private static List<OverlayTextBlock> ReduceOverlayBlocksConservatively(List<OverlayTextBlock> input)
     {
-        const int maxBlocks = 260;
+        const int maxBlocks = 1000;
         if (input.Count <= 1)
             return input.ToList();
 
@@ -1667,7 +1713,7 @@ public class ImageViewerForm : Form
                 continue;
 
             float area = Math.Max(0f, candidate.NormalizedRect.Width * candidate.NormalizedRect.Height);
-            if (area < 0.000008f)
+            if (area < 0.000001f)
                 continue;
 
             string candidateNorm = NormalizeOverlayText(candidate.DisplayText);
@@ -1683,7 +1729,7 @@ public class ImageViewerForm : Form
                 string priorNorm = NormalizeOverlayText(prior.DisplayText);
                 bool sameText = candidateNorm.Length > 0 && candidateNorm == priorNorm;
 
-                if (overlap >= 0.80f || (sameText && overlap >= 0.55f))
+                if (overlap >= 0.95f || (sameText && overlap >= 0.55f) || (overlap >= 0.80f && sameText))
                 {
                     duplicate = true;
                     break;
@@ -1750,6 +1796,9 @@ public class ImageViewerForm : Form
                     i++;
                 if (i < trimmed.Length)
                     return trimmed.Substring(i);
+                
+                // If stripping the prefix leaves nothing, return the original text (e.g. for "1.")
+                return trimmed;
             }
         }
 

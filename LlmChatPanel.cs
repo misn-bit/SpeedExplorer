@@ -656,10 +656,10 @@ public class LlmChatPanel : Panel
             // Handle JSON response (mirrors command mode)
             try
             {
-                var commands = LlmService.ParseCommands(response);
+                var commands = LlmParsers.ParseCommands(response);
                 
                 // ALWAYS show the conversational response from AI
-                AppendMessage("AI", response, Color.LightGreen);
+                AppendMessage("AI", LlmParsers.ExtractMessage(response), Color.LightGreen);
 
                 if (commands.Count > 0)
                 {
@@ -738,7 +738,7 @@ public class LlmChatPanel : Panel
                 _fullContextToggle.Checked, _taggingToggle.Checked, 
                 _searchToggle.Checked, _thinkingToggle.Checked, null, selectedModel);
                 
-            var commands = LlmService.ParseCommands(jsonResponse);
+            var commands = LlmParsers.ParseCommands(jsonResponse);
 
             if (commands.Count > 0)
             {

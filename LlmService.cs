@@ -12,100 +12,13 @@ using System.Windows.Forms;
 
 namespace SpeedExplorer;
 
-public struct LlmImageStats
-{
-    public string Path;
-    public int OrigW;
-    public int OrigH;
-    public int NewW;
-    public int NewH;
-    public long Bytes;
-}
-
-public enum LlmTaskKind
-{
-    Text,
-    Vision
-}
-
-public enum LlmUsageKind
-{
-    Assistant,
-    Batch
-}
-
-public sealed class LlmModelInfo
-{
-    public string Id { get; set; } = "";
-    public bool IsLoaded { get; set; }
-    public bool IsVision { get; set; }
-    public List<string> LoadedInstanceIds { get; set; } = new();
-}
-
-public sealed class LlmModelCatalog
-{
-    public List<LlmModelInfo> AvailableModels { get; set; } = new();
-    public List<LlmModelInfo> LoadedModels => AvailableModels.Where(m => m.IsLoaded).ToList();
-}
-
-public sealed class LlmImageTextBlock
-{
-    public string Text { get; set; } = "";
-    public float X { get; set; }
-    public float Y { get; set; }
-    public float W { get; set; }
-    public float H { get; set; }
-    public float FontSize { get; set; }
-}
-
-public sealed class LlmImageTextResult
-{
-    public string FullText { get; set; } = "";
-    public string DetectedLanguage { get; set; } = "";
-    public List<LlmImageTextBlock> Blocks { get; set; } = new();
-}
-
-public sealed class LlmTextTranslationResult
-{
-    public string TranslatedFullText { get; set; } = "";
-    public List<string> Translations { get; set; } = new();
-    public string TargetLanguage { get; set; } = "";
-}
-
-public sealed class LlmAgentChatDecision
-{
-    public string Thought { get; set; } = "";
-    public string Action { get; set; } = "reply";
-    public string Message { get; set; } = "";
-    public string RunTask { get; set; } = "";
-    public List<LlmCommand> Commands { get; set; } = new();
-}
-
-public sealed class LlmAgentRunReport
-{
-    public string Request { get; set; } = "";
-    public string Model { get; set; } = "";
-    public int LoopsUsed { get; set; }
-    public int MaxLoops { get; set; }
-    public bool Completed { get; set; }
-    public bool ClosureVerificationRan { get; set; }
-    public int CommandsExecuted { get; set; }
-    public int ReadOnlyCommandsExecuted { get; set; }
-    public int WriteCommandsExecuted { get; set; }
-    public int UndoOperationRecords { get; set; }
-    public string StopReason { get; set; } = "";
-    public List<string> Events { get; set; } = new();
-    public string ModelSummary { get; set; } = "";
-    public string FinishedUtc { get; set; } = "";
-}
-
 /// <summary>
 /// Service for communicating with LM Studio's local API.
 /// Uses structured output to enforce JSON schema compliance.
 /// </summary>
 public class LlmService
 {
-    private static readonly HttpClient _httpClient = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
+    private static readonly HttpClient _httpClient = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
     private static readonly object _sessionModelLock = new();
     private static readonly Dictionary<string, string> _sessionResolvedModels = new(StringComparer.OrdinalIgnoreCase);
     private static readonly string[] VisionModelHints =
@@ -115,7 +28,13 @@ public class LlmService
     };
 
     public string ApiUrl { get; set; } = "http://localhost:1234/v1/chat/completions";
-    // Properties are now primarily used for direct access, but AppSettings.Current is source of truth during execution
+    private readonly LlmModelManager _modelManager = new();
+    private readonly LlmVisionService _visionService;
+
+    public LlmService()
+    {
+        _visionService = new LlmVisionService(_modelManager);
+    }
 
     public static string GetServerBaseUrl(string apiUrl)
     {
@@ -309,7 +228,7 @@ public class LlmService
                 : "Select a model to use for this task.";
         }
 
-        using var selector = new LlmModelSelectorForm(this, serverApiUrl, usage, taskKind, preferredModel, title, infoText);
+        using var selector = new LlmModelSelectorForm(_modelManager, serverApiUrl, usage, taskKind, preferredModel, title, infoText);
         var result = owner != null ? selector.ShowDialog(owner) : selector.ShowDialog();
         if (result != DialogResult.OK || string.IsNullOrWhiteSpace(selector.SelectedModelId))
             return null;
@@ -440,18 +359,6 @@ public class LlmService
         return statusCode == HttpStatusCode.BadRequest &&
                !string.IsNullOrWhiteSpace(text) &&
                text.Contains("failed to process image", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static int ComputeOcrTimeoutSeconds(int maxTokens)
-    {
-        // OCR on larger vision models can be slow even with moderate token counts.
-        // Keep a sane floor above previous fixed 75s and cap to avoid indefinite waits.
-        return Math.Clamp(60 + (maxTokens / 10), 120, 240);
-    }
-
-    private static int ComputeTranslationTimeoutSeconds(int maxTokens)
-    {
-        return Math.Clamp(50 + (maxTokens / 12), 90, 210);
     }
 
     private async Task<bool> TryRecoverVisionModelAsync(string apiUrl, string modelId, string stage)
@@ -614,9 +521,9 @@ public class LlmService
         JsonElement collection = root;
         if (root.ValueKind == JsonValueKind.Object)
         {
-            if (TryGetPropertyIgnoreCase(root, "data", out var data) && data.ValueKind == JsonValueKind.Array)
+            if (LlmModelManager.TryGetPropertyIgnoreCase(root, "data", out var data) && data.ValueKind == JsonValueKind.Array)
                 collection = data;
-            else if (TryGetPropertyIgnoreCase(root, "models", out var modelArray) && modelArray.ValueKind == JsonValueKind.Array)
+            else if (LlmModelManager.TryGetPropertyIgnoreCase(root, "models", out var modelArray) && modelArray.ValueKind == JsonValueKind.Array)
                 collection = modelArray;
             else
                 return models;
@@ -656,7 +563,7 @@ public class LlmService
         var keys = new[] { "id", "key", "model", "model_id", "name" };
         foreach (var key in keys)
         {
-            if (TryGetPropertyIgnoreCase(item, key, out var value) && value.ValueKind == JsonValueKind.String)
+            if (LlmModelManager.TryGetPropertyIgnoreCase(item, key, out var value) && value.ValueKind == JsonValueKind.String)
             {
                 var id = value.GetString();
                 if (!string.IsNullOrWhiteSpace(id))
@@ -672,7 +579,7 @@ public class LlmService
         if (item.ValueKind != JsonValueKind.Object)
             return false;
 
-        if (TryGetPropertyIgnoreCase(item, "loaded_instances", out var loadedInstances) &&
+        if (LlmModelManager.TryGetPropertyIgnoreCase(item, "loaded_instances", out var loadedInstances) &&
             loadedInstances.ValueKind == JsonValueKind.Array &&
             loadedInstances.GetArrayLength() > 0)
         {
@@ -682,14 +589,14 @@ public class LlmService
         var boolKeys = new[] { "loaded", "is_loaded", "isLoaded", "active", "is_active", "isActive" };
         foreach (var key in boolKeys)
         {
-            if (TryGetPropertyIgnoreCase(item, key, out var value) && value.ValueKind == JsonValueKind.True)
+            if (LlmModelManager.TryGetPropertyIgnoreCase(item, key, out var value) && value.ValueKind == JsonValueKind.True)
                 return true;
         }
 
         var textKeys = new[] { "state", "status" };
         foreach (var key in textKeys)
         {
-            if (TryGetPropertyIgnoreCase(item, key, out var value))
+            if (LlmModelManager.TryGetPropertyIgnoreCase(item, key, out var value))
             {
                 if (value.ValueKind == JsonValueKind.String)
                 {
@@ -711,7 +618,7 @@ public class LlmService
                 }
                 else if (value.ValueKind == JsonValueKind.Object)
                 {
-                    if (TryGetPropertyIgnoreCase(value, "loaded", out var nestedLoaded) && nestedLoaded.ValueKind == JsonValueKind.True)
+                    if (LlmModelManager.TryGetPropertyIgnoreCase(value, "loaded", out var nestedLoaded) && nestedLoaded.ValueKind == JsonValueKind.True)
                         return true;
                 }
             }
@@ -727,7 +634,7 @@ public class LlmService
         if (item.ValueKind != JsonValueKind.Object)
             return ids;
 
-        if (!TryGetPropertyIgnoreCase(item, "loaded_instances", out var loadedInstances) ||
+        if (!LlmModelManager.TryGetPropertyIgnoreCase(item, "loaded_instances", out var loadedInstances) ||
             loadedInstances.ValueKind != JsonValueKind.Array)
         {
             return ids;
@@ -754,7 +661,7 @@ public class LlmService
         var keys = new[] { "instance_id", "id", "identifier", "key" };
         foreach (var key in keys)
         {
-            if (TryGetPropertyIgnoreCase(instance, key, out var value) && value.ValueKind == JsonValueKind.String)
+            if (LlmModelManager.TryGetPropertyIgnoreCase(instance, key, out var value) && value.ValueKind == JsonValueKind.String)
             {
                 var id = value.GetString();
                 if (!string.IsNullOrWhiteSpace(id))
@@ -846,27 +753,8 @@ public class LlmService
         return false;
     }
 
-    private static bool TryGetPropertyIgnoreCase(JsonElement obj, string propertyName, out JsonElement value)
-    {
-        if (obj.ValueKind == JsonValueKind.Object)
-        {
-            foreach (var prop in obj.EnumerateObject())
-            {
-                if (string.Equals(prop.Name, propertyName, StringComparison.OrdinalIgnoreCase))
-                {
-                    value = prop.Value;
-                    return true;
-                }
-            }
-        }
-
-        value = default;
-        return false;
-    }
-
     public string LastReasoning { get; private set; } = "";
-    public string LastAgentFinalResponse { get; private set; } = "";
-    public LlmAgentRunReport? LastAgentRunReport { get; private set; }
+
     private string? _lastChatResponseId;
     private string? _lastChatContext;
     private string? _lastChatDirectory;
@@ -950,7 +838,7 @@ public class LlmService
             {
                 model = model,
                 messages = messages,
-                response_format = LlmPromptBuilder.GetJsonSchema(taggingEnabled, searchEnabled, fullContext, thinkingEnabled),
+                response_format = LlmPromptBuilder.GetChatResponseJsonSchema(taggingEnabled),
                 temperature = settings.LlmTemperature,
                 max_tokens = settings.LlmMaxTokens,
                 stream = false
@@ -1071,9 +959,9 @@ public class LlmService
         foreach (var msg in trimmedHistory)
         {
             string role = (msg.Role ?? "").Trim().ToLowerInvariant();
-            if (role != "user" && role != "assistant" && role != "system")
+            if (role != "user" && role != "assistant")
                 continue;
-            string content = TrimForHistory(msg.Content, 4000);
+            string content = LlmParsers.TrimForHistory(msg.Content, 4000);
             messages.Add(new { role, content });
         }
 
@@ -1099,7 +987,7 @@ public class LlmService
             if (!response.IsSuccessStatusCode)
             {
                 bool retried = false;
-                if (response.StatusCode == HttpStatusCode.BadRequest || IsLikelyChannelError(responseString))
+                if (response.StatusCode == HttpStatusCode.BadRequest || LlmModelManager.IsLikelyChannelError(responseString))
                 {
                     var retryData = new
                     {
@@ -1146,7 +1034,7 @@ public class LlmService
             if (decision.Action == "quick_commands")
             {
                 decision.Commands = decision.Commands
-                    .Where(c => IsReadOnlyAgentCommand(c.Cmd))
+                    .Where(c => LlmParsers.IsReadOnlyAgentCommand(c.Cmd))
                     .ToList();
             }
             else
@@ -1196,10 +1084,11 @@ public class LlmService
         return "[AGENT_RUN_REPORT]\n" + JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = true });
     }
 
-    /// <summary>
-    /// Runs the LLM in an autonomous loop, reporting status updates and returning executed operations.
-    /// </summary>
-    public async Task<List<FileOperation>> RunAgenticTaskAsync(
+    private LlmAgentRunner? _agentRunner;
+
+    private LlmAgentRunner AgentRunner => _agentRunner ??= new LlmAgentRunner(_modelManager);
+
+    public Task<List<FileOperation>> RunAgenticTaskAsync(
         List<ChatMessage> history,
         string currentDirectory,
         bool taggingEnabled,
@@ -1208,1106 +1097,19 @@ public class LlmService
         IProgress<string>? progress,
         string? modelOverride = null)
     {
-        var settings = AppSettings.Current;
-        int maxLoops = Math.Clamp(settings.LlmAgentMaxLoops, 1, 10);
-        string model = string.IsNullOrWhiteSpace(modelOverride) ? settings.LlmModelName : modelOverride;
-        string requestUrl = GetCompletionsApiUrl(settings.LlmChatApiUrl, settings.LlmApiUrl);
-        double agentTemperature = Math.Min(settings.LlmTemperature, 0.3);
-        int agentMaxTokens = Math.Max(256, settings.LlmMaxTokens);
-        int retryTextMaxTokens = Math.Max(256, (int)Math.Round(agentMaxTokens * 0.8));
-        int retryNoSchemaMaxTokens = Math.Max(256, (int)Math.Round(agentMaxTokens * 0.6));
-        int loopCount = 0;
-        LastAgentFinalResponse = "";
-        LastAgentRunReport = null;
-
-        // Build a fresh per-request working history so prior agent internal turns
-        // cannot pollute future runs.
-        string userObjective = history.LastOrDefault(m => string.Equals(m.Role, "user", StringComparison.OrdinalIgnoreCase))?.Content?.Trim() ?? "";
-        if (string.IsNullOrWhiteSpace(userObjective))
-            userObjective = "(no user request provided)";
-
-        string systemPrompt = LlmPromptBuilder.GetAgenticSystemPrompt(taggingEnabled, searchEnabled);
-        string previousLoopSummary = "(none)";
-        string previousLoopFeedback = "";
-        AgentContextPolicy? selectedContextPolicy = null;
-        bool contextPolicyLocked = false;
-        string cachedInjectedFileContext = "";
-
-        var allOps = new List<FileOperation>();
-        var runNotes = new List<string>();
-        bool completed = false;
-        string stopReason = "";
-        int totalCommandsExecuted = 0;
-        int totalReadOnlyCommandsExecuted = 0;
-        int totalWriteCommandsExecuted = 0;
-        string? previousWriteCommandSignature = null;
-        int repeatedNoChangeWriteLoops = 0;
-        var seenNoChangeWriteSignatures = new HashSet<string>(StringComparer.Ordinal);
-        bool ranClosureVerification = false;
-
-        while (loopCount < maxLoops)
-        {
-            loopCount++;
-            progress?.Report($"[Loop {loopCount}/{maxLoops}] Thinking...");
-
-            string loopDirContext = LlmPromptBuilder.BuildExtensionContext(currentDirectory);
-            string injectedFileContext = "";
-            bool injectedFileContextThisLoop = false;
-            if (selectedContextPolicy != null &&
-                selectedContextPolicy.UseFileContext &&
-                !string.Equals(selectedContextPolicy.Level, "none", StringComparison.OrdinalIgnoreCase))
-            {
-                if (!selectedContextPolicy.RefreshEachLoop && !string.IsNullOrWhiteSpace(cachedInjectedFileContext))
-                {
-                    injectedFileContext = cachedInjectedFileContext;
-                    injectedFileContextThisLoop = true;
-                }
-                else
-                {
-                    injectedFileContext = BuildInjectedFileContextSnapshot(currentDirectory, selectedContextPolicy);
-                    if (!string.IsNullOrWhiteSpace(injectedFileContext))
-                    {
-                        injectedFileContextThisLoop = true;
-                        if (!selectedContextPolicy.RefreshEachLoop)
-                            cachedInjectedFileContext = injectedFileContext;
-                    }
-                }
-            }
-
-            string loopState = BuildAgentLoopStateMessage(
-                loopCount,
-                maxLoops,
-                previousLoopSummary,
-                previousLoopFeedback,
-                selectedContextPolicy,
-                injectedFileContextThisLoop);
-            string loopSystemContent = BuildAgentSystemMessage(
-                systemPrompt,
-                currentDirectory,
-                loopDirContext,
-                loopState,
-                injectedFileContext);
-            var loopMessages = new List<object>
-            {
-                new { role = "system", content = loopSystemContent },
-                new { role = "user", content = userObjective }
-            };
-
-            var requestData = new
-            {
-                model = model,
-                messages = loopMessages,
-                response_format = LlmPromptBuilder.GetAgenticJsonSchema(taggingEnabled, searchEnabled),
-                temperature = agentTemperature,
-                max_tokens = agentMaxTokens,
-                stream = false
-            };
-
-            var json = JsonSerializer.Serialize(requestData, new JsonSerializerOptions { WriteIndented = true });
-            LlmDebugLogger.LogRequest("", $"Agent Loop {loopCount}", "", json);
-
-            var content = new StringContent(json, Encoding.UTF8, "application/json");
-            
-            string responseString;
-            try
-            {
-                var response = await _httpClient.PostAsync(requestUrl, content);
-                responseString = await response.Content.ReadAsStringAsync();
-                
-                if (!response.IsSuccessStatusCode)
-                {
-                    bool retried = false;
-                    if (response.StatusCode == HttpStatusCode.BadRequest || IsLikelyChannelError(responseString))
-                    {
-                        // Retry 1: text mode for backends that reject structured output variants.
-                        var retryRequestData = new
-                        {
-                            model = model,
-                            messages = loopMessages,
-                            response_format = new { type = "text" },
-                            temperature = agentTemperature,
-                            max_tokens = retryTextMaxTokens,
-                            stream = false
-                        };
-                        string retryJson = JsonSerializer.Serialize(retryRequestData, new JsonSerializerOptions { WriteIndented = true });
-                        LlmDebugLogger.LogRequest("", $"Agent Loop {loopCount} Retry(text)", "", retryJson);
-
-                        using var retryContent = new StringContent(retryJson, Encoding.UTF8, "application/json");
-                        var retryResponse = await _httpClient.PostAsync(requestUrl, retryContent);
-                        responseString = await retryResponse.Content.ReadAsStringAsync();
-                        if (retryResponse.IsSuccessStatusCode)
-                        {
-                            retried = true;
-                        }
-                        else
-                        {
-                            // Retry 2: no response_format.
-                            var retry2RequestData = new
-                            {
-                                model = model,
-                                messages = loopMessages,
-                                temperature = agentTemperature,
-                                max_tokens = retryNoSchemaMaxTokens,
-                                stream = false
-                            };
-                            string retry2Json = JsonSerializer.Serialize(retry2RequestData, new JsonSerializerOptions { WriteIndented = true });
-                            LlmDebugLogger.LogRequest("", $"Agent Loop {loopCount} Retry(no_schema)", "", retry2Json);
-
-                            using var retry2Content = new StringContent(retry2Json, Encoding.UTF8, "application/json");
-                            var retry2Response = await _httpClient.PostAsync(requestUrl, retry2Content);
-                            responseString = await retry2Response.Content.ReadAsStringAsync();
-                            if (retry2Response.IsSuccessStatusCode)
-                            {
-                                retried = true;
-                            }
-                            else
-                            {
-                                LlmDebugLogger.LogError($"Agent loop API failed after retries: {retry2Response.StatusCode} - {responseString}");
-                            }
-                        }
-                    }
-
-                    if (!retried)
-                    {
-                        stopReason = $"API failed: {response.StatusCode}";
-                        LlmDebugLogger.LogError($"Agent loop API failed: {response.StatusCode} - {responseString}");
-                        progress?.Report($"[Error] {stopReason}");
-                        break;
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                stopReason = $"Network error: {ex.Message}";
-                progress?.Report($"[Error] {stopReason}");
-                break;
-            }
-
-            string contentStr = ExtractAssistantContent(responseString);
-            if (string.IsNullOrWhiteSpace(contentStr))
-                contentStr = responseString;
-
-            LlmAgentResponse agentResp;
-            try
-            {
-                agentResp = ParseAgenticResponse(contentStr);
-            }
-            catch (Exception ex)
-            {
-                stopReason = $"Agent returned invalid JSON: {ex.Message}";
-                progress?.Report($"[Error] {stopReason}");
-                break;
-            }
-
-            if (!string.IsNullOrEmpty(agentResp.Thought))
-                progress?.Report($"💡 Thought: {agentResp.Thought}");
-            if (!string.IsNullOrEmpty(agentResp.Plan))
-                progress?.Report($"📋 Plan: {agentResp.Plan}");
-
-            if (!contextPolicyLocked && loopCount == 1)
-            {
-                selectedContextPolicy = DetermineFirstLoopContextPolicy(agentResp, userObjective);
-                contextPolicyLocked = true;
-                progress?.Report($"📁 Context policy locked: {FormatContextPolicyForStatus(selectedContextPolicy)}");
-            }
-
-            var commandsToExecute = ApplyAgentPerLoopCommandPolicy(
-                agentResp.Commands,
-                out string policyNote,
-                out bool policySuppressedAllCommands,
-                selectedContextPolicy,
-                currentDirectory,
-                injectedFileContextThisLoop);
-            if (!string.IsNullOrWhiteSpace(policyNote))
-                progress?.Report($"🧭 {policyNote}");
-
-            bool hasWriteCommands = commandsToExecute.Any(c => !IsReadOnlyAgentCommand(c.Cmd));
-            string writeSignature = hasWriteCommands ? BuildWriteCommandSignature(commandsToExecute) : "";
-            int loopOpsCount = 0;
-
-            if (commandsToExecute.Any())
-            {
-                int readOnlyCount = commandsToExecute.Count(c => IsReadOnlyAgentCommand(c.Cmd));
-                totalCommandsExecuted += commandsToExecute.Count;
-                totalReadOnlyCommandsExecuted += readOnlyCount;
-                totalWriteCommandsExecuted += commandsToExecute.Count - readOnlyCount;
-
-                progress?.Report($"⚙️ Executing {commandsToExecute.Count} commands...");
-                var (feedbackList, ops) = executor.ExecuteAgenticCommands(commandsToExecute);
-                if (!string.IsNullOrWhiteSpace(policyNote))
-                    feedbackList.Insert(0, $"[policy] {policyNote}");
-                loopOpsCount = ops.Count;
-                allOps.AddRange(ops);
-                
-                string feedback = BuildAgentFeedbackForHistory(feedbackList);
-                previousLoopFeedback = feedback;
-                runNotes.Add($"Loop {loopCount}: Executed {commandsToExecute.Count} command(s); feedback items: {feedbackList.Count}; new ops: {loopOpsCount}.");
-                progress?.Report($"✅ Feedback received ({feedbackList.Count} items).");
-            }
-            else
-            {
-                var noExec = new StringBuilder();
-                noExec.AppendLine("System Execution Feedback:");
-                if (!string.IsNullOrWhiteSpace(policyNote))
-                    noExec.AppendLine($"- [policy] {policyNote}");
-                noExec.AppendLine("- No commands were executed in the previous loop.");
-                previousLoopFeedback = noExec.ToString().TrimEnd();
-            }
-
-            previousLoopSummary = BuildAgentLoopCarrySummary(loopCount, agentResp, commandsToExecute, loopOpsCount, policyNote);
-
-            if (hasWriteCommands)
-            {
-                if (loopOpsCount == 0 &&
-                    !string.IsNullOrWhiteSpace(writeSignature) &&
-                    string.Equals(writeSignature, previousWriteCommandSignature, StringComparison.Ordinal))
-                {
-                    repeatedNoChangeWriteLoops++;
-                    if (repeatedNoChangeWriteLoops >= 1)
-                    {
-                        completed = allOps.Count > 0;
-                        stopReason = completed
-                            ? "Detected repeated write commands with no new changes after successful changes; treating request as complete."
-                            : "Detected repeated write commands with no new changes; stopping to avoid a loop.";
-                        progress?.Report($"🟡 [{stopReason}]");
-                        break;
-                    }
-                }
-                else if (loopOpsCount == 0 && !string.IsNullOrWhiteSpace(writeSignature))
-                {
-                    if (!seenNoChangeWriteSignatures.Add(writeSignature))
-                    {
-                        completed = allOps.Count > 0;
-                        stopReason = completed
-                            ? "Detected repeated no-change write command set; stopping to avoid a loop."
-                            : "Detected repeated no-change write commands; stopping to avoid a loop.";
-                        progress?.Report($"🟡 [{stopReason}]");
-                        break;
-                    }
-                    repeatedNoChangeWriteLoops = 0;
-                }
-                else
-                {
-                    if (!string.IsNullOrWhiteSpace(writeSignature))
-                        seenNoChangeWriteSignatures.Remove(writeSignature);
-                    repeatedNoChangeWriteLoops = 0;
-                }
-
-                previousWriteCommandSignature = writeSignature;
-            }
-            else
-            {
-                repeatedNoChangeWriteLoops = 0;
-            }
-
-            if (agentResp.IsDone)
-            {
-                completed = true;
-                stopReason = $"Agent marked task complete in loop {loopCount}.";
-                progress?.Report($"✨ [Agent finished successfully in {loopCount} loops]");
-                break;
-            }
-            
-            if (!commandsToExecute.Any() && !agentResp.IsDone)
-            {
-                if (policySuppressedAllCommands)
-                {
-                    progress?.Report("🟡 [Policy suppressed redundant commands; continuing to next loop.]");
-                    continue;
-                }
-
-                stopReason = "Agent output no commands and did not set is_done.";
-                progress?.Report($"⚠️ [{stopReason}]");
-                break;
-            }
-
-            if (loopCount >= maxLoops)
-            {
-                stopReason = $"Reached max loop limit ({maxLoops}).";
-                progress?.Report($"🛑 [Agent reached max loop limit ({maxLoops})]");
-            }
-        }
-
-        if (!completed &&
-            loopCount >= maxLoops &&
-            allOps.Count > 0)
-        {
-            ranClosureVerification = true;
-            progress?.Report("[Closure Verification] Checking completion and applying minimal fixes if needed...");
-
-            AgentContextPolicy? effectiveClosurePolicy = selectedContextPolicy;
-            if (effectiveClosurePolicy == null ||
-                !effectiveClosurePolicy.UseFileContext ||
-                string.Equals(effectiveClosurePolicy.Level, "none", StringComparison.OrdinalIgnoreCase))
-            {
-                if (!IsClearlyPatternOnlyTask(userObjective))
-                {
-                    effectiveClosurePolicy = new AgentContextPolicy
-                    {
-                        UseFileContext = true,
-                        Level = "names",
-                        Path = "./",
-                        RefreshEachLoop = true
-                    };
-                }
-            }
-
-            string loopDirContext = LlmPromptBuilder.BuildExtensionContext(currentDirectory);
-            string injectedFileContext = "";
-            bool injectedFileContextThisLoop = false;
-            if (effectiveClosurePolicy != null &&
-                effectiveClosurePolicy.UseFileContext &&
-                !string.Equals(effectiveClosurePolicy.Level, "none", StringComparison.OrdinalIgnoreCase))
-            {
-                if (!effectiveClosurePolicy.RefreshEachLoop && !string.IsNullOrWhiteSpace(cachedInjectedFileContext))
-                {
-                    injectedFileContext = cachedInjectedFileContext;
-                    injectedFileContextThisLoop = true;
-                }
-                else
-                {
-                    injectedFileContext = BuildInjectedFileContextSnapshot(currentDirectory, effectiveClosurePolicy);
-                    if (!string.IsNullOrWhiteSpace(injectedFileContext))
-                        injectedFileContextThisLoop = true;
-                }
-            }
-
-            string closureState = BuildAgentClosureStateMessage(
-                maxLoops,
-                previousLoopSummary,
-                previousLoopFeedback,
-                effectiveClosurePolicy,
-                injectedFileContextThisLoop);
-            string closureSystemContent = BuildAgentSystemMessage(
-                systemPrompt,
-                currentDirectory,
-                loopDirContext,
-                closureState,
-                injectedFileContext);
-            var closureMessages = new List<object>
-            {
-                new { role = "system", content = closureSystemContent },
-                new { role = "user", content = userObjective }
-            };
-
-            var closureRequestData = new
-            {
-                model = model,
-                messages = closureMessages,
-                response_format = LlmPromptBuilder.GetAgenticJsonSchema(taggingEnabled, searchEnabled),
-                temperature = agentTemperature,
-                max_tokens = agentMaxTokens,
-                stream = false
-            };
-
-            var closureJson = JsonSerializer.Serialize(closureRequestData, new JsonSerializerOptions { WriteIndented = true });
-            LlmDebugLogger.LogRequest("", "Agent Closure Verification", "", closureJson);
-
-            try
-            {
-                using var closureContent = new StringContent(closureJson, Encoding.UTF8, "application/json");
-                var closureResponse = await _httpClient.PostAsync(requestUrl, closureContent);
-                var closureResponseString = await closureResponse.Content.ReadAsStringAsync();
-
-                if (closureResponse.IsSuccessStatusCode)
-                {
-                    string closureContentStr = ExtractAssistantContent(closureResponseString);
-                    if (string.IsNullOrWhiteSpace(closureContentStr))
-                        closureContentStr = closureResponseString;
-
-                    var closureResp = ParseAgenticResponse(closureContentStr);
-                    var closureCommands = ApplyAgentPerLoopCommandPolicy(
-                        closureResp.Commands,
-                        out string closurePolicyNote,
-                        out bool closureSuppressedAllCommands,
-                        effectiveClosurePolicy,
-                        currentDirectory,
-                        injectedFileContextThisLoop);
-
-                    int closureOpsCount = 0;
-                    if (closureCommands.Any())
-                    {
-                        int closureReadOnlyCount = closureCommands.Count(c => IsReadOnlyAgentCommand(c.Cmd));
-                        totalCommandsExecuted += closureCommands.Count;
-                        totalReadOnlyCommandsExecuted += closureReadOnlyCount;
-                        totalWriteCommandsExecuted += closureCommands.Count - closureReadOnlyCount;
-
-                        var (closureFeedbackList, closureOps) = executor.ExecuteAgenticCommands(closureCommands);
-                        if (!string.IsNullOrWhiteSpace(closurePolicyNote))
-                            closureFeedbackList.Insert(0, $"[policy] {closurePolicyNote}");
-
-                        closureOpsCount = closureOps.Count;
-                        allOps.AddRange(closureOps);
-                        string closureFeedback = BuildAgentFeedbackForHistory(closureFeedbackList);
-                        previousLoopFeedback = closureFeedback;
-                        runNotes.Add($"Closure verification: Executed {closureCommands.Count} command(s); feedback items: {closureFeedbackList.Count}; new ops: {closureOpsCount}.");
-                    }
-                    else
-                    {
-                        runNotes.Add("Closure verification: No commands executed.");
-                    }
-
-                    previousLoopSummary = BuildAgentLoopCarrySummary(maxLoops + 1, closureResp, closureCommands, closureOpsCount, closurePolicyNote);
-
-                    if (closureResp.IsDone)
-                    {
-                        completed = true;
-                        stopReason = "Closure verification confirmed completion.";
-                        progress?.Report("✨ [Closure verification marked task complete]");
-                    }
-                    else if (!closureCommands.Any() && !closureSuppressedAllCommands)
-                    {
-                        completed = true;
-                        stopReason = "Closure verification found no further actions after prior successful changes; treated as complete.";
-                        progress?.Report("🟢 [Closure verification found no further actions; treated as complete]");
-                    }
-                    else if (closureOpsCount > 0)
-                    {
-                        completed = true;
-                        stopReason = "Closure verification applied final corrections.";
-                        progress?.Report("🟢 [Closure verification applied final corrections]");
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                LlmDebugLogger.LogError($"Closure verification failed: {ex.Message}");
-            }
-        }
-
-        if (string.IsNullOrWhiteSpace(stopReason))
-            stopReason = completed ? "Completed." : "Stopped.";
-        else if (ranClosureVerification && completed && stopReason.StartsWith("Reached max loop limit", StringComparison.OrdinalIgnoreCase))
-            stopReason = "Closure verification completed after max loop budget.";
-
-        string finalResponse = await GenerateAgentFinalResponseAsync(
-            userObjective,
-            runNotes,
-            allOps.Count,
-            loopCount,
-            completed,
-            stopReason,
-            model,
-            requestUrl);
-        LastAgentFinalResponse = string.IsNullOrWhiteSpace(finalResponse)
-            ? BuildAgentFallbackResponse(allOps.Count, completed, stopReason)
-            : finalResponse;
-
-        LastAgentRunReport = new LlmAgentRunReport
-        {
-            Request = userObjective,
-            Model = model,
-            LoopsUsed = loopCount,
-            MaxLoops = maxLoops,
-            Completed = completed,
-            ClosureVerificationRan = ranClosureVerification,
-            CommandsExecuted = totalCommandsExecuted,
-            ReadOnlyCommandsExecuted = totalReadOnlyCommandsExecuted,
-            WriteCommandsExecuted = totalWriteCommandsExecuted,
-            UndoOperationRecords = allOps.Count,
-            StopReason = stopReason,
-            Events = runNotes.TakeLast(12).ToList(),
-            ModelSummary = LastAgentFinalResponse,
-            FinishedUtc = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss")
-        };
-        
-        return allOps;
+        return AgentRunner.RunAgenticTaskAsync(
+            history,
+            currentDirectory,
+            taggingEnabled,
+            searchEnabled,
+            executor,
+            progress,
+            ApiUrl,
+            modelOverride);
     }
 
-    private static List<LlmCommand> ApplyAgentPerLoopCommandPolicy(
-        List<LlmCommand> commands,
-        out string policyNote,
-        out bool suppressedAllByPolicy,
-        AgentContextPolicy? contextPolicy,
-        string currentDirectory,
-        bool injectedFileContextThisLoop)
-    {
-        policyNote = "";
-        suppressedAllByPolicy = false;
-        var safeCommands = commands ?? new List<LlmCommand>();
-        if (safeCommands.Count == 0)
-            return safeCommands;
-
-        // Policy:
-        // - Allow all read-only commands.
-        // - Allow multiple create_folder commands in one loop (prep is cheap and idempotent).
-        // - Allow all move commands in one loop (extension split patterns should not be blocked).
-        // - For other write commands, allow at most one.
-        var selected = new List<LlmCommand>();
-        int skipped = 0;
-        bool hasMoveWrite = false;
-        bool otherWriteKept = false;
-        int suppressedListDir = 0;
-
-        foreach (var cmd in safeCommands)
-        {
-            string name = (cmd.Cmd ?? "").Trim().ToLowerInvariant();
-
-            if (name == "list_dir" &&
-                ShouldSuppressListDirCommand(cmd, contextPolicy, currentDirectory, injectedFileContextThisLoop))
-            {
-                skipped++;
-                suppressedListDir++;
-                continue;
-            }
-
-            if (IsReadOnlyAgentCommand(name))
-            {
-                selected.Add(cmd);
-                continue;
-            }
-
-            if (name == "create_folder")
-            {
-                selected.Add(cmd);
-                continue;
-            }
-
-            if (name == "move")
-            {
-                if (!otherWriteKept)
-                {
-                    selected.Add(cmd);
-                    hasMoveWrite = true;
-                }
-                else
-                {
-                    skipped++;
-                }
-                continue;
-            }
-
-            if (!otherWriteKept && !hasMoveWrite)
-            {
-                selected.Add(cmd);
-                otherWriteKept = true;
-            }
-            else
-            {
-                skipped++;
-            }
-        }
-
-        if (selected.Count == 0)
-        {
-            suppressedAllByPolicy = safeCommands.Count > 0;
-            if (suppressedAllByPolicy)
-            {
-                policyNote = $"Per-loop policy suppressed all {safeCommands.Count} command(s). Generate next actionable command(s) without redundant list_dir.";
-                return selected;
-            }
-        }
-
-        if (skipped > 0)
-        {
-            policyNote = $"Per-loop policy kept {selected.Count} command(s) (all read-only, all create_folder, all move writes) and skipped {skipped} command(s).";
-            if (suppressedListDir > 0)
-                policyNote += $" Suppressed {suppressedListDir} redundant list_dir command(s) because file context was injected.";
-        }
-
-        return selected;
-    }
-
-    private static string BuildAgentLoopStateMessage(
-        int loopCount,
-        int maxLoops,
-        string previousSummary,
-        string previousFeedback,
-        AgentContextPolicy? contextPolicy,
-        bool injectedFileContextThisLoop)
-    {
-        var sb = new StringBuilder();
-        sb.AppendLine("[Loop State]");
-        sb.AppendLine($"- loop: {loopCount}/{maxLoops}");
-        sb.AppendLine("- execution policy: multiple create_folder commands are allowed in one loop.");
-        sb.AppendLine("- execution policy: for file-modifying writes, keep operations incremental; all move commands are allowed in one loop.");
-        sb.AppendLine("- avoid repeating writes that previously produced no new changes.");
-        sb.AppendLine("- if more writes are needed, keep is_done=false and continue next loop.");
-        if (contextPolicy == null)
-        {
-            sb.AppendLine("- persistent file context: not selected yet (decide via context_policy in loop 1).");
-        }
-        else if (contextPolicy.UseFileContext && !string.Equals(contextPolicy.Level, "none", StringComparison.OrdinalIgnoreCase))
-        {
-            string path = string.IsNullOrWhiteSpace(contextPolicy.Path) ? "./" : contextPolicy.Path!;
-            sb.AppendLine($"- persistent file context: ON (level={contextPolicy.Level}, path={path}, refresh_each_loop={contextPolicy.RefreshEachLoop}).");
-            sb.AppendLine($"- file context injected this loop: {injectedFileContextThisLoop}.");
-            sb.AppendLine("- when injected context covers the same path/level, avoid list_dir and continue with next actions.");
-        }
-        else
-        {
-            sb.AppendLine("- persistent file context: OFF.");
-        }
-        sb.AppendLine();
-        sb.AppendLine("Previous loop summary:");
-        sb.AppendLine(string.IsNullOrWhiteSpace(previousSummary) ? "(none)" : previousSummary);
-        sb.AppendLine();
-        sb.AppendLine("Previous loop execution feedback:");
-        sb.AppendLine(string.IsNullOrWhiteSpace(previousFeedback) ? "(none)" : previousFeedback);
-        return sb.ToString().TrimEnd();
-    }
-
-    private static string BuildAgentClosureStateMessage(
-        int maxLoops,
-        string previousSummary,
-        string previousFeedback,
-        AgentContextPolicy? contextPolicy,
-        bool injectedFileContextThisLoop)
-    {
-        var sb = new StringBuilder();
-        sb.AppendLine("[Closure Verification]");
-        sb.AppendLine($"- main loop budget ({maxLoops}) has been reached.");
-        sb.AppendLine("- first verify whether the user request is already fully satisfied using current and injected context.");
-        sb.AppendLine("- if satisfied: set is_done=true and return no commands.");
-        sb.AppendLine("- if not satisfied: output only minimal corrective commands and keep is_done=false.");
-        sb.AppendLine("- you may move files again to correct mistakes.");
-        if (contextPolicy != null && contextPolicy.UseFileContext && !string.Equals(contextPolicy.Level, "none", StringComparison.OrdinalIgnoreCase))
-        {
-            sb.AppendLine($"- persistent file context is ON (level={contextPolicy.Level}, injected={injectedFileContextThisLoop}).");
-            sb.AppendLine("- avoid redundant list_dir when injected context already covers your check path.");
-        }
-
-        sb.AppendLine();
-        sb.AppendLine("Previous loop summary:");
-        sb.AppendLine(string.IsNullOrWhiteSpace(previousSummary) ? "(none)" : previousSummary);
-        sb.AppendLine();
-        sb.AppendLine("Previous loop execution feedback:");
-        sb.AppendLine(string.IsNullOrWhiteSpace(previousFeedback) ? "(none)" : previousFeedback);
-        return sb.ToString().TrimEnd();
-    }
-
-    private static string BuildAgentSystemMessage(
-        string systemPrompt,
-        string currentDirectory,
-        string loopDirContext,
-        string stateMessage,
-        string? injectedFileContext)
-    {
-        var sb = new StringBuilder();
-        sb.AppendLine(systemPrompt.TrimEnd());
-        sb.AppendLine();
-        sb.AppendLine($"[Current Context - {currentDirectory}]:");
-        sb.AppendLine(loopDirContext);
-
-        if (!string.IsNullOrWhiteSpace(injectedFileContext))
-        {
-            sb.AppendLine();
-            sb.AppendLine("[Injected File Context]");
-            sb.AppendLine(injectedFileContext.Trim());
-        }
-
-        if (!string.IsNullOrWhiteSpace(stateMessage))
-        {
-            sb.AppendLine();
-            sb.AppendLine(stateMessage.Trim());
-        }
-
-        return sb.ToString().TrimEnd();
-    }
-
-    private static bool ShouldSuppressListDirCommand(
-        LlmCommand cmd,
-        AgentContextPolicy? contextPolicy,
-        string currentDirectory,
-        bool injectedFileContextThisLoop)
-    {
-        if (!injectedFileContextThisLoop || contextPolicy == null || !contextPolicy.UseFileContext)
-            return false;
-        if (string.Equals(contextPolicy.Level, "none", StringComparison.OrdinalIgnoreCase))
-            return false;
-
-        // If model explicitly asks metadata but injected context is names-only, allow list_dir.
-        if (cmd.IncludeMetadata && !string.Equals(contextPolicy.Level, "metadata", StringComparison.OrdinalIgnoreCase))
-            return false;
-
-        string listPath = ResolveAgentContextPath(currentDirectory, cmd.Path);
-        string contextPath = ResolveAgentContextPath(currentDirectory, contextPolicy.Path);
-        return string.Equals(listPath, contextPath, StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static AgentContextPolicy DetermineFirstLoopContextPolicy(LlmAgentResponse response, string? userObjective)
-    {
-        var normalized = NormalizeContextPolicy(response.ContextPolicy);
-        if (normalized != null)
-            return normalized;
-
-        // Fallback inference from first loop behavior if model omitted context_policy.
-        var firstListDir = (response.Commands ?? new List<LlmCommand>())
-            .FirstOrDefault(c => string.Equals(c.Cmd, "list_dir", StringComparison.OrdinalIgnoreCase));
-        if (firstListDir != null)
-        {
-            return new AgentContextPolicy
-            {
-                UseFileContext = true,
-                Level = firstListDir.IncludeMetadata ? "metadata" : "names",
-                Path = string.IsNullOrWhiteSpace(firstListDir.Path) ? "./" : firstListDir.Path,
-                RefreshEachLoop = true
-            };
-        }
-
-        if (IsClearlyPatternOnlyTask(userObjective))
-        {
-            return new AgentContextPolicy
-            {
-                UseFileContext = false,
-                Level = "none",
-                Path = "./",
-                RefreshEachLoop = true
-            };
-        }
-
-        return new AgentContextPolicy
-        {
-            UseFileContext = true,
-            Level = "names",
-            Path = "./",
-            RefreshEachLoop = true
-        };
-    }
-
-    private static bool IsClearlyPatternOnlyTask(string? objective)
-    {
-        if (string.IsNullOrWhiteSpace(objective))
-            return false;
-
-        string text = objective.ToLowerInvariant();
-        bool hasExtensionMoveSignal =
-            text.Contains("move all .") ||
-            text.Contains("move *.") ||
-            text.Contains("by extension") ||
-            text.Contains("all jpg") ||
-            text.Contains("all jpeg") ||
-            text.Contains("all png") ||
-            text.Contains("all webp") ||
-            text.Contains("all bmp");
-
-        bool hasConditionalSignal =
-            text.Contains("if ") ||
-            text.Contains("cyrillic") ||
-            text.Contains("filename") ||
-            text.Contains("file name") ||
-            text.Contains("contains") ||
-            text.Contains("starts with") ||
-            text.Contains("ends with") ||
-            text.Contains("except") ||
-            text.Contains("but ") ||
-            text.Contains("split");
-
-        return hasExtensionMoveSignal && !hasConditionalSignal;
-    }
-
-    private static AgentContextPolicy? NormalizeContextPolicy(AgentContextPolicy? policy)
-    {
-        if (policy == null)
-            return null;
-
-        string level = (policy.Level ?? "none").Trim().ToLowerInvariant();
-        if (level != "none" && level != "names" && level != "metadata")
-            level = "names";
-
-        bool useFileContext = policy.UseFileContext && level != "none";
-        if (!useFileContext)
-            level = "none";
-
-        return new AgentContextPolicy
-        {
-            UseFileContext = useFileContext,
-            Level = level,
-            Path = string.IsNullOrWhiteSpace(policy.Path) ? "./" : policy.Path,
-            RefreshEachLoop = policy.RefreshEachLoop
-        };
-    }
-
-    private static string FormatContextPolicyForStatus(AgentContextPolicy? policy)
-    {
-        if (policy == null)
-            return "none (default).";
-        if (!policy.UseFileContext || string.Equals(policy.Level, "none", StringComparison.OrdinalIgnoreCase))
-            return "off.";
-
-        string path = string.IsNullOrWhiteSpace(policy.Path) ? "./" : policy.Path!;
-        return $"on (level={policy.Level}, path={path}, refresh_each_loop={policy.RefreshEachLoop}).";
-    }
-
-    private static string BuildInjectedFileContextSnapshot(string currentDirectory, AgentContextPolicy policy)
-    {
-        try
-        {
-            string resolvedPath = ResolveAgentContextPath(currentDirectory, policy.Path);
-            if (!Directory.Exists(resolvedPath))
-                return $"[Injected File Context]\n- path: {resolvedPath}\n- error: directory not found";
-
-            const int maxItems = 140;
-            var items = new DirectoryInfo(resolvedPath).GetFileSystemInfos("*", SearchOption.TopDirectoryOnly);
-            var sb = new StringBuilder();
-            sb.AppendLine("[Injected File Context]");
-            sb.AppendLine($"- path: {resolvedPath}");
-            sb.AppendLine($"- level: {policy.Level}");
-            sb.AppendLine($"- refreshed_utc: {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss}");
-            sb.AppendLine("- entries:");
-
-            int count = 0;
-            foreach (var item in items)
-            {
-                if (count >= maxItems)
-                    break;
-
-                if (item is DirectoryInfo)
-                {
-                    sb.AppendLine($"[DIR]  {item.Name}");
-                }
-                else if (string.Equals(policy.Level, "metadata", StringComparison.OrdinalIgnoreCase) && item is FileInfo fi)
-                {
-                    sb.AppendLine($"[FILE] {item.Name} ({fi.Length} bytes, {fi.LastWriteTimeUtc:yyyy-MM-dd})");
-                }
-                else
-                {
-                    sb.AppendLine($"[FILE] {item.Name}");
-                }
-
-                count++;
-            }
-
-            if (items.Length > maxItems)
-                sb.AppendLine($"...(truncated {items.Length - maxItems} more entries)");
-            sb.AppendLine($"[summary] total_items={items.Length}");
-
-            return sb.ToString().TrimEnd();
-        }
-        catch (Exception ex)
-        {
-            return $"[Injected File Context]\n- error: {ex.Message}";
-        }
-    }
-
-    private static string ResolveAgentContextPath(string baseDirectory, string? requestedPath)
-    {
-        if (string.IsNullOrWhiteSpace(requestedPath))
-            return Path.GetFullPath(baseDirectory);
-
-        string path = requestedPath.Trim();
-        if (path == "~" || path == "." || path == "./" || path == ".\\")
-            return Path.GetFullPath(baseDirectory);
-
-        if (path.StartsWith("~/", StringComparison.Ordinal) || path.StartsWith("~\\", StringComparison.Ordinal))
-            path = "." + path.Substring(1);
-
-        if ((path.StartsWith("./", StringComparison.Ordinal) || path.StartsWith(".\\", StringComparison.Ordinal)) &&
-            path.Length > 2)
-        {
-            string afterDot = path.Substring(2);
-            if (Path.IsPathRooted(afterDot))
-                return Path.GetFullPath(afterDot);
-        }
-
-        if (Path.IsPathRooted(path))
-            return Path.GetFullPath(path);
-
-        return Path.GetFullPath(Path.Combine(baseDirectory, path));
-    }
-
-    private static string BuildAgentLoopCarrySummary(
-        int loopNumber,
-        LlmAgentResponse response,
-        List<LlmCommand> executedCommands,
-        int newOps,
-        string policyNote)
-    {
-        var sb = new StringBuilder();
-        sb.AppendLine($"Loop {loopNumber} summary:");
-        if (!string.IsNullOrWhiteSpace(policyNote))
-            sb.AppendLine($"- policy: {policyNote}");
-        if (!string.IsNullOrWhiteSpace(response.Plan))
-            sb.AppendLine($"- plan: {TrimForHistory(response.Plan, 220)}");
-        sb.AppendLine($"- commands: {SummarizeAgentCommands(executedCommands)}");
-        sb.AppendLine($"- new_ops: {newOps}");
-        sb.AppendLine($"- is_done: {response.IsDone}");
-
-        bool onlyCreateFolder = executedCommands.Count > 0 &&
-            executedCommands.All(c => string.Equals(c.Cmd, "create_folder", StringComparison.OrdinalIgnoreCase));
-        if (onlyCreateFolder && newOps == 0)
-        {
-            sb.AppendLine("- next_hint: folder preparation likely complete; avoid repeating create_folder and continue with list_dir/move.");
-        }
-
-        bool hasMove = executedCommands.Any(c => string.Equals(c.Cmd, "move", StringComparison.OrdinalIgnoreCase));
-        if (hasMove && newOps > 0)
-        {
-            sb.AppendLine("- next_hint: continue remaining move steps, or set is_done=true if the request is fully satisfied.");
-        }
-
-        return sb.ToString().TrimEnd();
-    }
-
-    private static string SummarizeAgentCommands(List<LlmCommand> commands)
-    {
-        if (commands == null || commands.Count == 0)
-            return "(none)";
-
-        var parts = new List<string>();
-        foreach (var cmd in commands.Take(4))
-        {
-            string name = (cmd.Cmd ?? "").Trim().ToLowerInvariant();
-            switch (name)
-            {
-                case "move":
-                    string src = cmd.Files != null && cmd.Files.Count > 0
-                        ? $"{cmd.Files.Count} file(s)"
-                        : (!string.IsNullOrWhiteSpace(cmd.Pattern) ? $"pattern {cmd.Pattern}" : "unspecified source");
-                    parts.Add($"move {src} -> {cmd.To}");
-                    break;
-                case "create_folder":
-                    parts.Add($"create_folder {cmd.Path}");
-                    break;
-                case "list_dir":
-                    parts.Add($"list_dir {cmd.Path}");
-                    break;
-                case "search":
-                    parts.Add($"search {cmd.Pattern} in {cmd.Root}");
-                    break;
-                default:
-                    parts.Add(name);
-                    break;
-            }
-        }
-
-        if (commands.Count > 4)
-            parts.Add($"+{commands.Count - 4} more");
-
-        return string.Join("; ", parts);
-    }
-
-    private static string BuildAgentAssistantHistoryMessage(LlmAgentResponse response)
-    {
-        var compact = new
-        {
-            thought = TrimForHistory(response.Thought, 480),
-            plan = TrimForHistory(response.Plan, 700),
-            is_done = response.IsDone,
-            commands = response.Commands
-        };
-
-        return JsonSerializer.Serialize(compact);
-    }
-
-    private static string TrimForHistory(string? text, int maxLen)
-    {
-        if (string.IsNullOrWhiteSpace(text))
-            return "";
-
-        string normalized = text.Replace("\r\n", "\n").Replace('\r', '\n').Trim();
-        if (normalized.Length <= maxLen)
-            return normalized;
-
-        return normalized.Substring(0, maxLen) + "...";
-    }
-
-    private static string BuildAgentFeedbackForHistory(List<string> feedbackItems)
-    {
-        const int maxItems = 16;
-        const int maxCharsPerItem = 3500;
-        const int maxTotalChars = 9000;
-
-        var sb = new StringBuilder();
-        sb.AppendLine("System Execution Feedback:");
-
-        int totalChars = 0;
-        int count = 0;
-        foreach (var raw in feedbackItems)
-        {
-            if (count >= maxItems)
-                break;
-
-            string item = CompactFeedbackItem(raw ?? "");
-            if (item.Length > maxCharsPerItem)
-                item = item.Substring(0, maxCharsPerItem) + "\n...(truncated)";
-
-            if (totalChars + item.Length > maxTotalChars)
-                break;
-
-            sb.AppendLine($"- {item}");
-            totalChars += item.Length;
-            count++;
-        }
-
-        if (feedbackItems.Count > count)
-            sb.AppendLine($"- ...(truncated {feedbackItems.Count - count} more feedback item(s))");
-
-        return sb.ToString();
-    }
-
-    private static string CompactFeedbackItem(string item)
-    {
-        if (string.IsNullOrWhiteSpace(item))
-            return item;
-
-        if (!item.StartsWith("[list_dir ", StringComparison.OrdinalIgnoreCase))
-            return item;
-
-        // Keep more file names by stripping verbose metadata from [FILE] lines.
-        var lines = item.Replace("\r\n", "\n").Split('\n');
-        var sb = new StringBuilder();
-        foreach (string rawLine in lines)
-        {
-            string line = rawLine.TrimEnd('\r');
-            if (line.StartsWith("[FILE] ", StringComparison.Ordinal))
-            {
-                int metaStart = line.IndexOf(" (", StringComparison.Ordinal);
-                if (metaStart > 0)
-                    line = line.Substring(0, metaStart);
-            }
-            sb.AppendLine(line);
-        }
-
-        return sb.ToString().TrimEnd();
-    }
-
-    private static bool IsReadOnlyAgentCommand(string? cmd)
-    {
-        if (string.IsNullOrWhiteSpace(cmd))
-            return false;
-
-        return cmd.Equals("list_dir", StringComparison.OrdinalIgnoreCase) ||
-               cmd.Equals("search", StringComparison.OrdinalIgnoreCase) ||
-               cmd.Equals("search_tags", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static bool IsLikelyChannelError(string? responseText)
-    {
-        if (string.IsNullOrWhiteSpace(responseText))
-            return false;
-
-        return responseText.IndexOf("Channel Error", StringComparison.OrdinalIgnoreCase) >= 0 ||
-               responseText.IndexOf("channel_error", StringComparison.OrdinalIgnoreCase) >= 0 ||
-               responseText.IndexOf("invalid_request", StringComparison.OrdinalIgnoreCase) >= 0;
-    }
-
-    private static string BuildWriteCommandSignature(List<LlmCommand> commands)
-    {
-        var parts = commands
-            .Where(c => !IsReadOnlyAgentCommand(c.Cmd))
-            .Select(c =>
-            {
-                string files = c.Files == null ? "" : string.Join(",", c.Files.Select(f => f?.Trim().ToLowerInvariant()).Where(f => !string.IsNullOrWhiteSpace(f)));
-                string tags = c.Tags == null ? "" : string.Join(",", c.Tags.Select(t => t?.Trim().ToLowerInvariant()).Where(t => !string.IsNullOrWhiteSpace(t)));
-                return string.Join("|", new[]
-                {
-                    (c.Cmd ?? "").Trim().ToLowerInvariant(),
-                    (c.Path ?? "").Trim().ToLowerInvariant(),
-                    (c.Root ?? "").Trim().ToLowerInvariant(),
-                    (c.To ?? "").Trim().ToLowerInvariant(),
-                    (c.Pattern ?? "").Trim().ToLowerInvariant(),
-                    (c.File ?? "").Trim().ToLowerInvariant(),
-                    (c.NewName ?? "").Trim().ToLowerInvariant(),
-                    (c.Name ?? "").Trim().ToLowerInvariant(),
-                    files,
-                    tags
-                });
-            })
-            .OrderBy(x => x, StringComparer.Ordinal);
-
-        return string.Join(";", parts);
-    }
+    public string LastAgentFinalResponse => AgentRunner.LastAgentFinalResponse;
+    public LlmAgentRunReport? LastAgentRunReport => AgentRunner.LastAgentRunReport;
 
     private async Task<string> GenerateAgentFinalResponseAsync(
         string userObjective,
@@ -2389,7 +1191,7 @@ public class LlmService
             {
                 try
                 {
-                    string cleanJson = ExtractJsonObject(messageRaw);
+                    string cleanJson = LlmParsers.ExtractJsonObject(messageRaw);
                     using var doc = JsonDocument.Parse(cleanJson);
                     if (doc.RootElement.TryGetProperty("message", out var msgElem))
                     {
@@ -2639,501 +1441,23 @@ public class LlmService
         }
     }
 
+
     /// <summary>
     /// Specialized method for getting tags from an image based on user criteria.
     /// Returns a list of tags.
     /// </summary>
-    public async Task<List<string>> GetImageTagsAsync(string userPrompt, string imagePath, string? modelOverride = null)
+    public async Task<List<string>> GetImageTagsAsync(string userPrompt, string imagePath, string? modelOverride = null, CancellationToken cancellationToken = default)
     {
-        var settings = AppSettings.Current;
-        string model = string.IsNullOrWhiteSpace(modelOverride) ? settings.LlmModelName : modelOverride;
-        string requestUrl = GetCompletionsApiUrl(string.IsNullOrWhiteSpace(ApiUrl) ? settings.LlmApiUrl : ApiUrl, null);
-        
-        string systemPrompt = "You are an automated image tagger. Analyze the provided image and generate relevant tags based strictly on the user's instructions. Output purely a JSON object with a 'tags' array.";
-
-        var contentList = new List<object>
-        {
-            new { type = "text", text = userPrompt }
-        };
-
-        var stats = new LlmImageStats { Path = imagePath };
-        try 
-        {
-            var (imageBytes, s) = LlmImageProcessor.PrepareImageForVision(imagePath);
-            stats = s;
-            string base64 = Convert.ToBase64String(imageBytes);
-            
-            // Vision models prefer JPEG for efficiency
-            string mime = "image/jpeg";
-
-            contentList.Add(new 
-            { 
-                type = "image_url", 
-                image_url = new { url = $"data:{mime};base64,{base64}" } 
-            });
-        }
-        catch (Exception ex)
-        {
-            LlmDebugLogger.LogError($"Failed to load image for tagging: {imagePath} - {ex.Message}");
-            return new List<string>();
-        }
-
-        var messages = new[]
-        {
-            new { role = "system", content = (object)systemPrompt },
-            new { role = "user", content = (object)contentList } 
-        };
-
-        var requestBody = new
-        {
-            model = model,
-            messages = messages,
-            response_format = LlmPromptBuilder.GetTaggingJsonSchema(),
-            temperature = settings.LlmTemperature, 
-            max_tokens = settings.LlmMaxTokens, 
-            stream = false
-        };
-
-        var requestJson = JsonSerializer.Serialize(requestBody, new JsonSerializerOptions { WriteIndented = true });
-        LlmDebugLogger.LogRequest(Path.GetDirectoryName(imagePath) ?? "", userPrompt, systemPrompt, requestJson, new[] { imagePath }, new[] { stats });
-
-        try
-        {
-            LlmDebugLogger.LogExecution($"GetImageTags endpoint: {requestUrl} | model: {model} | vision: true");
-            var content = new StringContent(requestJson, Encoding.UTF8, "application/json");
-            var response = await _httpClient.PostAsync(requestUrl, content);
-            var responseText = await response.Content.ReadAsStringAsync();
-
-            if (!response.IsSuccessStatusCode &&
-                IsModelUnloadedError(responseText))
-            {
-                if (await TryRecoverVisionModelAsync(requestUrl, model, "GetImageTags primary model-unloaded"))
-                {
-                    using var recoveryContent = new StringContent(requestJson, Encoding.UTF8, "application/json");
-                    response = await _httpClient.PostAsync(requestUrl, recoveryContent);
-                    responseText = await response.Content.ReadAsStringAsync();
-                }
-            }
-
-            if (!response.IsSuccessStatusCode &&
-                IsFailedToProcessImageError(response.StatusCode, responseText))
-            {
-                LlmDebugLogger.LogExecution("GetImageTags retry with aggressive resize/compression", success: false);
-                var (retryBytes, retryStats) = LlmImageProcessor.PrepareImageForVision(imagePath, 1024L * 1024L, 70);
-                string retryBase64 = Convert.ToBase64String(retryBytes);
-                var retryContentList = new List<object>
-                {
-                    new { type = "text", text = userPrompt },
-                    new { type = "image_url", image_url = new { url = $"data:image/jpeg;base64,{retryBase64}" } }
-                };
-                var retryMessages = new[]
-                {
-                    new { role = "system", content = (object)systemPrompt },
-                    new { role = "user", content = (object)retryContentList }
-                };
-                var retryBody = new
-                {
-                    model = model,
-                    messages = retryMessages,
-                    response_format = LlmPromptBuilder.GetTaggingJsonSchema(),
-                    temperature = settings.LlmTemperature,
-                    max_tokens = settings.LlmMaxTokens,
-                    stream = false
-                };
-
-                requestJson = JsonSerializer.Serialize(retryBody, new JsonSerializerOptions { WriteIndented = true });
-                LlmDebugLogger.LogRequest(Path.GetDirectoryName(imagePath) ?? "", userPrompt, systemPrompt, requestJson, new[] { imagePath }, new[] { retryStats });
-
-                using var retryContent = new StringContent(requestJson, Encoding.UTF8, "application/json");
-                response = await _httpClient.PostAsync(requestUrl, retryContent);
-                responseText = await response.Content.ReadAsStringAsync();
-
-                if (!response.IsSuccessStatusCode &&
-                    IsModelUnloadedError(responseText))
-                {
-                    if (await TryRecoverVisionModelAsync(requestUrl, model, "GetImageTags retry model-unloaded"))
-                    {
-                        using var retryRecoveryContent = new StringContent(requestJson, Encoding.UTF8, "application/json");
-                        response = await _httpClient.PostAsync(requestUrl, retryRecoveryContent);
-                        responseText = await response.Content.ReadAsStringAsync();
-                    }
-                }
-            }
-
-            if (!response.IsSuccessStatusCode)
-            {
-                LlmDebugLogger.LogError($"API Error {response.StatusCode}: {responseText}");
-                return new List<string>();
-            }
-
-            using var doc = JsonDocument.Parse(responseText);
-            var choices = doc.RootElement.GetProperty("choices");
-            if (choices.GetArrayLength() == 0) return new List<string>();
-            
-            var messageContent = choices[0].GetProperty("message").GetProperty("content").GetString() ?? "";
-            LlmDebugLogger.LogResponse(messageContent);
-
-            using var resultDoc = JsonDocument.Parse(messageContent);
-            if (resultDoc.RootElement.TryGetProperty("tags", out var tagsArray))
-            {
-                return tagsArray.EnumerateArray().Select(x => x.GetString() ?? "").Where(s => !string.IsNullOrWhiteSpace(s)).ToList();
-            }
-            return new List<string>();
-        }
-        catch (Exception ex)
-        {
-            LlmDebugLogger.LogError($"Tagging request failed: {ex.Message}");
-            return new List<string>();
-        }
+        return await _visionService.GetImageTagsAsync(userPrompt, imagePath, ApiUrl, modelOverride, cancellationToken);
     }
 
     /// <summary>
     /// Performs OCR-like extraction with optional text blocks and normalized coordinates.
     /// Coordinates are normalized to [0..1] for image width/height.
     /// </summary>
-    public async Task<LlmImageTextResult?> ExtractImageTextAsync(string imagePath, string? modelOverride = null)
+    public async Task<LlmImageTextResult?> ExtractImageTextAsync(string imagePath, string? modelOverride = null, CancellationToken cancellationToken = default)
     {
-        var settings = AppSettings.Current;
-        string model = string.IsNullOrWhiteSpace(modelOverride) ? settings.LlmModelName : modelOverride;
-        string requestUrl = GetCompletionsApiUrl(string.IsNullOrWhiteSpace(ApiUrl) ? settings.LlmApiUrl : ApiUrl, null);
-        int ocrMaxTokens = Math.Min(settings.LlmMaxTokens, 1200);
-        if (ocrMaxTokens < 256) ocrMaxTokens = 256;
-        int ocrTimeoutSeconds = ComputeOcrTimeoutSeconds(ocrMaxTokens);
-
-        async Task<bool> TryReloadModelAsync(string stage)
-        {
-            return await TryRecoverVisionModelAsync(requestUrl, model, $"ExtractImageText {stage}");
-        }
-
-        string systemPrompt =
-            "You are an OCR extractor. Return strict JSON only. " +
-            "Extract readable text from the image. " +
-            "Be conservative with block count: merge nearby lines from the same text region and avoid duplicate/overlapping blocks. " +
-            "Return blocks with coordinates x,y,w,h and optional font_size.";
-
-        string userPrompt =
-            "Extract readable text from this image.\n" +
-            "Return text blocks in reading order.\n" +
-            "Prefer fewer complete phrase blocks instead of one block per line.\n" +
-            "Output JSON with: detected_language, full_text, blocks[{text,x,y,w,h,font_size?}].";
-
-        var schema = new
-        {
-            type = "json_schema",
-            json_schema = new
-            {
-                name = "image_ocr_blocks",
-                strict = true,
-                schema = new
-                {
-                    type = "object",
-                    properties = new
-                    {
-                        detected_language = new { type = "string" },
-                        full_text = new { type = "string" },
-                        blocks = new
-                        {
-                            type = "array",
-                            items = new
-                            {
-                                type = "object",
-                                properties = new
-                                {
-                                    text = new { type = "string" },
-                                    x = new { type = "number" },
-                                    y = new { type = "number" },
-                                    w = new { type = "number" },
-                                    h = new { type = "number" },
-                                    font_size = new { type = "number" }
-                                },
-                                required = new[] { "text", "x", "y", "w", "h" },
-                                additionalProperties = false
-                            }
-                        }
-                    },
-                    required = new[] { "detected_language", "full_text", "blocks" },
-                    additionalProperties = false
-                }
-            }
-        };
-
-        (string json, List<LlmImageStats> stats) BuildRequest(long maxPixels, int jpegQuality)
-        {
-            var (imageBytes, imageStats) = LlmImageProcessor.PrepareImageForVision(imagePath, maxPixels, jpegQuality);
-            string base64 = Convert.ToBase64String(imageBytes);
-
-            var contentList = new List<object>
-            {
-                new { type = "text", text = userPrompt },
-                new { type = "image_url", image_url = new { url = $"data:image/jpeg;base64,{base64}" } }
-            };
-
-            var messages = new[]
-            {
-                new { role = "system", content = (object)systemPrompt },
-                new { role = "user", content = (object)contentList }
-            };
-
-            var requestBody = new
-            {
-                model = model,
-                messages = messages,
-                response_format = schema,
-                temperature = Math.Min(settings.LlmTemperature, 0.2),
-                max_tokens = ocrMaxTokens,
-                stream = false
-            };
-
-            var json = JsonSerializer.Serialize(requestBody, new JsonSerializerOptions { WriteIndented = true });
-            return (json, new List<LlmImageStats> { imageStats });
-        }
-
-        async Task<LlmImageTextResult?> RunFallbackWithoutSchemaAsync(long maxPixels, int jpegQuality, string reason)
-        {
-            string fallbackSystemPrompt =
-                "You are an OCR extractor. Return JSON if possible with keys: detected_language, full_text, blocks. " +
-                "Blocks should contain objects {text,x,y,w,h,font_size?}. " +
-                "Use conservative block count, merge nearby lines from the same region, and avoid duplicate/overlapping blocks. " +
-                "If coordinates are uncertain, return blocks as empty array.";
-            string fallbackUserPrompt =
-                userPrompt + "\nIf JSON is not possible, return plain extracted text only.";
-
-            var attempts = new List<(long MaxPixels, int Quality)>
-            {
-                (maxPixels, jpegQuality),
-                (768L * 768L, 60),
-                (640L * 640L, 55),
-                (512L * 512L, 50),
-                (448L * 448L, 45)
-            };
-
-            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var attempt in attempts)
-            {
-                string attemptKey = $"{attempt.MaxPixels}:{attempt.Quality}";
-                if (!seen.Add(attemptKey))
-                    continue;
-
-                try
-                {
-                    var (imageBytes, imageStats) = LlmImageProcessor.PrepareImageForVision(imagePath, attempt.MaxPixels, attempt.Quality);
-                    string base64 = Convert.ToBase64String(imageBytes);
-
-                    var contentList = new List<object>
-                    {
-                        new { type = "text", text = fallbackUserPrompt },
-                        new { type = "image_url", image_url = new { url = $"data:image/jpeg;base64,{base64}" } }
-                    };
-
-                    var messages = new[]
-                    {
-                        new { role = "system", content = (object)fallbackSystemPrompt },
-                        new { role = "user", content = (object)contentList }
-                    };
-
-                    var requestBody = new
-                    {
-                        model = model,
-                        messages = messages,
-                        temperature = Math.Min(settings.LlmTemperature, 0.2),
-                        max_tokens = ocrMaxTokens,
-                        stream = false
-                    };
-
-                    string fallbackJson = JsonSerializer.Serialize(requestBody, new JsonSerializerOptions { WriteIndented = true });
-                    LlmDebugLogger.LogExecution(
-                        $"ExtractImageText fallback without response_format ({reason}) attempt {attempt.MaxPixels}px q{attempt.Quality}",
-                        success: false);
-                    LlmDebugLogger.LogRequest(
-                        Path.GetDirectoryName(imagePath) ?? "",
-                        fallbackUserPrompt,
-                        fallbackSystemPrompt,
-                        fallbackJson,
-                        new[] { imagePath },
-                        new[] { imageStats });
-
-                    using var fallbackContent = new StringContent(fallbackJson, Encoding.UTF8, "application/json");
-                    using var fallbackCts = new CancellationTokenSource(TimeSpan.FromSeconds(ocrTimeoutSeconds));
-                    var fallbackResponse = await _httpClient.PostAsync(requestUrl, fallbackContent, fallbackCts.Token);
-                    string fallbackResponseText = await fallbackResponse.Content.ReadAsStringAsync();
-
-                    if (!fallbackResponse.IsSuccessStatusCode && IsModelUnloadedError(fallbackResponseText))
-                    {
-                        if (await TryReloadModelAsync($"fallback {attempt.MaxPixels}px"))
-                        {
-                            using var fallbackRetryContent = new StringContent(fallbackJson, Encoding.UTF8, "application/json");
-                            using var fallbackRetryCts = new CancellationTokenSource(TimeSpan.FromSeconds(ocrTimeoutSeconds));
-                            fallbackResponse = await _httpClient.PostAsync(requestUrl, fallbackRetryContent, fallbackRetryCts.Token);
-                            fallbackResponseText = await fallbackResponse.Content.ReadAsStringAsync();
-                        }
-                    }
-
-                    if (!fallbackResponse.IsSuccessStatusCode)
-                    {
-                        LlmDebugLogger.LogError($"ExtractImageText fallback API Error {fallbackResponse.StatusCode}: {fallbackResponseText}");
-                        if (IsFailedToProcessImageError(fallbackResponse.StatusCode, fallbackResponseText))
-                        {
-                            await Task.Delay(120);
-                            continue;
-                        }
-                        continue;
-                    }
-
-                    using var fallbackDoc = JsonDocument.Parse(fallbackResponseText);
-                    if (!fallbackDoc.RootElement.TryGetProperty("choices", out var fallbackChoices) || fallbackChoices.GetArrayLength() == 0)
-                        continue;
-
-                    string fallbackMessage = fallbackChoices[0].GetProperty("message").GetProperty("content").GetString() ?? "";
-                    LlmDebugLogger.LogResponse(fallbackMessage);
-
-                    try
-                    {
-                        return ParseImageTextResult(fallbackMessage);
-                    }
-                    catch
-                    {
-                        string plain = fallbackMessage.Trim();
-                        if (string.IsNullOrWhiteSpace(plain))
-                            continue;
-
-                        return new LlmImageTextResult
-                        {
-                            DetectedLanguage = "",
-                            FullText = plain,
-                            Blocks = new List<LlmImageTextBlock>()
-                        };
-                    }
-                }
-                catch (Exception ex)
-                {
-                    LlmDebugLogger.LogError($"ExtractImageText fallback failed for {attempt.MaxPixels}px q{attempt.Quality}: {ex.Message}");
-                }
-            }
-
-            return null;
-        }
-
-        string requestJson;
-        List<LlmImageStats> stats;
-        try
-        {
-            (requestJson, stats) = BuildRequest(1536L * 1536L, 85);
-        }
-        catch (Exception ex)
-        {
-            LlmDebugLogger.LogError($"ExtractImageText: failed to prepare image {imagePath}: {ex.Message}");
-            return null;
-        }
-
-        LlmDebugLogger.LogRequest(Path.GetDirectoryName(imagePath) ?? "", userPrompt, systemPrompt, requestJson, new[] { imagePath }, stats);
-
-        try
-        {
-            LlmDebugLogger.LogExecution($"ExtractImageText endpoint: {requestUrl} | model: {model} | vision: true | timeout: {ocrTimeoutSeconds}s");
-            using var content = new StringContent(requestJson, Encoding.UTF8, "application/json");
-            using var requestCts = new CancellationTokenSource(TimeSpan.FromSeconds(ocrTimeoutSeconds));
-            var response = await _httpClient.PostAsync(requestUrl, content, requestCts.Token);
-            var responseText = await response.Content.ReadAsStringAsync();
-
-            if (!response.IsSuccessStatusCode && IsModelUnloadedError(responseText))
-            {
-                if (await TryReloadModelAsync("primary"))
-                {
-                    using var reloadRetryContent = new StringContent(requestJson, Encoding.UTF8, "application/json");
-                    using var reloadRetryCts = new CancellationTokenSource(TimeSpan.FromSeconds(ocrTimeoutSeconds));
-                    response = await _httpClient.PostAsync(requestUrl, reloadRetryContent, reloadRetryCts.Token);
-                    responseText = await response.Content.ReadAsStringAsync();
-                }
-            }
-
-            if (!response.IsSuccessStatusCode &&
-                IsFailedToProcessImageError(response.StatusCode, responseText))
-            {
-                LlmDebugLogger.LogExecution("ExtractImageText early fallback without response_format (primary failed to process image)", success: false);
-                var earlyFallback = await RunFallbackWithoutSchemaAsync(1536L * 1536L, 85, "primary failed_to_process_image");
-                if (earlyFallback != null)
-                    return earlyFallback;
-
-                LlmDebugLogger.LogExecution("ExtractImageText retry with aggressive resize/compression", success: false);
-                (requestJson, stats) = BuildRequest(1024L * 1024L, 70);
-                LlmDebugLogger.LogRequest(Path.GetDirectoryName(imagePath) ?? "", userPrompt, systemPrompt, requestJson, new[] { imagePath }, stats);
-
-                using var retryContent = new StringContent(requestJson, Encoding.UTF8, "application/json");
-                using var retryCts = new CancellationTokenSource(TimeSpan.FromSeconds(ocrTimeoutSeconds));
-                response = await _httpClient.PostAsync(requestUrl, retryContent, retryCts.Token);
-                responseText = await response.Content.ReadAsStringAsync();
-
-                if (!response.IsSuccessStatusCode && IsModelUnloadedError(responseText))
-                {
-                    if (await TryReloadModelAsync("retry-1"))
-                    {
-                        using var retryReloadContent = new StringContent(requestJson, Encoding.UTF8, "application/json");
-                        using var retryReloadCts = new CancellationTokenSource(TimeSpan.FromSeconds(ocrTimeoutSeconds));
-                        response = await _httpClient.PostAsync(requestUrl, retryReloadContent, retryReloadCts.Token);
-                        responseText = await response.Content.ReadAsStringAsync();
-                    }
-                }
-
-                if (!response.IsSuccessStatusCode &&
-                    IsFailedToProcessImageError(response.StatusCode, responseText))
-                {
-                    LlmDebugLogger.LogExecution("ExtractImageText second retry with ultra resize/compression", success: false);
-                    (requestJson, stats) = BuildRequest(768L * 768L, 60);
-                    LlmDebugLogger.LogRequest(Path.GetDirectoryName(imagePath) ?? "", userPrompt, systemPrompt, requestJson, new[] { imagePath }, stats);
-
-                    using var retryContent2 = new StringContent(requestJson, Encoding.UTF8, "application/json");
-                    using var retryCts2 = new CancellationTokenSource(TimeSpan.FromSeconds(ocrTimeoutSeconds));
-                    response = await _httpClient.PostAsync(requestUrl, retryContent2, retryCts2.Token);
-                    responseText = await response.Content.ReadAsStringAsync();
-
-                    if (!response.IsSuccessStatusCode && IsModelUnloadedError(responseText))
-                    {
-                        if (await TryReloadModelAsync("retry-2"))
-                        {
-                            using var retryReloadContent2 = new StringContent(requestJson, Encoding.UTF8, "application/json");
-                            using var retryReloadCts2 = new CancellationTokenSource(TimeSpan.FromSeconds(ocrTimeoutSeconds));
-                            response = await _httpClient.PostAsync(requestUrl, retryReloadContent2, retryReloadCts2.Token);
-                            responseText = await response.Content.ReadAsStringAsync();
-                        }
-                    }
-                }
-            }
-
-            if (!response.IsSuccessStatusCode)
-            {
-                LlmDebugLogger.LogError($"ExtractImageText API Error {response.StatusCode}: {responseText}");
-                return await RunFallbackWithoutSchemaAsync(896L * 896L, 65, $"{(int)response.StatusCode} {response.StatusCode}");
-            }
-
-            using var doc = JsonDocument.Parse(responseText);
-            if (!doc.RootElement.TryGetProperty("choices", out var choices) || choices.GetArrayLength() == 0)
-                return null;
-
-            string messageContent = choices[0].GetProperty("message").GetProperty("content").GetString() ?? "";
-            LlmDebugLogger.LogResponse(messageContent);
-            try
-            {
-                return ParseImageTextResult(messageContent);
-            }
-            catch
-            {
-                string plain = messageContent.Trim();
-                if (string.IsNullOrWhiteSpace(plain))
-                    return null;
-
-                return new LlmImageTextResult
-                {
-                    DetectedLanguage = "",
-                    FullText = plain,
-                    Blocks = new List<LlmImageTextBlock>()
-                };
-            }
-        }
-        catch (Exception ex)
-        {
-            LlmDebugLogger.LogError($"ExtractImageText failed: {ex.Message}");
-            return null;
-        }
+        return await _visionService.ExtractImageTextAsync(imagePath, ApiUrl, modelOverride, cancellationToken);
     }
 
     /// <summary>
@@ -3143,292 +1467,13 @@ public class LlmService
         IReadOnlyList<string> sourceBlocks,
         string targetLanguage,
         string? sourceLanguage = null,
-        string? modelOverride = null)
+        string? modelOverride = null,
+        CancellationToken cancellationToken = default)
     {
-        var settings = AppSettings.Current;
-        string model = string.IsNullOrWhiteSpace(modelOverride) ? settings.LlmModelName : modelOverride;
-        string requestUrl = GetCompletionsApiUrl(string.IsNullOrWhiteSpace(ApiUrl) ? settings.LlmApiUrl : ApiUrl, null);
-        string target = string.IsNullOrWhiteSpace(targetLanguage) ? "English" : targetLanguage.Trim();
-        int translationMaxTokens = Math.Min(settings.LlmMaxTokens, 1400);
-        if (translationMaxTokens < 256) translationMaxTokens = 256;
-        int translationTimeoutSeconds = ComputeTranslationTimeoutSeconds(translationMaxTokens);
-
-        var cleanedBlocks = sourceBlocks?
-            .Select(b => b?.Trim() ?? "")
-            .Where(b => !string.IsNullOrWhiteSpace(b))
-            .ToList() ?? new List<string>();
-
-        if (cleanedBlocks.Count == 0)
-        {
-            return new LlmTextTranslationResult
-            {
-                TargetLanguage = target,
-                TranslatedFullText = "",
-                Translations = new List<string>()
-            };
-        }
-
-        string systemPrompt =
-            "You are a translation engine. Return strict JSON only. " +
-            "Translate each input text block into the requested target language. " +
-            "Do not omit blocks. Preserve order exactly.";
-
-        var numbered = new StringBuilder();
-        for (int i = 0; i < cleanedBlocks.Count; i++)
-        {
-            numbered.AppendLine($"{i + 1}. {cleanedBlocks[i]}");
-        }
-
-        string userPrompt =
-            $"Target language: {target}\n" +
-            $"Source language hint: {(string.IsNullOrWhiteSpace(sourceLanguage) ? "unknown" : sourceLanguage)}\n" +
-            "Translate each numbered block. Keep line breaks where meaningful.\n" +
-            "Input blocks:\n" +
-            numbered.ToString();
-
-        var schema = new
-        {
-            type = "json_schema",
-            json_schema = new
-            {
-                name = "translated_text_blocks",
-                strict = true,
-                schema = new
-                {
-                    type = "object",
-                    properties = new
-                    {
-                        translated_full_text = new { type = "string" },
-                        translations = new
-                        {
-                            type = "array",
-                            items = new { type = "string" }
-                        }
-                    },
-                    required = new[] { "translated_full_text", "translations" },
-                    additionalProperties = false
-                }
-            }
-        };
-
-        var messages = new[]
-        {
-            new { role = "system", content = systemPrompt },
-            new { role = "user", content = userPrompt }
-        };
-
-        var requestBody = new
-        {
-            model = model,
-            messages = messages,
-            response_format = schema,
-            temperature = Math.Min(settings.LlmTemperature, 0.2),
-            max_tokens = translationMaxTokens,
-            stream = false
-        };
-
-        var requestJson = JsonSerializer.Serialize(requestBody, new JsonSerializerOptions { WriteIndented = true });
-        LlmDebugLogger.LogRequest("", userPrompt, systemPrompt, requestJson);
-
-        try
-        {
-            LlmDebugLogger.LogExecution($"TranslateTextBlocks endpoint: {requestUrl} | model: {model} | vision: false | timeout: {translationTimeoutSeconds}s");
-            using var content = new StringContent(requestJson, Encoding.UTF8, "application/json");
-            using var requestCts = new CancellationTokenSource(TimeSpan.FromSeconds(translationTimeoutSeconds));
-            var response = await _httpClient.PostAsync(requestUrl, content, requestCts.Token);
-            var responseText = await response.Content.ReadAsStringAsync();
-
-            if (!response.IsSuccessStatusCode)
-            {
-                LlmDebugLogger.LogError($"TranslateTextBlocks API Error {response.StatusCode}: {responseText}");
-                return null;
-            }
-
-            using var doc = JsonDocument.Parse(responseText);
-            if (!doc.RootElement.TryGetProperty("choices", out var choices) || choices.GetArrayLength() == 0)
-                return null;
-
-            string messageContent = choices[0].GetProperty("message").GetProperty("content").GetString() ?? "";
-            LlmDebugLogger.LogResponse(messageContent);
-
-            var parsed = ParseTranslationResult(messageContent, target);
-            if (parsed == null)
-                return null;
-
-            if (parsed.Translations.Count != cleanedBlocks.Count)
-            {
-                if (parsed.Translations.Count == 0 && !string.IsNullOrWhiteSpace(parsed.TranslatedFullText))
-                {
-                    parsed.Translations = new List<string> { parsed.TranslatedFullText };
-                }
-                else if (parsed.Translations.Count < cleanedBlocks.Count)
-                {
-                    while (parsed.Translations.Count < cleanedBlocks.Count)
-                        parsed.Translations.Add(parsed.TranslatedFullText);
-                }
-                else if (parsed.Translations.Count > cleanedBlocks.Count)
-                {
-                    parsed.Translations = parsed.Translations.Take(cleanedBlocks.Count).ToList();
-                }
-            }
-
-            return parsed;
-        }
-        catch (Exception ex)
-        {
-            LlmDebugLogger.LogError($"TranslateTextBlocks failed: {ex.Message}");
-            return null;
-        }
+        return await _visionService.TranslateTextBlocksAsync(sourceBlocks, targetLanguage, ApiUrl, sourceLanguage, modelOverride, cancellationToken);
     }
 
-    private static LlmImageTextResult? ParseImageTextResult(string rawContent)
-    {
-        string cleanJson = ExtractJsonObject(rawContent);
-        using var doc = JsonDocument.Parse(cleanJson);
-        var root = doc.RootElement;
 
-        var result = new LlmImageTextResult();
-        if (root.TryGetProperty("detected_language", out var language))
-            result.DetectedLanguage = language.GetString() ?? "";
-
-        if (root.TryGetProperty("full_text", out var fullText))
-            result.FullText = fullText.GetString() ?? "";
-
-        if (root.TryGetProperty("blocks", out var blocks) && blocks.ValueKind == JsonValueKind.Array)
-        {
-            foreach (var block in blocks.EnumerateArray())
-            {
-                if (block.ValueKind != JsonValueKind.Object)
-                    continue;
-
-                string text = block.TryGetProperty("text", out var textEl) ? (textEl.GetString() ?? "") : "";
-                if (string.IsNullOrWhiteSpace(text))
-                    continue;
-
-                // Keep raw coordinates as returned by model. Some models return pixels, not normalized values.
-                float x = ReadJsonFloat(block, "x");
-                float y = ReadJsonFloat(block, "y");
-                float w = ReadJsonFloat(block, "w");
-                float h = ReadJsonFloat(block, "h");
-                float fontSize = ReadJsonFloatAny(block, "font_size", "fontSize", "size");
-                if (w <= 0f || h <= 0f)
-                    continue;
-
-                result.Blocks.Add(new LlmImageTextBlock
-                {
-                    Text = text.Trim(),
-                    X = x,
-                    Y = y,
-                    W = w,
-                    H = h,
-                    FontSize = fontSize
-                });
-            }
-        }
-
-        if (string.IsNullOrWhiteSpace(result.FullText) && result.Blocks.Count > 0)
-            result.FullText = string.Join(Environment.NewLine, result.Blocks.Select(b => b.Text));
-
-        return result;
-    }
-
-    private static LlmTextTranslationResult? ParseTranslationResult(string rawContent, string targetLanguage)
-    {
-        string cleanJson = ExtractJsonObject(rawContent);
-        using var doc = JsonDocument.Parse(cleanJson);
-        var root = doc.RootElement;
-
-        var result = new LlmTextTranslationResult
-        {
-            TargetLanguage = targetLanguage
-        };
-
-        if (root.TryGetProperty("translated_full_text", out var fullText))
-            result.TranslatedFullText = fullText.GetString() ?? "";
-
-        if (root.TryGetProperty("translations", out var translations) && translations.ValueKind == JsonValueKind.Array)
-        {
-            foreach (var item in translations.EnumerateArray())
-            {
-                if (item.ValueKind != JsonValueKind.String)
-                    continue;
-                var value = item.GetString();
-                if (!string.IsNullOrWhiteSpace(value))
-                    result.Translations.Add(value.Trim());
-            }
-        }
-
-        if (string.IsNullOrWhiteSpace(result.TranslatedFullText) && result.Translations.Count > 0)
-            result.TranslatedFullText = string.Join(Environment.NewLine, result.Translations);
-
-        return result;
-    }
-
-    private static float ReadJsonFloat(JsonElement obj, string key)
-    {
-        if (!obj.TryGetProperty(key, out var value))
-            return 0f;
-
-        if (value.ValueKind == JsonValueKind.Number && value.TryGetSingle(out float number))
-            return number;
-
-        if (value.ValueKind == JsonValueKind.String &&
-            float.TryParse(value.GetString(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float parsed))
-        {
-            return parsed;
-        }
-
-        return 0f;
-    }
-
-    private static float ReadJsonFloatAny(JsonElement obj, params string[] keys)
-    {
-        foreach (var key in keys)
-        {
-            float value = ReadJsonFloat(obj, key);
-            if (value > 0f)
-                return value;
-        }
-
-        return 0f;
-    }
-
-    private static float Clamp01(float value)
-    {
-        if (value < 0f) return 0f;
-        if (value > 1f) return 1f;
-        return value;
-    }
-
-    private static string ExtractJsonObject(string content)
-    {
-        if (string.IsNullOrWhiteSpace(content))
-            return "{}";
-
-        string clean = content.Trim();
-        int fenceStart = clean.IndexOf("```json", StringComparison.OrdinalIgnoreCase);
-        if (fenceStart >= 0)
-        {
-            fenceStart += 7;
-            int fenceEnd = clean.IndexOf("```", fenceStart, StringComparison.OrdinalIgnoreCase);
-            if (fenceEnd > fenceStart)
-                clean = clean.Substring(fenceStart, fenceEnd - fenceStart).Trim();
-        }
-        else if (clean.StartsWith("```", StringComparison.Ordinal))
-        {
-            int start = clean.IndexOf('\n');
-            int end = clean.LastIndexOf("```", StringComparison.Ordinal);
-            if (start >= 0 && end > start)
-                clean = clean.Substring(start + 1, end - start - 1).Trim();
-        }
-
-        int objStart = clean.IndexOf('{');
-        int objEnd = clean.LastIndexOf('}');
-        if (objStart >= 0 && objEnd > objStart)
-            return clean.Substring(objStart, objEnd - objStart + 1);
-
-        return clean;
-    }
 
     public static LlmAgentChatDecision ParseAgentChatDecision(string json)
     {
@@ -3436,7 +1481,7 @@ public class LlmService
         if (string.IsNullOrWhiteSpace(json))
             return result;
 
-        string cleanJson = ExtractJsonObject(json);
+        string cleanJson = LlmParsers.ExtractJsonObject(json);
 
         try
         {
@@ -3613,104 +1658,4 @@ public class LlmService
         return result;
     }
 
-    /// <summary>
-    /// Parses the LLM response JSON into a list of commands.
-    /// </summary>
-    public static List<LlmCommand> ParseCommands(string json)
-    {
-        var result = new List<LlmCommand>();
-        if (string.IsNullOrWhiteSpace(json)) return result;
-
-        string cleanJson = json.Trim();
-
-        // If it looks like markdown (e.g. Chat Mode response), try to extract the JSON block
-        if (cleanJson.Contains("```json"))
-        {
-            int start = cleanJson.IndexOf("```json") + 7;
-            int end = cleanJson.IndexOf("```", start);
-            if (end > start)
-            {
-                cleanJson = cleanJson.Substring(start, end - start).Trim();
-            }
-        }
-        else if (cleanJson.Contains("```"))
-        {
-            int start = cleanJson.IndexOf("```") + 3;
-            int end = cleanJson.IndexOf("```", start);
-            if (end > start)
-            {
-                cleanJson = cleanJson.Substring(start, end - start).Trim();
-            }
-        }
-
-        try
-        {
-            using var doc = JsonDocument.Parse(cleanJson);
-            
-            // Log thought if present
-            if (doc.RootElement.TryGetProperty("thought", out var thought))
-            {
-                LlmDebugLogger.LogResponse($"[Thought Process]\n{thought.GetString()}\n");
-            }
-
-            if (!doc.RootElement.TryGetProperty("commands", out var commands) || commands.ValueKind != JsonValueKind.Array)
-                return result;
-            
-            var sb = new StringBuilder();
-            int i = 1;
-            
-            foreach (var cmd in commands.EnumerateArray())
-            {
-                var llmCmd = new LlmCommand
-                {
-                    Cmd = cmd.GetProperty("cmd").GetString() ?? "",
-                    Name = cmd.TryGetProperty("name", out var n) ? n.GetString() : null,
-                    Path = cmd.TryGetProperty("path", out var path) ? path.GetString() : null,
-                    Root = cmd.TryGetProperty("root", out var root) ? root.GetString() : null,
-                    Pattern = cmd.TryGetProperty("pattern", out var p) ? p.GetString() : null,
-                    To = cmd.TryGetProperty("to", out var t) ? t.GetString() : null,
-                    File = cmd.TryGetProperty("file", out var f) ? f.GetString() : null,
-                    NewName = cmd.TryGetProperty("newName", out var nn) ? nn.GetString() : null,
-                    Content = cmd.TryGetProperty("content", out var c) ? c.GetString() : null,
-                    IncludeMetadata = cmd.TryGetProperty("include_metadata", out var includeMetadata) &&
-                                      (includeMetadata.ValueKind == JsonValueKind.True || includeMetadata.ValueKind == JsonValueKind.False) &&
-                                      includeMetadata.GetBoolean(),
-                    Tags = cmd.TryGetProperty("tags", out var tags) ? 
-                           tags.EnumerateArray().Select(x => x.GetString() ?? "").ToList() : null,
-                    Files = cmd.TryGetProperty("files", out var files) ? 
-                           files.EnumerateArray().Select(x => x.GetString() ?? "").ToList() : null
-                };
-                result.Add(llmCmd);
-                sb.AppendLine($"{i++}. {llmCmd.Cmd}: {llmCmd.Name ?? llmCmd.Pattern ?? llmCmd.To ?? (llmCmd.Tags != null ? string.Join(", ", llmCmd.Tags) : (llmCmd.Files != null ? $"{llmCmd.Files.Count} files" : ""))}");
-            }
-
-            LlmDebugLogger.LogResponse("", sb.ToString());
-        }
-        catch (Exception ex)
-        {
-            LlmDebugLogger.LogError($"Failed to parse commands: {ex.Message}\nCleaned JSON: {cleanJson}");
-            // Don't throw if in chat mode - it might just be conversational text
-            if (json.Length > 2000) // heuristic: if it's very long, maybe it's just text
-                 return result;
-            
-            throw new Exception($"Failed to parse LLM response: {ex.Message}");
-        }
-        return result;
-    }
-}
-
-public class LlmCommand
-{
-    public string Cmd { get; set; } = "";
-    public string? Name { get; set; }       // For create_file name
-    public string? Path { get; set; }       // For create_folder path (absolute or relative)
-    public string? Root { get; set; }       // For search root director
-    public string? Pattern { get; set; }    // For move by pattern
-    public string? To { get; set; }         // Destination for move
-    public string? File { get; set; }       // Single file for rename
-    public string? NewName { get; set; }    // New name for rename
-    public string? Content { get; set; }    // Content for create_file
-    public bool IncludeMetadata { get; set; } // For list_dir
-    public List<string>? Tags { get; set; } // Tags for tag command
-    public List<string>? Files { get; set; } // Files to move or tag
 }

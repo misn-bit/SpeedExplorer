@@ -398,7 +398,7 @@ public class BatchProcessingForm : Form
                                 selectedModel
                             );
 
-                            var commands = LlmService.ParseCommands(response);
+                            var commands = LlmParsers.ParseCommands(response);
 
                             if (commands.Count > 0)
                             {
