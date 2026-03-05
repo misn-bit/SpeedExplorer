@@ -471,14 +471,21 @@ static class Program
                         if (existing != null)
                         {
                             LogCrash("Pipe.Target", null, $"targetHandle=0x{existing.Handle.ToInt64():X} visible={existing.Visible} state={existing.WindowState}");
+                            bool wasVisible = existing.Visible;
+                            bool wasMinimized = existing.WindowState == FormWindowState.Minimized;
                             RestoreWindowForExternalOpen(existing);
-                            
-                            // Ensure visible first
-                            existing.Show();
-                            existing.Opacity = 1; 
-                            
-                            existing.Activate();
-                            existing.BringToFront();
+
+                            if (!existing.Visible)
+                                existing.Show();
+                            existing.Opacity = 1;
+
+                            // Avoid stealing focus for background-visible windows on external refresh/open events.
+                            // Bring to front only when restoring a hidden/minimized window.
+                            if (wasMinimized || !wasVisible)
+                            {
+                                existing.Activate();
+                                existing.BringToFront();
+                            }
 
                             // Now handle navigation once window is ready
                             existing.HandleExternalPath(startPath);

@@ -634,22 +634,9 @@ public class LlmVisionService
             if (parsed == null)
                 return null;
 
-            if (parsed.Translations.Count != cleanedBlocks.Count)
-            {
-                if (parsed.Translations.Count == 0 && !string.IsNullOrWhiteSpace(parsed.TranslatedFullText))
-                {
-                    parsed.Translations = new List<string> { parsed.TranslatedFullText };
-                }
-                else if (parsed.Translations.Count < cleanedBlocks.Count)
-                {
-                    while (parsed.Translations.Count < cleanedBlocks.Count)
-                        parsed.Translations.Add(parsed.TranslatedFullText);
-                }
-                else if (parsed.Translations.Count > cleanedBlocks.Count)
-                {
-                    parsed.Translations = parsed.Translations.Take(cleanedBlocks.Count).ToList();
-                }
-            }
+            parsed.Translations = NormalizeTranslationLines(parsed.Translations, parsed.TranslatedFullText, cleanedBlocks.Count);
+            if (string.IsNullOrWhiteSpace(parsed.TranslatedFullText) && parsed.Translations.Count > 0)
+                parsed.TranslatedFullText = string.Join(Environment.NewLine, parsed.Translations);
 
             return parsed;
         }
@@ -658,5 +645,86 @@ public class LlmVisionService
             LlmDebugLogger.LogError($"TranslateTextBlocks failed: {ex.Message}");
             return null;
         }
+    }
+
+    private static List<string> NormalizeTranslationLines(IReadOnlyList<string>? rawLines, string? fullText, int expectedCount)
+    {
+        var normalized = new List<string>();
+        if (rawLines != null)
+        {
+            for (int i = 0; i < rawLines.Count; i++)
+            {
+                string line = StripOrderedPrefix(rawLines[i] ?? "");
+                if (!string.IsNullOrWhiteSpace(line))
+                    normalized.Add(line);
+            }
+        }
+
+        var extractedFromFull = ExtractOrderedLines(fullText ?? "");
+        if (normalized.Count == 0 && extractedFromFull.Count > 0)
+            normalized.AddRange(extractedFromFull);
+
+        if (normalized.Count == 1 && expectedCount > 1 && extractedFromFull.Count > 1)
+        {
+            normalized.Clear();
+            normalized.AddRange(extractedFromFull);
+        }
+
+        if (normalized.Count > expectedCount)
+            return normalized.Take(expectedCount).ToList();
+
+        if (normalized.Count == expectedCount)
+            return normalized;
+
+        if (normalized.Count == 0 && !string.IsNullOrWhiteSpace(fullText))
+            normalized.Add(StripOrderedPrefix(fullText));
+
+        while (normalized.Count < expectedCount)
+            normalized.Add(string.Empty);
+
+        return normalized;
+    }
+
+    private static List<string> ExtractOrderedLines(string text)
+    {
+        var lines = new List<string>();
+        if (string.IsNullOrWhiteSpace(text))
+            return lines;
+
+        string normalized = text.Replace("\r\n", "\n").Replace('\r', '\n');
+        foreach (string raw in normalized.Split('\n'))
+        {
+            string line = StripOrderedPrefix(raw);
+            if (!string.IsNullOrWhiteSpace(line))
+                lines.Add(line);
+        }
+
+        return lines;
+    }
+
+    private static string StripOrderedPrefix(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return "";
+
+        string trimmed = text.Trim();
+        int i = 0;
+        while (i < trimmed.Length && char.IsDigit(trimmed[i]))
+            i++;
+
+        if (i > 0 && i < trimmed.Length)
+        {
+            char marker = trimmed[i];
+            if (marker == '.' || marker == ')' || marker == ':' || marker == '-')
+            {
+                i++;
+                while (i < trimmed.Length && char.IsWhiteSpace(trimmed[i]))
+                    i++;
+                if (i < trimmed.Length)
+                    return trimmed.Substring(i).Trim();
+            }
+        }
+
+        return trimmed;
     }
 }

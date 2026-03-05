@@ -9,6 +9,7 @@ using System.Linq;
 using System.Collections.Specialized;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Windows.Forms;
 using System.Runtime.InteropServices;
@@ -133,6 +134,8 @@ public class ImageViewerForm : Form
         public List<string> TranslationLines { get; set; } = new();
         public long TranslationSavedUtcTicks { get; set; }
     }
+
+    private const string OcrCacheJsonSeparator = "###__OCR_CACHE_JSON__###";
     
     private static readonly Color BackColor_Dark = Color.FromArgb(20, 20, 20);
     private static readonly Color ControlPanelColor = Color.FromArgb(40, 40, 40);
@@ -1037,7 +1040,8 @@ public class ImageViewerForm : Form
             if (!File.Exists(cachePath))
                 return null;
 
-            string json = File.ReadAllText(cachePath);
+            string raw = File.ReadAllText(cachePath);
+            string json = ExtractJsonPayload(raw);
             var envelope = JsonSerializer.Deserialize<OcrCacheEnvelope>(json);
             if (envelope == null)
                 return null;
@@ -1049,6 +1053,79 @@ public class ImageViewerForm : Form
         {
             return null;
         }
+    }
+
+    private static string ExtractJsonPayload(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            return raw;
+
+        int separatorIndex = raw.IndexOf(OcrCacheJsonSeparator, StringComparison.Ordinal);
+        if (separatorIndex >= 0)
+        {
+            int jsonStart = separatorIndex + OcrCacheJsonSeparator.Length;
+            while (jsonStart < raw.Length && (raw[jsonStart] == '\r' || raw[jsonStart] == '\n' || char.IsWhiteSpace(raw[jsonStart])))
+                jsonStart++;
+            if (jsonStart < raw.Length)
+                return raw.Substring(jsonStart);
+        }
+
+        int firstBrace = raw.IndexOf('{');
+        if (firstBrace > 0)
+            return raw.Substring(firstBrace);
+
+        return raw;
+    }
+
+    private static string BuildCleanOcrTextBlock(OcrCacheEnvelope envelope)
+    {
+        string ocrText = envelope.Result?.FullText?.Trim() ?? "";
+        if (string.IsNullOrWhiteSpace(ocrText))
+        {
+            ocrText = string.Join(
+                Environment.NewLine,
+                envelope.Result?.Blocks?
+                    .Select(b => b?.Text?.Trim())
+                    .Where(t => !string.IsNullOrWhiteSpace(t))
+                    .Cast<string>() ?? Array.Empty<string>());
+        }
+
+        string translated = envelope.TranslationFullText?.Trim() ?? "";
+        if (string.IsNullOrWhiteSpace(translated) && envelope.TranslationLines != null && envelope.TranslationLines.Count > 0)
+        {
+            translated = string.Join(
+                Environment.NewLine,
+                envelope.TranslationLines
+                    .Where(t => !string.IsNullOrWhiteSpace(t))
+                    .Select(t => t.Trim()));
+        }
+
+        var sb = new StringBuilder();
+        if (!string.IsNullOrWhiteSpace(ocrText))
+            sb.AppendLine(ocrText);
+        if (!string.IsNullOrWhiteSpace(translated))
+        {
+            if (sb.Length > 0)
+                sb.AppendLine();
+            sb.AppendLine(translated);
+        }
+
+        return sb.ToString().TrimEnd();
+    }
+
+    private static string SerializeOcrCacheEnvelopeForDisk(OcrCacheEnvelope envelope)
+    {
+        string json = JsonSerializer.Serialize(envelope, new JsonSerializerOptions
+        {
+            WriteIndented = false,
+            Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+        });
+
+        string cleanText = BuildCleanOcrTextBlock(envelope);
+        if (string.IsNullOrWhiteSpace(cleanText))
+            return $"{OcrCacheJsonSeparator}{Environment.NewLine}{json}";
+
+        return $"{cleanText}{Environment.NewLine}{Environment.NewLine}{OcrCacheJsonSeparator}{Environment.NewLine}{json}";
     }
 
     private static bool TryLoadSavedOcrEnvelope(string imagePath, out OcrCacheEnvelope? envelope)
@@ -1138,11 +1215,7 @@ public class ImageViewerForm : Form
             envelope.Result = ocr;
             envelope.TranslationLines ??= new List<string>();
 
-            string json = JsonSerializer.Serialize(envelope, new JsonSerializerOptions
-            {
-                WriteIndented = false
-            });
-            File.WriteAllText(cachePath, json);
+            File.WriteAllText(cachePath, SerializeOcrCacheEnvelopeForDisk(envelope));
         }
         catch (Exception ex)
         {
@@ -1186,11 +1259,7 @@ public class ImageViewerForm : Form
             if (string.IsNullOrWhiteSpace(envelope.TranslationFullText) && envelope.TranslationLines.Count > 0)
                 envelope.TranslationFullText = string.Join(Environment.NewLine, envelope.TranslationLines);
 
-            string json = JsonSerializer.Serialize(envelope, new JsonSerializerOptions
-            {
-                WriteIndented = false
-            });
-            File.WriteAllText(cachePath, json);
+            File.WriteAllText(cachePath, SerializeOcrCacheEnvelopeForDisk(envelope));
         }
         catch (Exception ex)
         {
@@ -1796,8 +1865,8 @@ public class ImageViewerForm : Form
             }
 
             string translated = translatedLines != null && i < translatedLines.Count && !string.IsNullOrWhiteSpace(translatedLines[i])
-                ? StripOrderedPrefix(translatedLines[i])
-                : block.Text;
+                ? NormalizeOverlayDisplayText(StripOrderedPrefix(translatedLines[i]))
+                : NormalizeOverlayDisplayText(block.Text);
 
             _overlayBlocks.Add(new OverlayTextBlock
             {
@@ -1828,7 +1897,7 @@ public class ImageViewerForm : Form
         {
             int sourceIndex = _overlayBlocks[i].SourceIndex;
             if (sourceIndex >= 0 && sourceIndex < translatedLines.Count && !string.IsNullOrWhiteSpace(translatedLines[sourceIndex]))
-                _overlayBlocks[i].DisplayText = StripOrderedPrefix(translatedLines[sourceIndex]);
+                _overlayBlocks[i].DisplayText = NormalizeOverlayDisplayText(StripOrderedPrefix(translatedLines[sourceIndex]));
         }
 
         _pictureBox.Invalidate();
@@ -1938,6 +2007,118 @@ public class ImageViewerForm : Form
         }
 
         return trimmed;
+    }
+
+    private static string NormalizeOverlayDisplayText(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return "";
+
+        string normalized = text.Replace("\r\n", "\n").Replace('\r', '\n').Trim();
+        if (normalized.IndexOf('\n') < 0)
+            return normalized;
+
+        var parts = normalized
+            .Split('\n')
+            .Select(static line => line.Trim())
+            .Where(static line => !string.IsNullOrWhiteSpace(line))
+            .ToList();
+
+        if (parts.Count <= 1)
+            return parts.Count == 1 ? parts[0] : "";
+
+        bool likelyVertical = IsLikelyVerticalText(parts);
+        var sb = new StringBuilder(parts[0]);
+        for (int i = 1; i < parts.Count; i++)
+        {
+            string next = parts[i];
+            char prevLast = GetLastNonWhitespace(sb);
+            char nextFirst = GetFirstNonWhitespace(next);
+
+            if (prevLast == '-' && char.IsLetterOrDigit(nextFirst))
+            {
+                if (sb.Length > 0)
+                    sb.Length--;
+                sb.Append(next);
+                continue;
+            }
+
+            if (likelyVertical || ShouldJoinWithoutSpace(prevLast, nextFirst))
+            {
+                sb.Append(next);
+            }
+            else
+            {
+                sb.Append(' ');
+                sb.Append(next);
+            }
+        }
+
+        return sb.ToString().Trim();
+    }
+
+    private static bool IsLikelyVerticalText(List<string> lines)
+    {
+        if (lines.Count < 3)
+            return false;
+
+        int shortLines = 0;
+        int cjkLines = 0;
+        for (int i = 0; i < lines.Count; i++)
+        {
+            string line = lines[i];
+            if (line.Length <= 2)
+                shortLines++;
+            if (line.Any(IsCjkChar))
+                cjkLines++;
+        }
+
+        return shortLines >= (int)Math.Ceiling(lines.Count * 0.70f) || cjkLines >= (int)Math.Ceiling(lines.Count * 0.70f);
+    }
+
+    private static bool ShouldJoinWithoutSpace(char left, char right)
+    {
+        if (left == '\0' || right == '\0')
+            return false;
+
+        if (IsCjkChar(left) || IsCjkChar(right))
+            return true;
+
+        if ("([{«“\"'".IndexOf(left) >= 0)
+            return true;
+        if (")]},.!?:;»”\"'".IndexOf(right) >= 0)
+            return true;
+
+        return false;
+    }
+
+    private static char GetFirstNonWhitespace(string text)
+    {
+        for (int i = 0; i < text.Length; i++)
+        {
+            if (!char.IsWhiteSpace(text[i]))
+                return text[i];
+        }
+        return '\0';
+    }
+
+    private static char GetLastNonWhitespace(StringBuilder text)
+    {
+        for (int i = text.Length - 1; i >= 0; i--)
+        {
+            if (!char.IsWhiteSpace(text[i]))
+                return text[i];
+        }
+        return '\0';
+    }
+
+    private static bool IsCjkChar(char ch)
+    {
+        return ch is >= '\u3040' and <= '\u30FF'   // Hiragana + Katakana
+            or >= '\u3400' and <= '\u4DBF'         // CJK Extension A
+            or >= '\u4E00' and <= '\u9FFF'         // CJK Unified Ideographs
+            or >= '\uF900' and <= '\uFAFF'         // CJK Compatibility Ideographs
+            or >= '\uAC00' and <= '\uD7AF';        // Hangul syllables
     }
 
     private static string RenderOcrResult(LlmImageTextResult ocr)
