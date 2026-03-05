@@ -93,6 +93,7 @@ public partial class MainForm
             lv.ColumnClick += _owner.ListView_ColumnClick;
             lv.MouseDoubleClick += _owner.ListView_MouseDoubleClick;
             lv.MouseDown += _owner.ListView_MouseDown;
+            lv.MouseUp += _owner.ListView_MouseUp;
             lv.MouseMove += _owner.ListView_MouseMove;
             lv.MouseLeave += (s, e) =>
             {
@@ -111,6 +112,7 @@ public partial class MainForm
             lv.DrawColumnHeader += _owner.ListView_DrawColumnHeader;
             lv.DrawItem += _owner.ListView_DrawItem;
             lv.DrawSubItem += _owner.ListView_DrawSubItem;
+            lv.Paint += _owner.ListView_Paint;
             lv.ContextMenuStrip = _owner._contextMenu;
 
             lv.ColumnWidthChanging += (s, e) =>

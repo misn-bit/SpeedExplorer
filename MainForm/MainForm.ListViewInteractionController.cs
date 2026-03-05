@@ -1,4 +1,5 @@
 using System;
+using System.ComponentModel;
 using System.Drawing;
 using System.IO;
 using System.Windows.Forms;
@@ -11,10 +12,35 @@ public partial class MainForm
     {
         private readonly MainForm _owner;
         private bool _virtualRepairPending;
+        private readonly System.Windows.Forms.Timer _middleAutoScrollTimer;
+        private bool _middleButtonDown;
+        private bool _middleMovementExceededOpenThreshold;
+        private bool _middleScrollEngaged;
+        private string? _pendingMiddleOpenPath;
+        private Point _middleAnchor;
+        private double _middleScrollAccumulator;
+        private int _middleIndicatorDeltaY;
+        private MiddleIndicatorOverlayForm? _middleIndicatorOverlay;
+
+        private const int WM_VSCROLL = 0x0115;
+        private const int SB_LINEUP = 0;
+        private const int SB_LINEDOWN = 1;
+        // Middle-scroll tuning:
+        // Dead-zone around click point where no scrolling occurs.
+        private const int MiddleDeadZonePx = 5;
+        // Movement threshold that cancels open-on-release.
+        private const int MiddleClickCancelOpenThresholdPx = 12;
+        // Speed curve tuning (lines per second).
+        private const double MiddleMinLinesPerSecond = 0.75;
+        private const double MiddleMaxLinesPerSecond = 1200.0;
+        // Higher = slower near center, faster near edges.
+        private const double MiddleSpeedGamma = 1.9;
 
         public ListViewInteractionController(MainForm owner)
         {
             _owner = owner;
+            _middleAutoScrollTimer = new System.Windows.Forms.Timer { Interval = 16 };
+            _middleAutoScrollTimer.Tick += MiddleAutoScrollTimer_Tick;
         }
 
         public void RetrieveVirtualItem(object? sender, RetrieveVirtualItemEventArgs e)
@@ -209,44 +235,60 @@ public partial class MainForm
             _ = sender;
             if (e.Button == MouseButtons.Middle)
             {
-                var hit = _owner._listView.HitTest(e.Location);
-                if (hit.Item != null && hit.Item.Tag is FileItem fi)
-                {
-                    // Search mode: middle-click opens item's location (file => parent folder, folder => itself).
-                    if (_owner.IsSearchMode)
-                    {
-                        string? targetPath = fi.IsDirectory ? fi.FullPath : Path.GetDirectoryName(fi.FullPath);
-                        if (string.IsNullOrWhiteSpace(targetPath))
-                            return;
-
-                        if (FileSystemService.IsAccessible(targetPath))
-                        {
-                            _owner._openTargetController.OpenPathByMiddleClickPreference(targetPath, activateTab: false);
-                        }
-                        else
-                        {
-                            _owner._statusLabel.Text = string.Format(Localization.T("status_access_denied"), targetPath);
-                        }
-                        return;
-                    }
-
-                    // Non-search mode: preserve existing behavior (folders only).
-                    if (fi.IsDirectory)
-                    {
-                        if (FileSystemService.IsAccessible(fi.FullPath))
-                        {
-                            _owner._openTargetController.OpenPathByMiddleClickPreference(fi.FullPath, activateTab: false);
-                        }
-                        else
-                        {
-                            _owner._statusLabel.Text = string.Format(Localization.T("status_access_denied"), fi.FullPath);
-                        }
-                    }
-                }
+                _middleButtonDown = true;
+                _middleMovementExceededOpenThreshold = false;
+                _middleScrollEngaged = false;
+                _middleAnchor = e.Location;
+                _pendingMiddleOpenPath = ResolveMiddleClickTargetPath(e.Location);
+                _middleScrollAccumulator = 0;
+                _middleIndicatorDeltaY = 0;
+                if (_owner._iconLoadService != null)
+                    _owner._iconLoadService.SuspendLowPriority = true;
+                EnsureMiddleIndicatorOverlay();
+                SyncMiddleOverlayBounds();
+                UpdateMiddleOverlayVisual();
+                _middleIndicatorOverlay?.Show(_owner);
+                _middleAutoScrollTimer.Start();
+                _owner._listView.Invalidate();
+                return;
             }
             else if (e.Button == MouseButtons.Left)
             {
                 // Native ListView marquee selection handles drag-select.
+            }
+        }
+
+        public void MouseUp(object? sender, MouseEventArgs e)
+        {
+            _ = sender;
+            if (e.Button != MouseButtons.Middle)
+                return;
+
+            _middleAutoScrollTimer.Stop();
+            if (_owner._iconLoadService != null)
+                _owner._iconLoadService.SuspendLowPriority = false;
+            bool shouldOpenTarget = _middleButtonDown &&
+                                    !_middleMovementExceededOpenThreshold &&
+                                    !_middleScrollEngaged &&
+                                    !string.IsNullOrWhiteSpace(_pendingMiddleOpenPath);
+            string? targetPath = _pendingMiddleOpenPath;
+            _middleButtonDown = false;
+            _pendingMiddleOpenPath = null;
+            _middleScrollAccumulator = 0;
+            _middleIndicatorDeltaY = 0;
+            HideMiddleOverlay();
+            _owner._listView.Invalidate();
+
+            if (!shouldOpenTarget || string.IsNullOrWhiteSpace(targetPath))
+                return;
+
+            if (FileSystemService.IsAccessible(targetPath))
+            {
+                _owner._openTargetController.OpenPathByMiddleClickPreference(targetPath, activateTab: false);
+            }
+            else
+            {
+                _owner._statusLabel.Text = string.Format(Localization.T("status_access_denied"), targetPath);
             }
         }
 
@@ -519,6 +561,13 @@ public partial class MainForm
         public void MouseMove(object? sender, MouseEventArgs e)
         {
             _ = sender;
+            if (_middleButtonDown &&
+                (Math.Abs(e.X - _middleAnchor.X) > MiddleClickCancelOpenThresholdPx ||
+                 Math.Abs(e.Y - _middleAnchor.Y) > MiddleClickCancelOpenThresholdPx))
+            {
+                _middleMovementExceededOpenThreshold = true;
+            }
+
             try
             {
                 var hit = _owner._listView.HitTest(e.Location);
@@ -623,6 +672,223 @@ public partial class MainForm
 
             if (!union.IsEmpty)
                 _owner._listView.Invalidate(union);
+        }
+
+        public void Paint(object? sender, PaintEventArgs e)
+            => _ = (sender, e);
+
+        private string? ResolveMiddleClickTargetPath(Point location)
+        {
+            var hit = _owner._listView.HitTest(location);
+            if (hit.Item?.Tag is not FileItem fi)
+                return null;
+
+            if (_owner.IsSearchMode)
+            {
+                string? targetPath = fi.IsDirectory ? fi.FullPath : Path.GetDirectoryName(fi.FullPath);
+                return string.IsNullOrWhiteSpace(targetPath) ? null : targetPath;
+            }
+
+            return fi.IsDirectory ? fi.FullPath : null;
+        }
+
+        private void MiddleAutoScrollTimer_Tick(object? sender, EventArgs e)
+        {
+            _ = sender;
+            if (!_middleButtonDown || _owner._listView == null || _owner._listView.IsDisposed || !_owner._listView.IsHandleCreated)
+                return;
+            if ((Control.MouseButtons & MouseButtons.Middle) == 0)
+            {
+                _middleAutoScrollTimer.Stop();
+                if (_owner._iconLoadService != null)
+                    _owner._iconLoadService.SuspendLowPriority = false;
+                _middleButtonDown = false;
+                _pendingMiddleOpenPath = null;
+                _middleScrollAccumulator = 0;
+                _middleIndicatorDeltaY = 0;
+                HideMiddleOverlay();
+                _owner._listView.Invalidate();
+                return;
+            }
+
+            Point p = _owner._listView.PointToClient(Cursor.Position);
+            int deltaY = p.Y - _middleAnchor.Y;
+            _middleIndicatorDeltaY = deltaY;
+            SyncMiddleOverlayBounds();
+            UpdateMiddleOverlayVisual();
+            int abs = Math.Abs(deltaY);
+            if (abs <= MiddleDeadZonePx)
+                return;
+
+            int availableToEdge = deltaY < 0
+                ? Math.Max(MiddleDeadZonePx + 1, _middleAnchor.Y)
+                : Math.Max(MiddleDeadZonePx + 1, _owner._listView.ClientSize.Height - _middleAnchor.Y);
+            int over = abs - MiddleDeadZonePx;
+            int availableOver = Math.Max(1, availableToEdge - MiddleDeadZonePx);
+            double linesPerSecond = ComputeMiddleScrollSpeed(over, availableOver);
+            double dt = _middleAutoScrollTimer.Interval / 1000.0;
+            _middleScrollAccumulator += linesPerSecond * dt;
+            int steps = (int)Math.Min(512, Math.Floor(_middleScrollAccumulator));
+            if (steps <= 0)
+                return;
+            _middleScrollAccumulator -= steps;
+
+            int scrollCmd = deltaY < 0 ? SB_LINEUP : SB_LINEDOWN;
+            for (int i = 0; i < steps; i++)
+                SendMessage(_owner._listView.Handle, WM_VSCROLL, scrollCmd, 0);
+
+            _middleScrollEngaged = true;
+            _owner._listView.Invalidate();
+        }
+
+        private static double ComputeMiddleScrollSpeed(int overPx, int availableOverPx)
+        {
+            if (overPx <= 0)
+                return 0;
+
+            double t = overPx / (double)Math.Max(1, availableOverPx);
+            if (t < 0) t = 0;
+            if (t > 1) t = 1;
+            t = Math.Pow(t, MiddleSpeedGamma);
+            return MiddleMinLinesPerSecond + (MiddleMaxLinesPerSecond - MiddleMinLinesPerSecond) * t;
+        }
+
+        private void EnsureMiddleIndicatorOverlay()
+        {
+            if (_middleIndicatorOverlay != null && !_middleIndicatorOverlay.IsDisposed)
+                return;
+            _middleIndicatorOverlay = new MiddleIndicatorOverlayForm();
+            if (_owner._listView != null && !_owner._listView.IsDisposed)
+                _middleIndicatorOverlay.BackgroundKeyColor = _owner._listView.BackColor;
+        }
+
+        private void SyncMiddleOverlayBounds()
+        {
+            if (_middleIndicatorOverlay == null || _middleIndicatorOverlay.IsDisposed || _owner._listView == null || _owner._listView.IsDisposed)
+                return;
+
+            Rectangle screenRect = _owner._listView.RectangleToScreen(_owner._listView.ClientRectangle);
+            if (_middleIndicatorOverlay.Bounds != screenRect)
+                _middleIndicatorOverlay.Bounds = screenRect;
+        }
+
+        private void UpdateMiddleOverlayVisual()
+        {
+            if (_middleIndicatorOverlay == null || _middleIndicatorOverlay.IsDisposed)
+                return;
+
+            _middleIndicatorOverlay.AnchorPoint = _middleAnchor;
+            _middleIndicatorOverlay.DeltaY = _middleIndicatorDeltaY;
+            _middleIndicatorOverlay.DeadZonePx = MiddleDeadZonePx;
+            _middleIndicatorOverlay.Invalidate();
+        }
+
+        private void HideMiddleOverlay()
+        {
+            if (_middleIndicatorOverlay != null && !_middleIndicatorOverlay.IsDisposed)
+                _middleIndicatorOverlay.Hide();
+        }
+
+        private sealed class MiddleIndicatorOverlayForm : Form
+        {
+            private const int WS_EX_TOOLWINDOW = 0x00000080;
+            private const int WS_EX_NOACTIVATE = 0x08000000;
+            private const int WS_EX_TRANSPARENT = 0x00000020;
+            private Color _backgroundKeyColor = Color.Black;
+
+            [Browsable(false)]
+            [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+            public Point AnchorPoint { get; set; }
+
+            [Browsable(false)]
+            [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+            public int DeltaY { get; set; }
+
+            [Browsable(false)]
+            [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+            public int DeadZonePx { get; set; }
+
+            [Browsable(false)]
+            [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+            public Color BackgroundKeyColor
+            {
+                get => _backgroundKeyColor;
+                set
+                {
+                    _backgroundKeyColor = value;
+                    BackColor = value;
+                    TransparencyKey = value;
+                }
+            }
+
+            public MiddleIndicatorOverlayForm()
+            {
+                FormBorderStyle = FormBorderStyle.None;
+                StartPosition = FormStartPosition.Manual;
+                ShowInTaskbar = false;
+                TopMost = false;
+                BackgroundKeyColor = Color.Black;
+                DoubleBuffered = true;
+            }
+
+            protected override bool ShowWithoutActivation => true;
+
+            protected override CreateParams CreateParams
+            {
+                get
+                {
+                    var cp = base.CreateParams;
+                    cp.ExStyle |= WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT;
+                    return cp;
+                }
+            }
+
+            protected override void OnPaint(PaintEventArgs e)
+            {
+                base.OnPaint(e);
+                var g = e.Graphics;
+                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+
+                int r = DeadZonePx;
+                var center = AnchorPoint;
+                bool upActive = DeltaY < -DeadZonePx;
+                bool downActive = DeltaY > DeadZonePx;
+
+                Color offWhite = Color.FromArgb(245, 242, 232);
+
+                const int circleDiameter = 12;
+                int circleX = center.X - (circleDiameter / 2);
+                int circleY = center.Y - (circleDiameter / 2);
+                using (var fill = new SolidBrush(offWhite))
+                    g.FillEllipse(fill, circleX, circleY, circleDiameter, circleDiameter);
+
+                const int triHalfW = 5;
+                const int triH = 7;
+                int tx = center.X;
+                int upBaseY = center.Y - r - 8;
+                int downBaseY = center.Y + r + 8;
+                using (var brush = new SolidBrush(offWhite))
+                {
+                    if (upActive)
+                    {
+                        g.FillPolygon(brush, new[]
+                        {
+                            new Point(tx, upBaseY - triH),
+                            new Point(tx - triHalfW, upBaseY),
+                            new Point(tx + triHalfW, upBaseY)
+                        });
+                    }
+                    else if (downActive)
+                    {
+                        g.FillPolygon(brush, new[]
+                        {
+                            new Point(tx, downBaseY + triH),
+                            new Point(tx - triHalfW, downBaseY),
+                            new Point(tx + triHalfW, downBaseY)
+                        });
+                    }
+                }
+            }
         }
 
         public void KeyDown(object? sender, KeyEventArgs e)

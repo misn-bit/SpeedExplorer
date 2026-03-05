@@ -202,6 +202,7 @@ public partial class MainForm
                     InvalidateSidebarRow(oldNode);
                 }
             };
+            tree.MouseWheel += (s, e) => ScrollSidebarByWheel(tree, e.Delta);
 
             tree.ContextMenuStrip = contextMenu;
 
@@ -227,6 +228,30 @@ public partial class MainForm
 
             try { ShowScrollBar(tree.Handle, SB_HORZ, false); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
             try { ShowScrollBar(tree.Handle, SB_VERT, AppSettings.Current.ShowSidebarVerticalScrollbar); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+        }
+
+        private static void ScrollSidebarByWheel(TreeView tree, int delta)
+        {
+            if (delta == 0) return;
+            if (tree.Nodes.Count == 0) return;
+
+            int linesPerNotch = SystemInformation.MouseWheelScrollLines;
+            if (linesPerNotch <= 0) return;
+
+            int notches = Math.Max(1, Math.Abs(delta) / 120);
+            int lines = Math.Max(1, linesPerNotch * notches);
+
+            var node = tree.TopNode ?? tree.Nodes[0];
+            for (int i = 0; i < lines; i++)
+            {
+                var next = delta > 0 ? node.PrevVisibleNode : node.NextVisibleNode;
+                if (next == null)
+                    break;
+                node = next;
+            }
+
+            if (tree.TopNode != node)
+                tree.TopNode = node;
         }
 
         public void PopulateSidebar()

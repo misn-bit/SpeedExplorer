@@ -5,6 +5,7 @@ using System.Linq;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
 namespace SpeedExplorer;
@@ -38,7 +39,7 @@ public class LlmAgentRunner
         string? modelOverride = null)
     {
         var settings = AppSettings.Current;
-        int maxLoops = Math.Clamp(settings.LlmAgentMaxLoops, 1, 10);
+        int maxLoops = Math.Clamp(settings.LlmAgentMaxLoops, 1, 100);
         string model = string.IsNullOrWhiteSpace(modelOverride) ? settings.LlmModelName : modelOverride;
         string requestUrl = LlmModelManager.GetCompletionsApiUrl(settings.LlmChatApiUrl, apiUrl);
         double agentTemperature = Math.Min(settings.LlmTemperature, 0.3);
@@ -56,8 +57,7 @@ public class LlmAgentRunner
             userObjective = "(no user request provided)";
 
         string systemPrompt = LlmPromptBuilder.GetAgenticSystemPrompt(taggingEnabled, searchEnabled);
-        string previousLoopSummary = "(none)";
-        string previousLoopFeedback = "";
+        string accumulatedExecutionChain = "(none)";
         LlmAgentContextPolicy? selectedContextPolicy = null;
         bool contextPolicyLocked = false;
         string cachedInjectedFileContext = "";
@@ -106,8 +106,7 @@ public class LlmAgentRunner
             string loopState = BuildAgentLoopStateMessage(
                 loopCount,
                 maxLoops,
-                previousLoopSummary,
-                previousLoopFeedback,
+                accumulatedExecutionChain,
                 selectedContextPolicy,
                 injectedFileContextThisLoop);
             string loopSystemContent = BuildAgentSystemMessage(
@@ -243,10 +242,7 @@ public class LlmAgentRunner
             var commandsToExecute = ApplyAgentPerLoopCommandPolicy(
                 agentResp.Commands,
                 out string policyNote,
-                out bool policySuppressedAllCommands,
-                selectedContextPolicy,
-                currentDirectory,
-                injectedFileContextThisLoop);
+                out bool policySuppressedAllCommands);
             if (!string.IsNullOrWhiteSpace(policyNote))
                 progress?.Report($"🧭 {policyNote}");
 
@@ -269,7 +265,8 @@ public class LlmAgentRunner
                 allOps.AddRange(ops);
                 
                 string feedback = BuildAgentFeedbackForHistory(feedbackList);
-                previousLoopFeedback = feedback;
+                string currentLoopSummary = BuildAgentLoopCarrySummary(loopCount, agentResp, commandsToExecute, loopOpsCount, policyNote);
+                accumulatedExecutionChain = AppendExecutionChain(accumulatedExecutionChain, loopCount, currentLoopSummary, feedback);
                 runNotes.Add($"Loop {loopCount}: Executed {commandsToExecute.Count} command(s); feedback items: {feedbackList.Count}; new ops: {loopOpsCount}.");
                 progress?.Report($"✅ Feedback received ({feedbackList.Count} items).");
             }
@@ -280,10 +277,10 @@ public class LlmAgentRunner
                 if (!string.IsNullOrWhiteSpace(policyNote))
                     noExec.AppendLine($"- [policy] {policyNote}");
                 noExec.AppendLine("- No commands were executed in the previous loop.");
-                previousLoopFeedback = noExec.ToString().TrimEnd();
+                string noExecFeedback = noExec.ToString().TrimEnd();
+                string currentLoopSummary = BuildAgentLoopCarrySummary(loopCount, agentResp, commandsToExecute, loopOpsCount, policyNote);
+                accumulatedExecutionChain = AppendExecutionChain(accumulatedExecutionChain, loopCount, currentLoopSummary, noExecFeedback);
             }
-
-            previousLoopSummary = BuildAgentLoopCarrySummary(loopCount, agentResp, commandsToExecute, loopOpsCount, policyNote);
 
             if (hasWriteCommands)
             {
@@ -403,8 +400,7 @@ public class LlmAgentRunner
 
             string closureState = BuildAgentClosureStateMessage(
                 maxLoops,
-                previousLoopSummary,
-                previousLoopFeedback,
+                accumulatedExecutionChain,
                 effectiveClosurePolicy,
                 injectedFileContextThisLoop);
             string closureSystemContent = BuildAgentSystemMessage(
@@ -448,10 +444,7 @@ public class LlmAgentRunner
                     var closureCommands = ApplyAgentPerLoopCommandPolicy(
                         closureResp.Commands,
                         out string closurePolicyNote,
-                        out bool closureSuppressedAllCommands,
-                        effectiveClosurePolicy,
-                        currentDirectory,
-                        injectedFileContextThisLoop);
+                        out bool closureSuppressedAllCommands);
 
                     int closureOpsCount = 0;
                     if (closureCommands.Any())
@@ -468,15 +461,17 @@ public class LlmAgentRunner
                         closureOpsCount = closureOps.Count;
                         allOps.AddRange(closureOps);
                         string closureFeedback = BuildAgentFeedbackForHistory(closureFeedbackList);
-                        previousLoopFeedback = closureFeedback;
+                        string closureSummary = BuildAgentLoopCarrySummary(maxLoops + 1, closureResp, closureCommands, closureOpsCount, closurePolicyNote);
+                        accumulatedExecutionChain = AppendExecutionChain(accumulatedExecutionChain, maxLoops + 1, closureSummary, closureFeedback);
                         runNotes.Add($"Closure verification: Executed {closureCommands.Count} command(s); feedback items: {closureFeedbackList.Count}; new ops: {closureOpsCount}.");
                     }
                     else
                     {
+                        string closureNoExecFeedback = "System Execution Feedback:\n- No commands were executed in closure verification.";
+                        string closureSummary = BuildAgentLoopCarrySummary(maxLoops + 1, closureResp, closureCommands, closureOpsCount, closurePolicyNote);
+                        accumulatedExecutionChain = AppendExecutionChain(accumulatedExecutionChain, maxLoops + 1, closureSummary, closureNoExecFeedback);
                         runNotes.Add("Closure verification: No commands executed.");
                     }
-
-                    previousLoopSummary = BuildAgentLoopCarrySummary(maxLoops + 1, closureResp, closureCommands, closureOpsCount, closurePolicyNote);
 
                     if (closureResp.IsDone)
                     {
@@ -679,8 +674,7 @@ public class LlmAgentRunner
     private static string BuildAgentLoopStateMessage(
         int loopCount,
         int maxLoops,
-        string previousSummary,
-        string previousFeedback,
+        string executionChain,
         LlmAgentContextPolicy? contextPolicy,
         bool injectedFileContextThisLoop)
     {
@@ -707,18 +701,14 @@ public class LlmAgentRunner
             sb.AppendLine("- persistent file context: OFF.");
         }
         sb.AppendLine();
-        sb.AppendLine("Previous loop summary:");
-        sb.AppendLine(string.IsNullOrWhiteSpace(previousSummary) ? "(none)" : previousSummary);
-        sb.AppendLine();
-        sb.AppendLine("Previous loop execution feedback:");
-        sb.AppendLine(string.IsNullOrWhiteSpace(previousFeedback) ? "(none)" : previousFeedback);
+        sb.AppendLine("Accumulated execution chain:");
+        sb.AppendLine(string.IsNullOrWhiteSpace(executionChain) ? "(none)" : executionChain);
         return sb.ToString().TrimEnd();
     }
 
     private static string BuildAgentClosureStateMessage(
         int maxLoops,
-        string previousSummary,
-        string previousFeedback,
+        string executionChain,
         LlmAgentContextPolicy? contextPolicy,
         bool injectedFileContextThisLoop)
     {
@@ -736,11 +726,107 @@ public class LlmAgentRunner
         }
 
         sb.AppendLine();
-        sb.AppendLine("Previous loop summary:");
-        sb.AppendLine(string.IsNullOrWhiteSpace(previousSummary) ? "(none)" : previousSummary);
+        sb.AppendLine("Accumulated execution chain:");
+        sb.AppendLine(string.IsNullOrWhiteSpace(executionChain) ? "(none)" : executionChain);
+        return sb.ToString().TrimEnd();
+    }
+
+    private static string AppendExecutionChain(string existingChain, int loopNumber, string loopSummary, string loopFeedback)
+    {
+        var sb = new StringBuilder();
+        string normalizedExistingChain = NormalizeHistoricalExecutionChain(existingChain);
+        if (!string.IsNullOrWhiteSpace(normalizedExistingChain) && !string.Equals(normalizedExistingChain, "(none)", StringComparison.Ordinal))
+        {
+            sb.AppendLine(normalizedExistingChain.TrimEnd());
+            sb.AppendLine();
+        }
+
+        sb.AppendLine($"=== Loop {loopNumber} ===");
+        sb.AppendLine("Summary:");
+        sb.AppendLine(string.IsNullOrWhiteSpace(loopSummary) ? "(none)" : loopSummary.TrimEnd());
         sb.AppendLine();
-        sb.AppendLine("Previous loop execution feedback:");
-        sb.AppendLine(string.IsNullOrWhiteSpace(previousFeedback) ? "(none)" : previousFeedback);
+        sb.AppendLine("Feedback:");
+        sb.AppendLine(string.IsNullOrWhiteSpace(loopFeedback) ? "(none)" : loopFeedback.TrimEnd());
+        return sb.ToString().TrimEnd();
+    }
+
+    private static string NormalizeHistoricalExecutionChain(string chain)
+    {
+        if (string.IsNullOrWhiteSpace(chain) || string.Equals(chain, "(none)", StringComparison.Ordinal))
+            return chain;
+
+        var sections = SplitExecutionChainSections(chain);
+        if (sections.Count <= 1)
+            return chain;
+
+        for (int i = 0; i < sections.Count - 1; i++)
+            sections[i] = CompactListDirDetailsInSection(sections[i]);
+
+        return string.Join(Environment.NewLine + Environment.NewLine, sections.Select(s => s.TrimEnd()));
+    }
+
+    private static List<string> SplitExecutionChainSections(string chain)
+    {
+        var result = new List<string>();
+        var matches = Regex.Matches(chain, @"(?m)^=== Loop \d+ ===\s*$");
+        if (matches.Count == 0)
+        {
+            result.Add(chain);
+            return result;
+        }
+
+        for (int i = 0; i < matches.Count; i++)
+        {
+            int start = matches[i].Index;
+            int end = i + 1 < matches.Count ? matches[i + 1].Index : chain.Length;
+            result.Add(chain.Substring(start, end - start).TrimEnd());
+        }
+
+        return result;
+    }
+
+    private static string CompactListDirDetailsInSection(string section)
+    {
+        var normalized = section.Replace("\r\n", "\n").Replace('\r', '\n');
+        var lines = normalized.Split('\n');
+        var sb = new StringBuilder();
+        bool skippingListDirDetails = false;
+
+        foreach (var line in lines)
+        {
+            string trimmed = line.TrimStart();
+
+            if (!skippingListDirDetails &&
+                (trimmed.StartsWith("- [list_dir ", StringComparison.OrdinalIgnoreCase) ||
+                 trimmed.StartsWith("[list_dir ", StringComparison.OrdinalIgnoreCase)))
+            {
+                int idx = line.IndexOf("[list_dir ", StringComparison.OrdinalIgnoreCase);
+                string listDirHeader = idx >= 0 ? line.Substring(idx).TrimEnd() : trimmed;
+                string prefix = trimmed.StartsWith("- ", StringComparison.Ordinal) ? "- " : "";
+                sb.AppendLine($"{prefix}{listDirHeader} (details omitted from older loop feedback)");
+                skippingListDirDetails = true;
+                continue;
+            }
+
+            if (skippingListDirDetails)
+            {
+                if (trimmed.StartsWith("- ", StringComparison.Ordinal) ||
+                    trimmed.StartsWith("Write commands attempted:", StringComparison.OrdinalIgnoreCase) ||
+                    trimmed.StartsWith("System Execution Feedback:", StringComparison.OrdinalIgnoreCase) ||
+                    trimmed.StartsWith("Summary:", StringComparison.OrdinalIgnoreCase) ||
+                    trimmed.StartsWith("Feedback:", StringComparison.OrdinalIgnoreCase))
+                {
+                    skippingListDirDetails = false;
+                }
+                else
+                {
+                    continue;
+                }
+            }
+
+            sb.AppendLine(line);
+        }
+
         return sb.ToString().TrimEnd();
     }
 
@@ -771,25 +857,6 @@ public class LlmAgentRunner
         }
 
         return sb.ToString().TrimEnd();
-    }
-
-    private static bool ShouldSuppressListDirCommand(
-        LlmCommand cmd,
-        LlmAgentContextPolicy? contextPolicy,
-        string currentDirectory,
-        bool injectedFileContextThisLoop)
-    {
-        if (!injectedFileContextThisLoop || contextPolicy == null || !contextPolicy.UseFileContext)
-            return false;
-        if (string.Equals(contextPolicy.Level, "none", StringComparison.OrdinalIgnoreCase))
-            return false;
-
-        if (cmd.IncludeMetadata && !string.Equals(contextPolicy.Level, "metadata", StringComparison.OrdinalIgnoreCase))
-            return false;
-
-        string listPath = ResolveAgentContextPath(currentDirectory, cmd.Path);
-        string contextPath = ResolveAgentContextPath(currentDirectory, contextPolicy.Path);
-        return string.Equals(listPath, contextPath, StringComparison.OrdinalIgnoreCase);
     }
 
     private static LlmAgentContextPolicy DetermineFirstLoopContextPolicy(LlmAgentResponse response, string? userObjective)
@@ -984,7 +1051,7 @@ public class LlmAgentRunner
         if (!string.IsNullOrWhiteSpace(policyNote))
             sb.AppendLine($"- policy: {policyNote}");
         if (!string.IsNullOrWhiteSpace(response.Plan))
-            sb.AppendLine($"- plan: {TrimForHistory(response.Plan, 220)}");
+            sb.AppendLine($"- plan: {TrimForHistory(response.Plan, 1200)}");
         sb.AppendLine($"- commands: {SummarizeAgentCommands(executedCommands)}");
         sb.AppendLine($"- new_ops: {newOps}");
         sb.AppendLine($"- is_done: {response.IsDone}");
@@ -1164,10 +1231,7 @@ public class LlmAgentRunner
     private static List<LlmCommand> ApplyAgentPerLoopCommandPolicy(
         List<LlmCommand> commands,
         out string policyNote,
-        out bool suppressedAllByPolicy,
-        LlmAgentContextPolicy? contextPolicy,
-        string currentDirectory,
-        bool injectedFileContextThisLoop)
+        out bool suppressedAllByPolicy)
     {
         policyNote = "";
         suppressedAllByPolicy = false;
@@ -1177,21 +1241,11 @@ public class LlmAgentRunner
 
         var selected = new List<LlmCommand>();
         int skipped = 0;
-        bool hasMoveWrite = false;
         bool otherWriteKept = false;
-        int suppressedListDir = 0;
 
         foreach (var cmd in safeCommands)
         {
             string name = (cmd.Cmd ?? "").Trim().ToLowerInvariant();
-
-            if (name == "list_dir" &&
-                ShouldSuppressListDirCommand(cmd, contextPolicy, currentDirectory, injectedFileContextThisLoop))
-            {
-                skipped++;
-                suppressedListDir++;
-                continue;
-            }
 
             if (IsReadOnlyAgentCommand(name))
             {
@@ -1208,7 +1262,6 @@ public class LlmAgentRunner
             if (name == "move")
             {
                 selected.Add(cmd);
-                hasMoveWrite = true;
                 continue;
             }
 
@@ -1228,14 +1281,10 @@ public class LlmAgentRunner
             if (selected.Count == 0)
             {
                 suppressedAllByPolicy = true;
-                if (suppressedListDir > 0)
-                    policyNote = $"Suppressed all commands because injected context already covered the {suppressedListDir} requested list_dir operation(s).";
-                else
-                    policyNote = $"Suppressed all operations (enforcing incremental workflow policy).";
+                policyNote = $"Suppressed all operations (enforcing incremental workflow policy).";
             }
             else
             {
-                int keptWrites = (hasMoveWrite ? 1 : 0) + (otherWriteKept ? 1 : 0);
                 policyNote = $"Allowed read-only, create_folder, and up to one write block. Skipped {skipped} subsequent operation(s).";
             }
         }

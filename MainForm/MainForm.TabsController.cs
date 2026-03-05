@@ -119,7 +119,7 @@ public partial class MainForm
             RebuildTabStrip();
         }
 
-        public void HandleExternalPath(string? rawPath)
+        public void HandleExternalPath(string? rawPath, bool openImageViewer = true)
         {
             if (Program.IsExplorerShellArgument(rawPath))
             {
@@ -136,7 +136,7 @@ public partial class MainForm
                     rawPath = parsed;
             }
 
-            var imagePathForViewer = _owner.ResolveImagePathForBuiltInViewer(rawPath);
+            var imagePathForViewer = openImageViewer ? _owner.ResolveImagePathForBuiltInViewer(rawPath) : null;
 
             var normalized = _owner.NormalizeStartupPath(rawPath, out var selectPaths, inferRecentSelectionForDirectory: true);
             if (_owner._listView != null && !_owner._listView.IsDisposed)
@@ -230,7 +230,11 @@ public partial class MainForm
             SwitchToTab(newIndex, force: true, saveCurrent: false);
         }
 
-        public void OpenPathInNewTab(string path, bool activate = true)
+        public void OpenPathInNewTab(
+            string path,
+            bool activate = true,
+            Stack<string>? inheritedBackHistory = null,
+            Stack<string>? inheritedForwardHistory = null)
         {
             SaveCurrentTabState();
             var initialSort = ResolveInitialSortForPath(path);
@@ -241,7 +245,9 @@ public partial class MainForm
                 Title = GetTabTitleForPath(path),
                 SortColumn = initialSort.Column,
                 SortDirection = initialSort.Direction,
-                TaggedFilesOnTop = initialSort.TaggedOnTop
+                TaggedFilesOnTop = initialSort.TaggedOnTop,
+                BackHistory = inheritedBackHistory != null ? CloneStack(inheritedBackHistory) : new Stack<string>(),
+                ForwardHistory = inheritedForwardHistory != null ? CloneStack(inheritedForwardHistory) : new Stack<string>()
             };
             _tabs.Add(tab);
             int newIndex = _tabs.Count - 1;
@@ -320,8 +326,8 @@ public partial class MainForm
             tab.CurrentShellId = ShellNavigationController.IsShellIdPath(_owner._currentPath) ? _owner._currentPath : "";
             tab.Title = GetTabTitleForPath(_owner._currentPath);
             tab.CachedPath = _owner._currentPath;
-            tab.CachedItems = _owner._items;
-            tab.CachedAllItems = _owner._allItems;
+            tab.CachedItems = new List<FileItem>(_owner._items);
+            tab.CachedAllItems = new List<FileItem>(_owner._allItems);
             tab.HasCachedSnapshot = true;
             CaptureListState(tab);
         }
@@ -552,18 +558,18 @@ public partial class MainForm
                     continue;
 
                 tab.CachedPath = path;
-                tab.CachedAllItems = allItems;
+                tab.CachedAllItems = new List<FileItem>(allItems);
                 tab.HasCachedSnapshot = true;
 
                 if (tab.SortColumn == _owner._sortColumn &&
                     tab.SortDirection == _owner._sortDirection &&
                     tab.TaggedFilesOnTop == _owner._taggedFilesOnTop)
                 {
-                    tab.CachedItems = items;
+                    tab.CachedItems = new List<FileItem>(items);
                     continue;
                 }
 
-                var sorted = new List<FileItem>(allItems);
+                var sorted = new List<FileItem>(tab.CachedAllItems);
                 FileSystemService.SortItems(sorted, tab.SortColumn, tab.SortDirection, tab.TaggedFilesOnTop);
                 tab.CachedItems = sorted;
             }

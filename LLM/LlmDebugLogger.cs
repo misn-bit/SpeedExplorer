@@ -2,7 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text.Encodings.Web;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 
 namespace SpeedExplorer;
@@ -14,6 +16,11 @@ public static class LlmDebugLogger
 {
     private static readonly string LogPath = Path.Combine(GetAppDirectory(), "llm_debug.log");
     private static readonly object _lock = new object();
+    private static readonly JsonSerializerOptions LogJsonOptions = new()
+    {
+        WriteIndented = true,
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+    };
 
     public static void LogRequest(string currentDir, string userPrompt, string systemPrompt, string fullRequestJson, IEnumerable<string>? imagePaths = null, IEnumerable<LlmImageStats>? imageStats = null)
     {
@@ -52,7 +59,7 @@ public static class LlmDebugLogger
 
         sb.AppendLine($"System Prompt: {systemPrompt}");
         sb.AppendLine("Full Request JSON (Images Redacted):");
-        sb.AppendLine(sanitizedJson);
+        sb.AppendLine(NormalizeJsonForLog(sanitizedJson));
         Write(sb.ToString());
     }
 
@@ -62,11 +69,11 @@ public static class LlmDebugLogger
         sb.AppendLine();
         sb.AppendLine($"=== LLM RESPONSE [{DateTime.Now:yyyy-MM-dd HH:mm:ss}] ===");
         sb.AppendLine("Raw Response:");
-        sb.AppendLine(rawResponse);
+        sb.AppendLine(NormalizeJsonForLog(rawResponse));
         if (!string.IsNullOrEmpty(parsedCommands))
         {
             sb.AppendLine("Parsed Commands:");
-            sb.AppendLine(parsedCommands);
+            sb.AppendLine(NormalizeJsonForLog(parsedCommands));
         }
         Write(sb.ToString());
     }
@@ -108,6 +115,27 @@ public static class LlmDebugLogger
                     File.Delete(LogPath);
             }
             catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+        }
+    }
+
+    private static string NormalizeJsonForLog(string input)
+    {
+        if (string.IsNullOrWhiteSpace(input))
+            return input;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(input);
+            return JsonSerializer.Serialize(doc.RootElement, LogJsonOptions);
+        }
+        catch
+        {
+            // Fallback: decode basic Unicode escapes in plain text payloads.
+            return Regex.Replace(input, @"\\u([0-9a-fA-F]{4})", m =>
+            {
+                int code = Convert.ToInt32(m.Groups[1].Value, 16);
+                return char.ConvertFromUtf32(code);
+            });
         }
     }
 

@@ -53,7 +53,7 @@ public class AppSettings
     public bool ShowSidebarVerticalScrollbar { get; set; } = true;
     public bool ShowSidebar { get; set; } = true;
     public bool RunAtStartup { get; set; } = false;
-    public bool StartMinimized { get; set; } = false;
+    public bool RunInBackground { get; set; } = true;
     public bool ShowTrayIcon { get; set; } = true;
     public bool EnableShellContextMenu { get; set; } = false;
     public bool UseWindowsContextMenu { get; set; } = false;

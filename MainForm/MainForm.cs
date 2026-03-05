@@ -484,7 +484,8 @@ public partial class MainForm : Form
     private string NormalizeStartupPath(string? input, out List<string>? selectPaths, bool inferRecentSelectionForDirectory = false)
         => _startupIconController.NormalizeStartupPath(input, out selectPaths, inferRecentSelectionForDirectory);
 
-    public void HandleExternalPath(string? rawPath) => _tabsController.HandleExternalPath(rawPath);
+    public void HandleExternalPath(string? rawPath) => _tabsController.HandleExternalPath(rawPath, openImageViewer: true);
+    public void HandleExternalPathNoViewer(string? rawPath) => _tabsController.HandleExternalPath(rawPath, openImageViewer: false);
 
     private void AddNewTab() => _tabsController.AddNewTab();
 
@@ -601,6 +602,9 @@ public partial class MainForm : Form
     private void ListView_MouseDown(object? sender, MouseEventArgs e)
         => _listViewInteractionController.MouseDown(sender, e);
 
+    private void ListView_MouseUp(object? sender, MouseEventArgs e)
+        => _listViewInteractionController.MouseUp(sender, e);
+
     private ListViewItem BuildListViewItem(FileItem item, bool includeSubItems)
         => _listViewInteractionController.BuildListViewItem(item, includeSubItems);
 
@@ -638,5 +642,8 @@ public partial class MainForm : Form
 
     private void ListView_DrawSubItem(object? sender, DrawListViewSubItemEventArgs e)
         => _listViewRenderController.DrawSubItem(sender, e);
+
+    private void ListView_Paint(object? sender, PaintEventArgs e)
+        => _listViewInteractionController.Paint(sender, e);
 
 }

@@ -258,7 +258,9 @@ public partial class MainForm
             {
                 if (e.Button != MouseButtons.Middle || _owner._nav.BackHistory.Count == 0)
                     return;
-                OpenPathWithMiddleClickPreference(_owner._nav.BackHistory.Peek());
+                OpenPathWithMiddleClickPreference(
+                    _owner._nav.BackHistory.Peek(),
+                    OpenTargetController.NewTabHistoryMode.BackButtonTarget);
             };
 
             _owner._fwdBtn = CreateNavButton(">", Localization.T("tooltip_forward"));
@@ -268,7 +270,9 @@ public partial class MainForm
             {
                 if (e.Button != MouseButtons.Middle || _owner._nav.ForwardHistory.Count == 0)
                     return;
-                OpenPathWithMiddleClickPreference(_owner._nav.ForwardHistory.Peek());
+                OpenPathWithMiddleClickPreference(
+                    _owner._nav.ForwardHistory.Peek(),
+                    OpenTargetController.NewTabHistoryMode.ForwardButtonTarget);
             };
 
             _owner._upBtn = CreateNavButton("^", Localization.T("tooltip_up"));
@@ -611,7 +615,9 @@ public partial class MainForm
             return parent?.FullName ?? ThisPcPath;
         }
 
-        private void OpenPathWithMiddleClickPreference(string? path)
+        private void OpenPathWithMiddleClickPreference(
+            string? path,
+            OpenTargetController.NewTabHistoryMode historyMode = OpenTargetController.NewTabHistoryMode.None)
         {
             if (string.IsNullOrWhiteSpace(path))
                 return;
@@ -622,7 +628,7 @@ public partial class MainForm
                 return;
             }
 
-            _owner._openTargetController.OpenPathByMiddleClickPreference(path, activateTab: false);
+            _owner._openTargetController.OpenPathByMiddleClickPreference(path, activateTab: false, historyMode);
         }
     }
 }

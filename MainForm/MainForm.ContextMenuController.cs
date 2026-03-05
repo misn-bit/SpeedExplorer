@@ -15,9 +15,6 @@ public partial class MainForm
 
         public ContextMenuStrip Menu { get; }
 
-        private ToolStripSeparator _sep4 = null!;
-        private ToolStripMenuItem _shellWinItem = null!;
-
         private readonly Font _boldFont;
         private readonly ToolStripMenuItem _openItem;
         private ToolStripMenuItem _openWithItem;

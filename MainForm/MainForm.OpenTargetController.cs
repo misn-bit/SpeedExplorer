@@ -1,3 +1,5 @@
+using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 
@@ -7,6 +9,13 @@ public partial class MainForm
 {
     private sealed class OpenTargetController
     {
+        public enum NewTabHistoryMode
+        {
+            None,
+            BackButtonTarget,
+            ForwardButtonTarget
+        }
+
         private readonly MainForm _owner;
 
         public OpenTargetController(MainForm owner)
@@ -77,24 +86,58 @@ public partial class MainForm
             }
         }
 
-        public void OpenPathInNewTab(string path, bool activate = true)
+        public void OpenPathInNewTab(
+            string path,
+            bool activate = true,
+            Stack<string>? inheritedBackHistory = null,
+            Stack<string>? inheritedForwardHistory = null)
         {
-            _owner._tabsController.OpenPathInNewTab(path, activate);
+            _owner._tabsController.OpenPathInNewTab(path, activate, inheritedBackHistory, inheritedForwardHistory);
         }
 
-        public void OpenPathByMiddleClickPreference(string path, bool activateTab = false)
+        public void OpenPathByMiddleClickPreference(
+            string path,
+            bool activateTab = false,
+            NewTabHistoryMode historyMode = NewTabHistoryMode.None)
         {
             if (string.IsNullOrWhiteSpace(path))
                 return;
 
             if (AppSettings.Current.MiddleClickOpensNewTab)
             {
-                OpenPathInNewTab(path, activateTab);
+                if (historyMode == NewTabHistoryMode.None)
+                {
+                    OpenPathInNewTab(path, activateTab);
+                    return;
+                }
+
+                var back = CloneHistory(_owner._nav.BackHistory);
+                var forward = CloneHistory(_owner._nav.ForwardHistory);
+
+                if (historyMode == NewTabHistoryMode.BackButtonTarget)
+                {
+                    if (back.Count > 0 && string.Equals(back.Peek(), path, StringComparison.OrdinalIgnoreCase))
+                        back.Pop();
+                    if (!string.IsNullOrWhiteSpace(_owner._currentPath))
+                        forward.Push(_owner._currentPath);
+                }
+                else if (historyMode == NewTabHistoryMode.ForwardButtonTarget)
+                {
+                    if (!string.IsNullOrWhiteSpace(_owner._currentPath))
+                        back.Push(_owner._currentPath);
+                    if (forward.Count > 0 && string.Equals(forward.Peek(), path, StringComparison.OrdinalIgnoreCase))
+                        forward.Pop();
+                }
+
+                OpenPathInNewTab(path, activateTab, back, forward);
             }
             else
             {
                 Program.MultiWindowContext.Instance.ShowNext(new MainForm(path));
             }
         }
+
+        private static Stack<string> CloneHistory(Stack<string> source)
+            => new(source.Reverse());
     }
 }

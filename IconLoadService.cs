@@ -25,6 +25,7 @@ internal sealed class IconLoadService : IDisposable
     private readonly AutoResetEvent _signal = new(false);
 
     private volatile bool _stop;
+    private volatile bool _suspendLowPriority;
     private int _generation;
     private int _flushScheduled;
     private Thread? _worker;
@@ -159,14 +160,29 @@ internal sealed class IconLoadService : IDisposable
 
     public int QueueCount => _highQueue.Count + _lowQueue.Count;
 
+    public bool SuspendLowPriority
+    {
+        get => _suspendLowPriority;
+        set
+        {
+            _suspendLowPriority = value;
+            if (!value)
+                _signal.Set();
+        }
+    }
+
     private void WorkerLoop()
     {
         while (!_stop)
         {
-            if (!_highQueue.TryDequeue(out var req) && !_lowQueue.TryDequeue(out req))
+            IconLoadRequest req;
+            if (!_highQueue.TryDequeue(out req))
             {
-                _signal.WaitOne(250);
-                continue;
+                if (_suspendLowPriority || !_lowQueue.TryDequeue(out req))
+                {
+                    _signal.WaitOne(250);
+                    continue;
+                }
             }
 
             int currentGen = _generation;

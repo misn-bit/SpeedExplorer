@@ -22,11 +22,7 @@ public static class StartupService
                 if (settings.RunAtStartup)
                 {
                     string exePath = Application.ExecutablePath;
-                    string command = $"\"{exePath}\" --startup";
-                    if (settings.StartMinimized)
-                    {
-                        command += " --minimized";
-                    }
+                    string command = $"\"{exePath}\" --startup --minimized";
                     key.SetValue(AppName, command);
                 }
                 else

@@ -27,12 +27,13 @@ SpeedExplorer features an optional local AI assistant that runs on your own hard
 
 *   **Chat with your files:** Let the AI manage or organize files (limited functionality to prevent accidents).
 *   **Batch Image Processing:** Automatically tag images, get text from images or generate text descriptions based on visual content.
+*   **OCR & Translation:** Show OCR'd text on top of the image in the built-in image viewer and translate it to any language.
 
 ### Requirements for AI features:
 *   **Software:** LM Studio 0.4.0+ (with Local Server enabled).
 *   **Models:**
     *   *For General Logic:* A decent size model (e.g., `gpt-oss-20b`).
-    *   *For Vision/Images:* A vision-capable model (e.g., `qwen3-vl-4b` or better).
+    *   *For Vision/Images:* A vision-capable model (e.g., `qwen3.5-4b` or better).
 
 > **Note:** AI features are non-destructive by default, but please exercise caution when allowing an LLM to manage file operations.
 

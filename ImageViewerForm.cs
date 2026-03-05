@@ -6,6 +6,7 @@ using System.Drawing.Drawing2D;
 using System.Drawing.Text;
 using System.IO;
 using System.Linq;
+using System.Collections.Specialized;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -21,6 +22,29 @@ public class ImageViewerForm : Form
     private static extern int SendMessage(IntPtr hWnd, int Msg, int wParam, int lParam);
     [DllImport("user32.dll")]
     private static extern bool ReleaseCapture();
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool ShellExecuteEx(ref SHELLEXECUTEINFO lpExecInfo);
+    private const uint SEE_MASK_INVOKEIDLIST = 0xC;
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct SHELLEXECUTEINFO
+    {
+        public int cbSize;
+        public uint fMask;
+        public IntPtr hwnd;
+        public string lpVerb;
+        public string lpFile;
+        public string lpParameters;
+        public string lpDirectory;
+        public int nShow;
+        public IntPtr hInstApp;
+        public IntPtr lpIDList;
+        public string lpClass;
+        public IntPtr hkeyClass;
+        public uint dwHotKey;
+        public IntPtr hIconOrMonitor;
+        public IntPtr hProcess;
+    }
 
     private readonly List<string> _imagePaths;
     private int _currentIndex;
@@ -30,6 +54,7 @@ public class ImageViewerForm : Form
     private int _animationFrameIndex;
     
     private readonly PictureBox _pictureBox;
+    private readonly ContextMenuStrip _imageContextMenu;
     private readonly Panel _contentPanel;
     private readonly Panel _controlPanel;
     private readonly Panel _titleBar;
@@ -241,6 +266,8 @@ public class ImageViewerForm : Form
         _pictureBox.MouseMove += PictureBox_MouseMove;
         _pictureBox.MouseUp += PictureBox_MouseUp;
         _pictureBox.MouseWheel += PictureBox_MouseWheel;
+        _imageContextMenu = BuildImageContextMenu();
+        _pictureBox.ContextMenuStrip = _imageContextMenu;
 
         _contentPanel = new Panel
         {
@@ -503,6 +530,8 @@ public class ImageViewerForm : Form
             _autoFitEnabled = false;
             _zoomLevel = _zoomSlider.Value / 100f;
             _zoomLabel.Text = $"{_zoomSlider.Value}%";
+            if (IsImageFullyVisibleAtZoom(_zoomLevel))
+                _panOffset = Point.Empty;
             _pictureBox.Invalidate();
         };
 
@@ -679,7 +708,7 @@ public class ImageViewerForm : Form
         base.OnResize(e);
         if (_autoFitEnabled && !_isFullscreen)
         {
-            FitToWindow();
+            FitToWindow(allowUpscale: false);
         }
     }
 
@@ -766,6 +795,112 @@ public class ImageViewerForm : Form
         if (_currentIndex < 0 || _currentIndex >= _imagePaths.Count)
             return null;
         return _imagePaths[_currentIndex];
+    }
+
+    private ContextMenuStrip BuildImageContextMenu()
+    {
+        var menu = new ContextMenuStrip
+        {
+            Renderer = new DarkToolStripRenderer(),
+            ShowImageMargin = false,
+            BackColor = Color.FromArgb(30, 30, 30)
+        };
+        menu.Items.Add("Copy Image File", null, (s, e) => CopyCurrentImageFileToClipboard());
+        menu.Items.Add("Open File Location", null, (s, e) => OpenCurrentImageLocation());
+        menu.Items.Add("Properties", null, (s, e) => ShowCurrentImageProperties());
+        return menu;
+    }
+
+    private void CopyCurrentImageFileToClipboard()
+    {
+        string? imagePath = GetCurrentImagePath();
+        if (string.IsNullOrWhiteSpace(imagePath) || !File.Exists(imagePath))
+            return;
+
+        try
+        {
+            var files = new StringCollection { imagePath };
+            Clipboard.SetFileDropList(files);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"CopyCurrentImageFileToClipboard failed: {ex.Message}");
+        }
+    }
+
+    private void OpenCurrentImageLocation()
+    {
+        string? imagePath = GetCurrentImagePath();
+        if (string.IsNullOrWhiteSpace(imagePath) || !File.Exists(imagePath))
+            return;
+
+        string selectArg = $"/select,\"{imagePath}\"";
+        try
+        {
+            var existingMain = Application.OpenForms
+                .OfType<MainForm>()
+                .LastOrDefault(f => !f.IsDisposed);
+            if (existingMain != null)
+            {
+                if (existingMain.WindowState == FormWindowState.Minimized)
+                    existingMain.WindowState = FormWindowState.Normal;
+                existingMain.Show();
+                existingMain.Activate();
+                existingMain.BringToFront();
+                existingMain.HandleExternalPathNoViewer(selectArg);
+                return;
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"OpenCurrentImageLocation via existing MainForm failed: {ex.Message}");
+        }
+
+        try
+        {
+            string directory = Path.GetDirectoryName(imagePath) ?? imagePath;
+            string exePath = Application.ExecutablePath;
+            if (!string.IsNullOrWhiteSpace(exePath) && File.Exists(exePath))
+            {
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = exePath,
+                    Arguments = $"\"{directory}\"",
+                    UseShellExecute = true
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"OpenCurrentImageLocation via app launch failed: {ex.Message}");
+        }
+    }
+
+    private void ShowCurrentImageProperties()
+    {
+        string? imagePath = GetCurrentImagePath();
+        if (string.IsNullOrWhiteSpace(imagePath) || !File.Exists(imagePath))
+            return;
+
+        try
+        {
+            var info = new SHELLEXECUTEINFO
+            {
+                cbSize = Marshal.SizeOf<SHELLEXECUTEINFO>(),
+                fMask = SEE_MASK_INVOKEIDLIST,
+                hwnd = Handle,
+                lpVerb = "properties",
+                lpFile = imagePath,
+                lpParameters = string.Empty,
+                lpDirectory = string.Empty,
+                nShow = 5
+            };
+            _ = ShellExecuteEx(ref info);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"ShowCurrentImageProperties failed: {ex.Message}");
+        }
     }
 
     private void ToggleAiPanel()
@@ -1885,7 +2020,7 @@ public class ImageViewerForm : Form
             _titleLabel.Text = $"Speed Explorer - {Path.GetFileName(path)}";
 
             UpdateTags(path);
-            FitToWindow();
+            FitToWindow(allowUpscale: false);
             TryApplySavedOcrForCurrentImage(allowStatusUpdate: true);
             UpdateSavedCacheUiState();
         }
@@ -2309,61 +2444,96 @@ public class ImageViewerForm : Form
 
     private void PictureBox_MouseWheel(object? sender, MouseEventArgs e)
     {
-        if (_currentImage == null) return;
+        if ((ModifierKeys & Keys.Control) == Keys.Control)
+        {
+            AdjustZoom(e.Delta > 0 ? 0.1f : -0.1f, e.Location);
+            return;
+        }
 
-        float zoomDelta = e.Delta > 0 ? 0.1f : -0.1f;
-        var oldZoom = _zoomLevel;
-        var newZoom = Math.Clamp(_zoomLevel + zoomDelta, 0.1f, 5.0f);
-        if (Math.Abs(newZoom - oldZoom) < 0.001f) return;
-
-        var oldImgW = _currentImage.Width * oldZoom;
-        var oldImgH = _currentImage.Height * oldZoom;
-        var oldX = (_pictureBox.Width - oldImgW) / 2 + _panOffset.X;
-        var oldY = (_pictureBox.Height - oldImgH) / 2 + _panOffset.Y;
-        var mouseRelX = e.Location.X - oldX;
-        var mouseRelY = e.Location.Y - oldY;
-
-        _zoomLevel = newZoom;
-        _zoomSlider.Value = (int)(_zoomLevel * 100);
-        _zoomLabel.Text = $"{_zoomSlider.Value}%";
-
-        var scaleFactor = newZoom / oldZoom;
-        var newMouseRelX = mouseRelX * scaleFactor;
-        var newMouseRelY = mouseRelY * scaleFactor;
-
-        var expectedNewX = e.Location.X - newMouseRelX;
-        var expectedNewY = e.Location.Y - newMouseRelY;
-
-        var newImgW = _currentImage.Width * newZoom;
-        var newImgH = _currentImage.Height * newZoom;
-
-        _panOffset.X = (int)(expectedNewX - (_pictureBox.Width - newImgW) / 2);
-        _panOffset.Y = (int)(expectedNewY - (_pictureBox.Height - newImgH) / 2);
-        
-        _pictureBox.Invalidate();
+        if (e.Delta > 0)
+            ShowPrevious();
+        else if (e.Delta < 0)
+            ShowNext();
     }
 
     private void AdjustZoom(float delta)
     {
+        AdjustZoom(delta, null);
+    }
+
+    private void AdjustZoom(float delta, Point? anchorPoint)
+    {
+        if (_currentImage == null)
+            return;
+
         _autoFitEnabled = false;
-        _zoomLevel = Math.Clamp(_zoomLevel + delta, 0.1f, 5.0f);
+        float newZoom = Math.Clamp(_zoomLevel + delta, 0.1f, 5.0f);
+        ApplyZoom(newZoom, anchorPoint);
+    }
+
+    private void ApplyZoom(float newZoom, Point? anchorPoint)
+    {
+        if (_currentImage == null)
+            return;
+
+        float oldZoom = _zoomLevel;
+        if (Math.Abs(newZoom - oldZoom) < 0.0001f)
+            return;
+
+        bool keepCentered = IsImageFullyVisibleAtZoom(oldZoom) && IsImageFullyVisibleAtZoom(newZoom);
+        _zoomLevel = newZoom;
         SetZoomSliderValue((int)(_zoomLevel * 100));
+
+        if (keepCentered)
+        {
+            _panOffset = Point.Empty;
+            _pictureBox.Invalidate();
+            return;
+        }
+
+        Point pivot = anchorPoint ?? new Point(_pictureBox.Width / 2, _pictureBox.Height / 2);
+        float oldImgW = _currentImage.Width * oldZoom;
+        float oldImgH = _currentImage.Height * oldZoom;
+        float oldX = (_pictureBox.Width - oldImgW) / 2f + _panOffset.X;
+        float oldY = (_pictureBox.Height - oldImgH) / 2f + _panOffset.Y;
+        float mouseRelX = pivot.X - oldX;
+        float mouseRelY = pivot.Y - oldY;
+
+        float scaleFactor = newZoom / oldZoom;
+        float newMouseRelX = mouseRelX * scaleFactor;
+        float newMouseRelY = mouseRelY * scaleFactor;
+        float expectedNewX = pivot.X - newMouseRelX;
+        float expectedNewY = pivot.Y - newMouseRelY;
+        float newImgW = _currentImage.Width * newZoom;
+        float newImgH = _currentImage.Height * newZoom;
+        _panOffset.X = (int)(expectedNewX - (_pictureBox.Width - newImgW) / 2f);
+        _panOffset.Y = (int)(expectedNewY - (_pictureBox.Height - newImgH) / 2f);
+
+        if (IsImageFullyVisibleAtZoom(newZoom))
+            _panOffset = Point.Empty;
+
         _pictureBox.Invalidate();
     }
 
-    private void FitToWindow()
+    private bool IsImageFullyVisibleAtZoom(float zoom)
+    {
+        if (_currentImage == null)
+            return false;
+
+        float imgWidth = _currentImage.Width * zoom;
+        float imgHeight = _currentImage.Height * zoom;
+        return imgWidth <= _pictureBox.Width && imgHeight <= _pictureBox.Height;
+    }
+
+    private void FitToWindow(bool allowUpscale = true)
     {
         if (_currentImage == null) return;
         var scaleX = (float)_pictureBox.Width / _currentImage.Width;
         var scaleY = (float)_pictureBox.Height / _currentImage.Height;
-        if (_currentImage.Width <= _pictureBox.Width && _currentImage.Height <= _pictureBox.Height)
-        {
-            _zoomLevel = 1.0f;
-        }
-        else
-        {
-            _zoomLevel = Math.Min(scaleX, scaleY);
-        }
+        float fitScale = Math.Min(scaleX, scaleY);
+        if (!allowUpscale)
+            fitScale = Math.Min(1.0f, fitScale);
+        _zoomLevel = Math.Clamp(fitScale, 0.1f, 5.0f);
         SetZoomSliderValue((int)(_zoomLevel * 100));
         _panOffset = Point.Empty;
         _pictureBox.Invalidate();
@@ -2462,7 +2632,7 @@ public class ImageViewerForm : Form
     protected override void OnShown(EventArgs e)
     {
         base.OnShown(e);
-        FitToWindow();
+        FitToWindow(allowUpscale: false);
     }
 
     private void ApplySavedWindowState()

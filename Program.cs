@@ -71,11 +71,23 @@ static class Program
         }
 
         bool launchImageViewerOnly = TryResolveDirectImageLaunchPath(args, out var directImagePath);
+        bool hasStartupFlag = args.Any(a => a.Equals("--startup", StringComparison.OrdinalIgnoreCase));
+        bool hasPathLikeArg = args.Any(a => !string.IsNullOrWhiteSpace(a) && !a.StartsWith("--", StringComparison.Ordinal));
+
+        // Delay startup only for explicit startup launches (no path payload).
+        // Do this before single-instance lock so manual launches are not blocked during the wait window.
+        if (hasStartupFlag && !hasPathLikeArg)
+        {
+            Thread.Sleep(15000);
+        }
 
         if (!_mutex.WaitOne(TimeSpan.Zero, true))
         {
             // Already running, send arguments to the existing instance
             LogCrash("Program.Main", null, "SingleInstance redirect to existing process");
+            // Ignore plain startup wake-up ping when an instance already exists.
+            if (hasStartupFlag && !hasPathLikeArg)
+                return;
             SendToMainInstance(args);
             return;
         }
@@ -136,14 +148,6 @@ static class Program
             return;
         }
 
-        // Delay startup only for explicit startup launches (no path payload).
-        bool hasStartupFlag = args.Any(a => a.Equals("--startup", StringComparison.OrdinalIgnoreCase));
-        bool hasPathLikeArg = args.Any(a => !string.IsNullOrWhiteSpace(a) && !a.StartsWith("--", StringComparison.Ordinal));
-        if (hasStartupFlag && !hasPathLikeArg)
-        {
-            Thread.Sleep(15000);
-        }
-
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
         Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
@@ -188,6 +192,10 @@ static class Program
 
             string? startPath = ExtractStartPathFromArgs(args);
             bool startMinimized = args.Any(a => a.Equals("--minimized", StringComparison.OrdinalIgnoreCase));
+            if (hasStartupFlag && !hasPathLikeArg)
+                startMinimized = true;
+            if (startMinimized && !AppSettings.Current.RunInBackground && !hasStartupFlag)
+                startMinimized = false;
 
             if (IsExplorerShellArgument(startPath))
             {
@@ -610,8 +618,19 @@ static class Program
             form.FormClosed += (s, e) =>
             {
                 _formCount--;
-                // Don't exit thread if we have tray icon and want to stay in background
-                // We only exit when the user explicitly clicks Exit from the tray
+                if (_formCount <= 0 && !AppSettings.Current.RunInBackground)
+                {
+                    try
+                    {
+                        if (_trayIcon != null)
+                        {
+                            _trayIcon.Visible = false;
+                            _trayIcon.Dispose();
+                        }
+                    }
+                    catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+                    ExitThread();
+                }
             };
             form.Show();
             form.Activate();    // Pull focus

@@ -184,25 +184,68 @@ public class LlmExecutor
 
         if (writeCommands.Any())
         {
-            string attempted = SummarizeWriteCommands(writeCommands);
-            if (!string.IsNullOrWhiteSpace(attempted))
-                feedback.Add($"Write commands attempted: {attempted}");
+            string commandSet = SummarizeWriteCommands(writeCommands);
+
+            var createFolderTargets = CollectCreateFolderTargets(writeCommands);
+            int foldersExistingBefore = createFolderTargets.Count(Directory.Exists);
 
             ops = ExecuteCommands(writeCommands).ToList(); // .ToList() creates a copy since ExecuteCommands returns a reference to _operations
+            int foldersExistingAfter = createFolderTargets.Count(Directory.Exists);
+            int createdFolders = Math.Max(0, foldersExistingAfter - foldersExistingBefore);
 
             if (ops.Count > 0)
             {
-                feedback.Add($"Processed {writeCommands.Count} write command(s) successfully; {ops.Count} undo operation record(s) created.");
+                if (!string.IsNullOrWhiteSpace(commandSet))
+                    feedback.Add($"Executed file operation command set: {commandSet}");
+                feedback.Add($"Processed {writeCommands.Count} file operation command(s) successfully; {ops.Count} undo operation record(s) created.");
                 feedback.Add("If this fulfills the user request, set is_done=true and return no further commands.");
             }
             else
             {
-                feedback.Add($"Processed {writeCommands.Count} write command(s), but no new changes were applied.");
-                feedback.Add("If files were already moved/renamed and request is satisfied, set is_done=true and return no further commands.");
+                if (createdFolders > 0)
+                {
+                    if (!string.IsNullOrWhiteSpace(commandSet))
+                        feedback.Add($"Executed file operation command set: {commandSet}");
+                    feedback.Add($"Processed {writeCommands.Count} file operation command(s); created {createdFolders} folder(s).");
+                    feedback.Add("No undo operation records were created for folder creation.");
+                    feedback.Add("If this fulfills the user request, set is_done=true and return no further commands.");
+                }
+                else
+                {
+                    if (!string.IsNullOrWhiteSpace(commandSet))
+                        feedback.Add($"Executed file operation command set: {commandSet}");
+                    feedback.Add($"Processed {writeCommands.Count} file operation command(s), but no new changes were applied.");
+                    feedback.Add("If files were already moved/renamed and request is satisfied, set is_done=true and return no further commands.");
+                }
             }
         }
 
         return (feedback, ops);
+    }
+
+    private List<string> CollectCreateFolderTargets(List<LlmCommand> commands)
+    {
+        var targets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var cmd in commands)
+        {
+            if (!string.Equals(cmd.Cmd, "create_folder", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            string? rawPath = cmd.Path ?? cmd.Name;
+            if (string.IsNullOrWhiteSpace(rawPath))
+                continue;
+
+            try
+            {
+                targets.Add(ResolvePath(rawPath));
+            }
+            catch
+            {
+                // Ignore malformed paths in target collection.
+            }
+        }
+
+        return targets.ToList();
     }
 
     private static string SummarizeWriteCommands(List<LlmCommand> commands)
