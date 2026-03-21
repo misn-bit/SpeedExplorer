@@ -1244,27 +1244,7 @@ public class LlmService
 
     private static string ExtractAssistantContent(string responseString)
     {
-        if (string.IsNullOrWhiteSpace(responseString))
-            return "";
-
-        try
-        {
-            using var doc = JsonDocument.Parse(responseString);
-            if (doc.RootElement.TryGetProperty("choices", out var choices) && choices.ValueKind == JsonValueKind.Array && choices.GetArrayLength() > 0)
-            {
-                return choices[0].GetProperty("message").GetProperty("content").GetString() ?? "";
-            }
-            if (doc.RootElement.TryGetProperty("content", out var content))
-            {
-                return content.GetString() ?? "";
-            }
-        }
-        catch
-        {
-            // Fallback to raw if response isn't JSON.
-        }
-
-        return responseString;
+        return LlmParsers.ExtractAssistantContentFromChatResponse(responseString);
     }
 
 

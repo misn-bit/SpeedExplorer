@@ -9,42 +9,50 @@ public static partial class LlmPromptBuilder
     public static string GetAgenticSystemPrompt(bool taggingEnabled, bool searchEnabled)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("You are an autonomous file system agent that operates in a loop.");
-        sb.AppendLine("You can inspect the file system and execute operations. After you output commands, the system will execute them and return the results to you in the next message.");
+        sb.AppendLine("You are an autonomous file system agent that works one loop at a time.");
+        sb.AppendLine("You inspect the current folder, choose safe file commands, then the app executes them and returns feedback in the next loop.");
         sb.AppendLine();
-        sb.AppendLine("Available COMMANDS:");
-        sb.AppendLine("- {\"cmd\":\"list_dir\",\"path\":\"./Folder\",\"include_metadata\":true} : Lists files in a directory. Use this to gather context instead of guessing filenames.");
+        sb.AppendLine("Return strict JSON only.");
+        sb.AppendLine("Keep 'thought' and 'plan' short and concrete.");
+        sb.AppendLine("Do not guess filenames. Use tools or injected context.");
+        sb.AppendLine();
+        sb.AppendLine("Available commands:");
+        sb.AppendLine("- {\"cmd\":\"list_dir\",\"path\":\"./Folder\",\"include_metadata\":true} : list a directory when you need names or metadata.");
+        sb.AppendLine("- list_dir path may also be an absolute path like \"C:\\\\Users\" or \"D:\\\\\" if you need to inspect outside the current folder.");
         if (searchEnabled)
-            sb.AppendLine("- {\"cmd\":\"search\",\"root\":\"./\",\"pattern\":\"*.jpg\"} : Recursively searches for matching files.");
+            sb.AppendLine("- {\"cmd\":\"search\",\"root\":\"./\",\"pattern\":\"*.jpg\"} : recursive search when scope is unclear.");
+        if (searchEnabled)
+            sb.AppendLine("- search root may be \"./\" or an absolute path like \"C:\\\\\" when the user asks about files elsewhere on the machine.");
         if (taggingEnabled)
-            sb.AppendLine("- {\"cmd\":\"search_tags\",\"tags\":[\"important\"]} : Finds files with specific tags.");
-        sb.AppendLine("- {\"cmd\":\"create_folder\",\"path\":\"FolderName\"} : Creates a folder.");
-        sb.AppendLine("- {\"cmd\":\"move\",\"files\":[\"file1.txt\"],\"to\":\"./Destination\"} : Moves specific files (use exact names found via list_dir). File refs can be relative paths like \"images/file1.txt\".");
-        sb.AppendLine("- {\"cmd\":\"move\",\"pattern\":\"*.txt\",\"to\":\"./Destination\"} : Moves files matching a glob pattern.");
-        sb.AppendLine("- For extension-based tasks (e.g. \"move all .jpeg files\"), prefer move with pattern directly (\"*.jpeg\" and/or \"*.jpg\").");
-        sb.AppendLine("- For conditional split tasks (e.g. based on filename content such as Cyrillic), use list_dir then move with explicit files; avoid broad pattern moves first.");
-        sb.AppendLine("- {\"cmd\":\"rename\",\"file\":\"oldname.txt\",\"newName\":\"newname.md\"} : Renames a file.");
-        sb.AppendLine("- {\"cmd\":\"create_file\",\"name\":\"script.py\",\"content\":\"text\"} : Creates a new file.");
+            sb.AppendLine("- {\"cmd\":\"search_tags\",\"tags\":[\"important\"]} : find files by tags.");
+        sb.AppendLine("- {\"cmd\":\"create_folder\",\"path\":\"FolderName\"} : create a folder.");
+        sb.AppendLine("- {\"cmd\":\"move\",\"files\":[\"file1.txt\"],\"to\":\"./Destination\"} : move exact files.");
+        sb.AppendLine("- {\"cmd\":\"move\",\"pattern\":\"*.txt\",\"to\":\"./Destination\"} : move files by glob pattern.");
+        sb.AppendLine("- {\"cmd\":\"rename\",\"file\":\"oldname.txt\",\"newName\":\"newname.md\"} : rename one file.");
+        sb.AppendLine("- {\"cmd\":\"create_file\",\"name\":\"script.py\",\"content\":\"text\"} : create a new file.");
         if (taggingEnabled)
-            sb.AppendLine("- {\"cmd\":\"tag\",\"files\":[\"photo.jpg\"],\"tags\":[\"nature\"]} : Adds tags to files.");
-        sb.AppendLine("- Optional first-loop context policy: {\"context_policy\":{\"use_file_context\":true,\"level\":\"names|metadata|none\",\"path\":\"./\",\"refresh_each_loop\":true}}.");
-        sb.AppendLine("  If use_file_context=true, the system can inject an updated file snapshot each loop so you should avoid repeating list_dir for the same path.");
+            sb.AppendLine("- {\"cmd\":\"tag\",\"files\":[\"photo.jpg\"],\"tags\":[\"nature\"]} : add tags.");
+        sb.AppendLine("- Optional context policy: {\"context_policy\":{\"use_file_context\":true,\"level\":\"names|metadata|none\",\"path\":\"./\",\"refresh_each_loop\":true}}.");
+        sb.AppendLine("  If file context is injected, prefer using it instead of repeating the same list_dir.");
 
         sb.AppendLine();
-        sb.AppendLine("RULES:");
-        sb.AppendLine("1. You must output STRICT JSON ONLY matching the provided schema.");
-        sb.AppendLine("2. The JSON must contain 'thought', 'plan', 'is_done', and 'commands'.");
-        sb.AppendLine("2a. In loop 1, decide and set 'context_policy' for this task.");
-        sb.AppendLine("2b. For tasks that depend on filename content (for example Cyrillic/non-Cyrillic or other name-based routing), default to context_policy use_file_context=true with level='names' in loop 1.");
-        sb.AppendLine("3. For extension-only requests (no additional conditions), do NOT search first. Create destination folder then use move with pattern in the same response.");
-        sb.AppendLine("4. If the request includes additional conditions (for example filename-language/content rules), do NOT do blanket extension pattern moves first.");
-        sb.AppendLine("5. In conditional tasks, first inspect with list_dir/search and then move explicit file lists to each destination.");
-        sb.AppendLine("6. Use 'list_dir' or 'search' only when names or scope are ambiguous.");
-        sb.AppendLine("7. Never use placeholder values like '?', '...', or empty patterns/paths.");
-        sb.AppendLine("8. Use './' for current directory paths.");
-        sb.AppendLine("9. Set \"is_done\": true ONLY when the user's entire request is completely satisfied.");
-        sb.AppendLine("10. You can issue multiple commands in one response, but keep them safe.");
-        sb.AppendLine("11. Before setting is_done=true, verify completion using current/injected file context; if verification fails, return corrective commands.");
+        sb.AppendLine("Rules:");
+        sb.AppendLine("1. The JSON must contain 'thought', 'plan', 'is_done', and 'commands'.");
+        sb.AppendLine("2. Use './' for the current directory.");
+        sb.AppendLine("3. Never use placeholders like '?', '...', or empty paths.");
+        sb.AppendLine("4. If the task is simple and based only on extension, prefer one compact step: create_folder + move pattern.");
+        sb.AppendLine("5. If the task has conditions based on filename content, language, or exceptions, inspect first and then move exact file lists.");
+        sb.AppendLine("6. Prefer 1 to 3 commands per loop. Keep the workflow incremental.");
+        sb.AppendLine("7. Set is_done=true only when the whole request is satisfied or verified by current feedback/context.");
+        sb.AppendLine("8. If more work is needed, set is_done=false and provide the next commands.");
+        sb.AppendLine("9. When filenames are already visible in injected context, use them directly instead of listing again.");
+        sb.AppendLine("10. After successful writes, do at most one focused verification pass unless feedback shows a concrete mismatch to fix.");
+        sb.AppendLine("11. If the latest verification shows the target state already matches the request, set is_done=true instead of verifying again.");
+        sb.AppendLine("12. If nothing should be executed in this loop, commands may be empty only when is_done=true.");
+        sb.AppendLine();
+        sb.AppendLine("Preferred workflows:");
+        sb.AppendLine("- Simple extension task: create destination folder, move by pattern, then verify next loop.");
+        sb.AppendLine("- Conditional routing task: inspect names first, then move explicit files, then verify.");
 
         return sb.ToString();
     }
@@ -118,4 +126,3 @@ public static partial class LlmPromptBuilder
         };
     }
 }
-

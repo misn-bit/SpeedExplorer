@@ -11,6 +11,71 @@ namespace SpeedExplorer;
 /// </summary>
 public static class LlmParsers
 {
+    public static string ExtractAssistantContentFromChatResponse(string responseString, bool allowReasoningFallback = false)
+    {
+        if (string.IsNullOrWhiteSpace(responseString))
+            return "";
+
+        try
+        {
+            using var doc = JsonDocument.Parse(responseString);
+            var root = doc.RootElement;
+
+            if (root.TryGetProperty("choices", out var choices) &&
+                choices.ValueKind == JsonValueKind.Array &&
+                choices.GetArrayLength() > 0)
+            {
+                var choice = choices[0];
+                if (choice.TryGetProperty("message", out var message) && message.ValueKind == JsonValueKind.Object)
+                    return ExtractAssistantMessageText(message, allowReasoningFallback);
+            }
+
+            string content = ExtractTextContent(root, "content");
+            if (!string.IsNullOrWhiteSpace(content))
+                return content;
+
+            if (allowReasoningFallback)
+            {
+                string reasoning = ExtractTextContent(root, "reasoning_content");
+                if (!string.IsNullOrWhiteSpace(reasoning))
+                    return reasoning;
+
+                reasoning = ExtractTextContent(root, "reasoning");
+                if (!string.IsNullOrWhiteSpace(reasoning))
+                    return reasoning;
+            }
+        }
+        catch
+        {
+            // Fallback to raw if response isn't JSON.
+        }
+
+        return responseString;
+    }
+
+    public static string ExtractAssistantMessageText(JsonElement message, bool allowReasoningFallback = false)
+    {
+        if (message.ValueKind != JsonValueKind.Object)
+            return "";
+
+        string content = ExtractTextContent(message, "content");
+        if (!string.IsNullOrWhiteSpace(content))
+            return content;
+
+        if (!allowReasoningFallback)
+            return "";
+
+        string reasoning = ExtractTextContent(message, "reasoning_content");
+        if (!string.IsNullOrWhiteSpace(reasoning))
+            return reasoning;
+
+        reasoning = ExtractTextContent(message, "reasoning");
+        if (!string.IsNullOrWhiteSpace(reasoning))
+            return reasoning;
+
+        return "";
+    }
+
     public static LlmImageTextResult? ParseImageTextResult(string rawContent)
     {
         string cleanJson = "";
@@ -219,20 +284,7 @@ public static class LlmParsers
         var result = new LlmAgentResponse();
         if (string.IsNullOrWhiteSpace(json)) return result;
 
-        string cleanJson = json.Trim();
-
-        if (cleanJson.Contains("```json"))
-        {
-            int start = cleanJson.IndexOf("```json") + 7;
-            int end = cleanJson.IndexOf("```", start);
-            if (end > start) cleanJson = cleanJson.Substring(start, end - start).Trim();
-        }
-        else if (cleanJson.Contains("```"))
-        {
-            int start = cleanJson.IndexOf("```") + 3;
-            int end = cleanJson.IndexOf("```", start);
-            if (end > start) cleanJson = cleanJson.Substring(start, end - start).Trim();
-        }
+        string cleanJson = ExtractJsonObject(json);
 
         try
         {
@@ -280,9 +332,16 @@ public static class LlmParsers
             
             foreach (var cmd in commands.EnumerateArray())
             {
+                if (cmd.ValueKind != JsonValueKind.Object)
+                    continue;
+
+                string cmdName = cmd.TryGetProperty("cmd", out var cmdNameEl) ? (cmdNameEl.GetString() ?? "") : "";
+                if (string.IsNullOrWhiteSpace(cmdName))
+                    continue;
+
                 var llmCmd = new LlmCommand
                 {
-                    Cmd = cmd.GetProperty("cmd").GetString() ?? "",
+                    Cmd = cmdName,
                     Name = cmd.TryGetProperty("name", out var n) ? n.GetString() : null,
                     Path = cmd.TryGetProperty("path", out var path) ? path.GetString() : null,
                     Root = cmd.TryGetProperty("root", out var root) ? root.GetString() : null,
@@ -291,11 +350,15 @@ public static class LlmParsers
                     File = cmd.TryGetProperty("file", out var f) ? f.GetString() : null,
                     NewName = cmd.TryGetProperty("newName", out var nn) ? nn.GetString() : null,
                     Content = cmd.TryGetProperty("content", out var c) ? c.GetString() : null,
-                    IncludeMetadata = cmd.TryGetProperty("include_metadata", out var inc) && inc.ValueKind == JsonValueKind.True,
-                    Tags = cmd.TryGetProperty("tags", out var tags) ? 
-                           tags.EnumerateArray().Select(x => x.GetString() ?? "").ToList() : null,
-                    Files = cmd.TryGetProperty("files", out var files) ? 
-                           files.EnumerateArray().Select(x => x.GetString() ?? "").ToList() : null
+                    IncludeMetadata = cmd.TryGetProperty("include_metadata", out var inc) &&
+                                      (inc.ValueKind == JsonValueKind.True || inc.ValueKind == JsonValueKind.False) &&
+                                      inc.GetBoolean(),
+                    Tags = cmd.TryGetProperty("tags", out var tags) && tags.ValueKind == JsonValueKind.Array
+                           ? tags.EnumerateArray().Select(x => x.GetString() ?? "").Where(x => !string.IsNullOrWhiteSpace(x)).ToList()
+                           : null,
+                    Files = cmd.TryGetProperty("files", out var files) && files.ValueKind == JsonValueKind.Array
+                           ? files.EnumerateArray().Select(x => x.GetString() ?? "").Where(x => !string.IsNullOrWhiteSpace(x)).ToList()
+                           : null
                 };
                 result.Commands.Add(llmCmd);
                 sb.AppendLine($"{i++}. {llmCmd.Cmd}: {llmCmd.Name ?? llmCmd.Pattern ?? llmCmd.To ?? (llmCmd.Tags != null ? string.Join(", ", llmCmd.Tags) : (llmCmd.Files != null ? $"{llmCmd.Files.Count} files" : ""))}");
@@ -514,5 +577,55 @@ public static class LlmParsers
         return cmd.Equals("list_dir", StringComparison.OrdinalIgnoreCase) ||
                cmd.Equals("search", StringComparison.OrdinalIgnoreCase) ||
                cmd.Equals("search_tags", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string ExtractTextContent(JsonElement obj, string propertyName)
+    {
+        if (!obj.TryGetProperty(propertyName, out var value))
+            return "";
+
+        return ExtractTextNode(value);
+    }
+
+    private static string ExtractTextNode(JsonElement value)
+    {
+        switch (value.ValueKind)
+        {
+            case JsonValueKind.String:
+                return value.GetString() ?? "";
+
+            case JsonValueKind.Array:
+            {
+                var parts = new List<string>();
+                foreach (var item in value.EnumerateArray())
+                {
+                    string part = ExtractTextNode(item);
+                    if (!string.IsNullOrWhiteSpace(part))
+                        parts.Add(part.Trim());
+                }
+
+                return string.Join(Environment.NewLine, parts);
+            }
+
+            case JsonValueKind.Object:
+            {
+                if (value.TryGetProperty("text", out var text))
+                    return ExtractTextNode(text);
+
+                if (value.TryGetProperty("content", out var content))
+                    return ExtractTextNode(content);
+
+                if (value.TryGetProperty("value", out var val))
+                    return ExtractTextNode(val);
+
+                if (value.TryGetProperty("parts", out var parts))
+                    return ExtractTextNode(parts);
+
+                return "";
+            }
+
+            default:
+                return "";
+        }
     }
 }

@@ -72,6 +72,8 @@ public class LlmAgentRunner
         string? previousWriteCommandSignature = null;
         int repeatedNoChangeWriteLoops = 0;
         var seenNoChangeWriteSignatures = new HashSet<string>(StringComparer.Ordinal);
+        string? previousReadOnlyCommandSignature = null;
+        int repeatedReadOnlyLoops = 0;
         bool ranClosureVerification = false;
 
         while (loopCount < maxLoops)
@@ -222,9 +224,26 @@ public class LlmAgentRunner
             }
             catch (Exception ex)
             {
-                stopReason = $"Agent returned invalid JSON: {ex.Message}";
-                progress?.Report($"[Error] {stopReason}");
-                break;
+                progress?.Report($"[Repair] Agent returned malformed JSON. Attempting repair...");
+                var repaired = await TryRepairAgentResponseAsync(
+                    requestUrl,
+                    model,
+                    contentStr,
+                    taggingEnabled,
+                    searchEnabled,
+                    agentTemperature,
+                    Math.Max(256, Math.Min(agentMaxTokens, 1400)));
+                if (repaired != null)
+                {
+                    agentResp = repaired;
+                    progress?.Report("[Repair] Recovered agent response.");
+                }
+                else
+                {
+                    stopReason = $"Agent returned invalid JSON: {ex.Message}";
+                    progress?.Report($"[Error] {stopReason}");
+                    break;
+                }
             }
 
             if (!string.IsNullOrEmpty(agentResp.Thought))
@@ -248,6 +267,9 @@ public class LlmAgentRunner
 
             bool hasWriteCommands = commandsToExecute.Any(c => !IsReadOnlyAgentCommand(c.Cmd));
             string writeSignature = hasWriteCommands ? BuildWriteCommandSignature(commandsToExecute) : "";
+            string readOnlySignature = !hasWriteCommands && commandsToExecute.Any()
+                ? BuildReadOnlyCommandSignature(commandsToExecute)
+                : "";
             int loopOpsCount = 0;
 
             if (commandsToExecute.Any())
@@ -284,6 +306,9 @@ public class LlmAgentRunner
 
             if (hasWriteCommands)
             {
+                previousReadOnlyCommandSignature = null;
+                repeatedReadOnlyLoops = 0;
+
                 if (loopOpsCount == 0 &&
                     !string.IsNullOrWhiteSpace(writeSignature) &&
                     string.Equals(writeSignature, previousWriteCommandSignature, StringComparison.Ordinal))
@@ -324,6 +349,33 @@ public class LlmAgentRunner
             else
             {
                 repeatedNoChangeWriteLoops = 0;
+                if (!string.IsNullOrWhiteSpace(readOnlySignature))
+                {
+                    if (string.Equals(readOnlySignature, previousReadOnlyCommandSignature, StringComparison.Ordinal))
+                    {
+                        repeatedReadOnlyLoops++;
+                        if (repeatedReadOnlyLoops >= 1)
+                        {
+                            completed = allOps.Count > 0;
+                            stopReason = completed
+                                ? "Detected repeated read-only verification with no further changes after successful writes; treating request as complete."
+                                : "Detected repeated read-only verification with no progress; stopping to avoid a loop.";
+                            progress?.Report($"🟡 [{stopReason}]");
+                            break;
+                        }
+                    }
+                    else
+                    {
+                        repeatedReadOnlyLoops = 0;
+                    }
+
+                    previousReadOnlyCommandSignature = readOnlySignature;
+                }
+                else
+                {
+                    previousReadOnlyCommandSignature = null;
+                    repeatedReadOnlyLoops = 0;
+                }
             }
 
             if (agentResp.IsDone)
@@ -685,9 +737,10 @@ public class LlmAgentRunner
         sb.AppendLine("- execution policy: for file-modifying writes, keep operations incremental; all move commands are allowed in one loop.");
         sb.AppendLine("- avoid repeating writes that previously produced no new changes.");
         sb.AppendLine("- if more writes are needed, keep is_done=false and continue next loop.");
+        sb.AppendLine("- after successful writes, one targeted verification pass is usually enough; do not repeat the same verification commands unless feedback shows a concrete mismatch.");
         if (contextPolicy == null)
         {
-            sb.AppendLine("- persistent file context: not selected yet (decide via context_policy in loop 1).");
+            sb.AppendLine("- persistent file context: not selected yet.");
         }
         else if (contextPolicy.UseFileContext && !string.Equals(contextPolicy.Level, "none", StringComparison.OrdinalIgnoreCase))
         {
@@ -719,6 +772,7 @@ public class LlmAgentRunner
         sb.AppendLine("- if satisfied: set is_done=true and return no commands.");
         sb.AppendLine("- if not satisfied: output only minimal corrective commands and keep is_done=false.");
         sb.AppendLine("- you may move files again to correct mistakes.");
+        sb.AppendLine("- do not repeat the same verification command set twice in closure verification.");
         if (contextPolicy != null && contextPolicy.UseFileContext && !string.Equals(contextPolicy.Level, "none", StringComparison.OrdinalIgnoreCase))
         {
             sb.AppendLine($"- persistent file context is ON (level={contextPolicy.Level}, injected={injectedFileContextThisLoop}).");
@@ -1228,6 +1282,31 @@ public class LlmAgentRunner
         return string.Join(";", parts);
     }
 
+    private static string BuildReadOnlyCommandSignature(List<LlmCommand> commands)
+    {
+        var parts = commands
+            .Where(c => IsReadOnlyAgentCommand(c.Cmd))
+            .Select(c =>
+            {
+                string tags = c.Tags == null
+                    ? ""
+                    : string.Join(",", c.Tags.Select(t => t?.Trim().ToLowerInvariant()).Where(t => !string.IsNullOrWhiteSpace(t)));
+
+                return string.Join("|", new[]
+                {
+                    (c.Cmd ?? "").Trim().ToLowerInvariant(),
+                    (c.Path ?? "").Trim().ToLowerInvariant(),
+                    (c.Root ?? "").Trim().ToLowerInvariant(),
+                    (c.Pattern ?? "").Trim().ToLowerInvariant(),
+                    c.IncludeMetadata ? "1" : "0",
+                    tags
+                });
+            })
+            .OrderBy(x => x, StringComparer.Ordinal);
+
+        return string.Join(";", parts);
+    }
+
     private static List<LlmCommand> ApplyAgentPerLoopCommandPolicy(
         List<LlmCommand> commands,
         out string policyNote,
@@ -1290,5 +1369,56 @@ public class LlmAgentRunner
         }
 
         return selected;
+    }
+
+    private static async Task<LlmAgentResponse?> TryRepairAgentResponseAsync(
+        string requestUrl,
+        string model,
+        string rawAssistantContent,
+        bool taggingEnabled,
+        bool searchEnabled,
+        double temperature,
+        int maxTokens)
+    {
+        try
+        {
+            string repairPrompt =
+                "Rewrite the assistant message as valid JSON that matches the required schema. " +
+                "Preserve the original intent. Return JSON only. If unsure, keep commands empty and is_done false.";
+
+            var repairMessages = new List<object>
+            {
+                new { role = "system", content = repairPrompt },
+                new { role = "user", content = rawAssistantContent }
+            };
+
+            var requestData = new
+            {
+                model = model,
+                messages = repairMessages,
+                response_format = LlmPromptBuilder.GetAgenticJsonSchema(taggingEnabled, searchEnabled),
+                temperature = temperature,
+                max_tokens = maxTokens,
+                stream = false
+            };
+
+            string json = JsonSerializer.Serialize(requestData, new JsonSerializerOptions { WriteIndented = true });
+            using var content = new StringContent(json, Encoding.UTF8, "application/json");
+            var response = await LlmModelManager.HttpClient.PostAsync(requestUrl, content);
+            string responseString = await response.Content.ReadAsStringAsync();
+            if (!response.IsSuccessStatusCode)
+                return null;
+
+            string repairedContent = LlmModelManager.ExtractAssistantContent(responseString);
+            if (string.IsNullOrWhiteSpace(repairedContent))
+                repairedContent = responseString;
+
+            return LlmParsers.ParseAgenticResponse(repairedContent);
+        }
+        catch (Exception ex)
+        {
+            LlmDebugLogger.LogError($"Agent response repair failed: {ex.Message}");
+            return null;
+        }
     }
 }

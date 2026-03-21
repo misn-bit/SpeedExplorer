@@ -13,15 +13,15 @@ public static partial class LlmPromptBuilder
         bool forceReplyOnly)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("You are the orchestration brain for a chat-first file assistant.");
-        sb.AppendLine("Decide whether to reply directly, run quick read-only tools, or start the autonomous agent loop.");
+        sb.AppendLine("You route requests for a chat-first file assistant.");
+        sb.AppendLine("Choose exactly one action: reply, quick_commands, or start_agent_run.");
         sb.AppendLine();
-        sb.AppendLine("You MUST return strict JSON matching the schema.");
+        sb.AppendLine("Return strict JSON matching the schema.");
         sb.AppendLine();
         sb.AppendLine("Actions:");
-        sb.AppendLine("- reply: answer normally with no commands.");
-        sb.AppendLine("- quick_commands: issue short read-only tool calls, then the app will run them and ask you for a final reply.");
-        sb.AppendLine("- start_agent_run: start the autonomous loop for multi-step or write-heavy tasks.");
+        sb.AppendLine("- reply: normal answer, no commands.");
+        sb.AppendLine("- quick_commands: short read-only inspection only.");
+        sb.AppendLine("- start_agent_run: any request that changes files, creates folders/files, renames, moves, tags, or needs multiple steps.");
         sb.AppendLine();
         sb.AppendLine("Quick command toolset (read-only):");
         sb.AppendLine("- {\"cmd\":\"list_dir\",\"path\":\"./\",\"include_metadata\":true}");
@@ -29,17 +29,23 @@ public static partial class LlmPromptBuilder
             sb.AppendLine("- {\"cmd\":\"search\",\"root\":\"./\",\"pattern\":\"*.jpg\"}");
         if (taggingEnabled)
             sb.AppendLine("- {\"cmd\":\"search_tags\",\"tags\":[\"important\"]}");
+        sb.AppendLine("- list_dir/search may also use absolute paths when the user asks about locations outside the current folder.");
         sb.AppendLine();
         sb.AppendLine("Rules:");
         sb.AppendLine("1. Never output write commands in quick_commands.");
-        sb.AppendLine("2. Use start_agent_run for tasks that move/rename/create files or need multiple corrective passes.");
-        sb.AppendLine("3. Set run_task to a concise executable task objective when action=start_agent_run.");
-        sb.AppendLine("4. Keep message user-facing and concise.");
+        sb.AppendLine("2. If the user wants file changes, prefer start_agent_run.");
+        sb.AppendLine("3. Use quick_commands only for inspection questions like listing, searching, or checking what exists.");
+        sb.AppendLine("4. Set run_task to a short executable objective when action=start_agent_run.");
+        sb.AppendLine("5. Keep message short and user-facing.");
         if (forceReplyOnly)
         {
-            sb.AppendLine("5. FORCE_REPLY_ONLY is active: action MUST be \"reply\" and commands MUST be empty.");
-            sb.AppendLine("6. If a [AGENT_RUN_REPORT] message exists in history, base your reply on the latest report only.");
-            sb.AppendLine("7. In FORCE_REPLY_ONLY mode after an agent run, do not state future intent (no \"I'll ...\"). State completed/failed status directly.");
+            sb.AppendLine("6. FORCE_REPLY_ONLY is active: action MUST be \"reply\" and commands MUST be empty.");
+            sb.AppendLine("7. If a [AGENT_RUN_REPORT] message exists in history, base your reply on the latest report only.");
+            sb.AppendLine("8. In FORCE_REPLY_ONLY mode after an agent run, do not state future intent. State the result directly.");
+        }
+        else
+        {
+            sb.AppendLine("6. If uncertain between quick_commands and start_agent_run, choose start_agent_run for file-changing requests and quick_commands for inspection-only requests.");
         }
 
         sb.AppendLine();
@@ -131,4 +137,3 @@ public static partial class LlmPromptBuilder
         };
     }
 }
-

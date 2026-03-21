@@ -5,6 +5,7 @@ using System.Net;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
@@ -87,7 +88,7 @@ public class LlmModelManager
     /// <summary>
     /// Fetches known models from LM Studio and annotates loaded/vision capabilities where possible.
     /// </summary>
-    public async Task<LlmModelCatalog> GetModelCatalogAsync(string apiUrl)
+    public async Task<LlmModelCatalog> GetModelCatalogAsync(string apiUrl, CancellationToken cancellationToken = default)
     {
         string baseUrl = GetServerBaseUrl(apiUrl).TrimEnd('/');
 
@@ -123,10 +124,10 @@ public class LlmModelManager
         }
 
         // LM Studio native endpoints (downloaded + loaded state)
-        Merge(await TryGetModelsFromEndpointAsync($"{baseUrl}/api/v0/models", assumeLoaded: false));
-        Merge(await TryGetModelsFromEndpointAsync($"{baseUrl}/api/v1/models", assumeLoaded: false));
+        Merge(await TryGetModelsFromEndpointAsync($"{baseUrl}/api/v0/models", assumeLoaded: false, cancellationToken));
+        Merge(await TryGetModelsFromEndpointAsync($"{baseUrl}/api/v1/models", assumeLoaded: false, cancellationToken));
         // OpenAI-compatible endpoint (do NOT assume loaded state).
-        Merge(await TryGetModelsFromEndpointAsync($"{baseUrl}/v1/models", assumeLoaded: false));
+        Merge(await TryGetModelsFromEndpointAsync($"{baseUrl}/v1/models", assumeLoaded: false, cancellationToken));
 
         var list = merged.Values
             .OrderByDescending(m => m.IsLoaded)
@@ -235,7 +236,7 @@ public class LlmModelManager
 
     // ─── Model Load / Unload ─────────────────────────────────────────
 
-    public async Task LoadModelAsync(string apiUrl, string modelId)
+    public async Task LoadModelAsync(string apiUrl, string modelId, CancellationToken cancellationToken = default)
     {
         string baseUrl = GetServerBaseUrl(apiUrl).TrimEnd('/');
         var body = JsonSerializer.Serialize(new { model = modelId });
@@ -252,15 +253,20 @@ public class LlmModelManager
         string lastError = "No response";
         foreach (var endpoint in endpoints)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             try
             {
                 using var content = new StringContent(body, Encoding.UTF8, contentType);
-                var response = await HttpClient.PostAsync(endpoint, content);
+                var response = await HttpClient.PostAsync(endpoint, content, cancellationToken);
                 var responseBody = await response.Content.ReadAsStringAsync();
                 if (response.IsSuccessStatusCode)
                     return;
 
                 lastError = $"{(int)response.StatusCode} {response.StatusCode}: {responseBody}";
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
             }
             catch (Exception ex)
             {
@@ -271,7 +277,7 @@ public class LlmModelManager
         throw new InvalidOperationException(lastError);
     }
 
-    public async Task UnloadModelInstanceAsync(string apiUrl, string instanceId)
+    public async Task UnloadModelInstanceAsync(string apiUrl, string instanceId, CancellationToken cancellationToken = default)
     {
         string baseUrl = GetServerBaseUrl(apiUrl).TrimEnd('/');
         var body = JsonSerializer.Serialize(new { instance_id = instanceId });
@@ -288,15 +294,20 @@ public class LlmModelManager
         string lastError = "No response";
         foreach (var endpoint in endpoints)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             try
             {
                 using var content = new StringContent(body, Encoding.UTF8, contentType);
-                var response = await HttpClient.PostAsync(endpoint, content);
+                var response = await HttpClient.PostAsync(endpoint, content, cancellationToken);
                 var responseBody = await response.Content.ReadAsStringAsync();
                 if (response.IsSuccessStatusCode)
                     return;
 
                 lastError = $"{(int)response.StatusCode} {response.StatusCode}: {responseBody}";
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
             }
             catch (Exception ex)
             {
@@ -307,7 +318,7 @@ public class LlmModelManager
         throw new InvalidOperationException(lastError);
     }
 
-    public async Task UnloadModelByIdAsync(string apiUrl, string modelId)
+    public async Task UnloadModelByIdAsync(string apiUrl, string modelId, CancellationToken cancellationToken = default)
     {
         string baseUrl = GetServerBaseUrl(apiUrl).TrimEnd('/');
         string contentType = "application/json";
@@ -328,17 +339,23 @@ public class LlmModelManager
         string lastError = "No response";
         foreach (var endpoint in endpoints)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             foreach (var body in bodies)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 try
                 {
                     using var content = new StringContent(body, Encoding.UTF8, contentType);
-                    var response = await HttpClient.PostAsync(endpoint, content);
+                    var response = await HttpClient.PostAsync(endpoint, content, cancellationToken);
                     var responseBody = await response.Content.ReadAsStringAsync();
                     if (response.IsSuccessStatusCode)
                         return;
 
                     lastError = $"{(int)response.StatusCode} {response.StatusCode}: {responseBody}";
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
                 }
                 catch (Exception ex)
                 {
@@ -352,18 +369,23 @@ public class LlmModelManager
 
     // ─── Vision Model Recovery ───────────────────────────────────────
 
-    public async Task<bool> TryRecoverVisionModelAsync(string apiUrl, string modelId, string stage)
+    public async Task<bool> TryRecoverVisionModelAsync(string apiUrl, string modelId, string stage, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         LlmModelInfo? target = null;
         bool modelAppearsLoaded = false;
         int loadedInstanceCount = 0;
 
         try
         {
-            var catalog = await GetModelCatalogAsync(apiUrl);
+            var catalog = await GetModelCatalogAsync(apiUrl, cancellationToken);
             target = catalog.AvailableModels.FirstOrDefault(m => string.Equals(m.Id, modelId, StringComparison.OrdinalIgnoreCase));
             modelAppearsLoaded = target?.IsLoaded == true;
             loadedInstanceCount = target?.LoadedInstanceIds?.Count ?? 0;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -379,9 +401,13 @@ public class LlmModelManager
             try
             {
                 LlmDebugLogger.LogExecution($"Vision model recovery: loading model ({stage})");
-                await LoadModelAsync(apiUrl, modelId);
-                await Task.Delay(250);
+                await LoadModelAsync(apiUrl, modelId, cancellationToken);
+                await Task.Delay(250, cancellationToken);
                 return true;
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
             }
             catch (Exception ex)
             {
@@ -397,10 +423,15 @@ public class LlmModelManager
                 LlmDebugLogger.LogExecution($"Vision model recovery: unloading {target.LoadedInstanceIds.Count} instances ({stage})");
                 foreach (var instanceId in target.LoadedInstanceIds)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     try
                     {
-                        await UnloadModelInstanceAsync(apiUrl, instanceId);
+                        await UnloadModelInstanceAsync(apiUrl, instanceId, cancellationToken);
                         unloadedAny = true;
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        throw;
                     }
                     catch (Exception unloadEx)
                     {
@@ -412,9 +443,13 @@ public class LlmModelManager
             {
                 // Fallback for endpoints that do not expose instance ids reliably.
                 LlmDebugLogger.LogExecution($"Vision model recovery: trying unload by model id ({stage})");
-                await UnloadModelByIdAsync(apiUrl, modelId);
+                await UnloadModelByIdAsync(apiUrl, modelId, cancellationToken);
                 unloadedAny = true;
             }
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -430,12 +465,16 @@ public class LlmModelManager
         try
         {
             if (unloadedAny)
-                await Task.Delay(220);
+                await Task.Delay(220, cancellationToken);
 
             LlmDebugLogger.LogExecution($"Vision model recovery: loading model after unload ({stage})");
-            await LoadModelAsync(apiUrl, modelId);
-            await Task.Delay(320);
+            await LoadModelAsync(apiUrl, modelId, cancellationToken);
+            await Task.Delay(320, cancellationToken);
             return true;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -488,42 +527,26 @@ public class LlmModelManager
 
     public static string ExtractAssistantContent(string responseString)
     {
-        if (string.IsNullOrWhiteSpace(responseString))
-            return "";
-
-        try
-        {
-            using var doc = JsonDocument.Parse(responseString);
-            if (doc.RootElement.TryGetProperty("choices", out var choices) && choices.ValueKind == JsonValueKind.Array && choices.GetArrayLength() > 0)
-            {
-                return choices[0].GetProperty("message").GetProperty("content").GetString() ?? "";
-            }
-            if (doc.RootElement.TryGetProperty("content", out var content))
-            {
-                return content.GetString() ?? "";
-            }
-        }
-        catch
-        {
-            // Fallback to raw if response isn't JSON.
-        }
-
-        return responseString;
+        return LlmParsers.ExtractAssistantContentFromChatResponse(responseString);
     }
 
     // ─── Model List Parsing (internal) ───────────────────────────────
 
-    private static async Task<List<LlmModelInfo>> TryGetModelsFromEndpointAsync(string url, bool assumeLoaded)
+    private static async Task<List<LlmModelInfo>> TryGetModelsFromEndpointAsync(string url, bool assumeLoaded, CancellationToken cancellationToken = default)
     {
         try
         {
-            var response = await HttpClient.GetAsync(url);
+            var response = await HttpClient.GetAsync(url, cancellationToken);
             if (!response.IsSuccessStatusCode)
                 return new List<LlmModelInfo>();
 
             var json = await response.Content.ReadAsStringAsync();
             using var doc = JsonDocument.Parse(json);
             return ParseModelList(doc.RootElement, assumeLoaded);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch
         {

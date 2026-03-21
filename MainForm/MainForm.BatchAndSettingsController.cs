@@ -10,12 +10,9 @@ public partial class MainForm
         var selectedPaths = GetSelectedPaths();
         if (selectedPaths.Length == 0) return;
 
-        using (var form = new BatchProcessingForm(selectedPaths.ToList(), this.Handle))
-        {
-            form.ShowDialog(this);
-            // Refresh file list after batch processing to show new tags/files
-            _ = RefreshCurrentAsync();
-        }
+        var form = new BatchProcessingForm(selectedPaths.ToList(), this.Handle);
+        form.FormClosed += (_, _) => _ = RefreshCurrentAsync();
+        form.Show(this);
     }
 
     private void ExecuteAction(string action) => _hotkeyController.ExecuteAction(action);

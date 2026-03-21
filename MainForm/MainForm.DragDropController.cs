@@ -79,7 +79,7 @@ public partial class MainForm
             UpdateListViewDragHover(e.X, e.Y);
         }
 
-        private void ListView_DragDrop(object? sender, DragEventArgs e)
+        private async void ListView_DragDrop(object? sender, DragEventArgs e)
         {
             if (_listView == null) return;
             if (e.Data == null || !e.Data.GetDataPresent(DataFormats.FileDrop)) return;
@@ -125,14 +125,14 @@ public partial class MainForm
             {
                 if (isCopy)
                 {
-                    FileSystemService.ShellCopy(paths, destination, _owner.Handle, renameOnCollision: true);
+                    await FileSystemService.ShellCopyAsync(paths, destination, _owner.Handle, renameOnCollision: true);
                 }
                 else
                 {
-                    FileSystemService.ShellMove(paths, destination, _owner.Handle, renameOnCollision: true);
+                    await FileSystemService.ShellMoveAsync(paths, destination, _owner.Handle, renameOnCollision: true);
                 }
 
-                _ = _owner.RefreshCurrentAsync();
+                await _owner.RefreshCurrentAsync();
             }
             catch (Exception ex)
             {

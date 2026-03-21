@@ -712,6 +712,25 @@ public class FileSystemService
         }
     }
 
+    public static Task<List<string>> ShellCopyAsync(string[] sourcePaths, string destinationFolder, IntPtr ownerHandle, bool renameOnCollision = false, bool recordOperation = true)
+    {
+        return RunShellOperationAsync(() => ShellCopy(sourcePaths, destinationFolder, ownerHandle, renameOnCollision, recordOperation), IntPtr.Zero);
+    }
+
+    public static Task<List<string>> ShellMoveAsync(string[] sourcePaths, string destinationFolder, IntPtr ownerHandle, bool renameOnCollision = false, bool recordOperation = true)
+    {
+        return RunShellOperationAsync(() => ShellMove(sourcePaths, destinationFolder, ownerHandle, renameOnCollision, recordOperation), IntPtr.Zero);
+    }
+
+    public static Task ShellDeleteAsync(string[] sourcePaths, IntPtr ownerHandle, bool recordOperation = true, bool permanent = false)
+    {
+        return RunShellOperationAsync(() =>
+        {
+            ShellDelete(sourcePaths, ownerHandle, recordOperation, permanent);
+            return true;
+        }, IntPtr.Zero);
+    }
+
     /// <summary>
     /// Restores files from the Recycle Bin to their original locations
     /// </summary>
@@ -852,9 +871,13 @@ public class FileSystemService
 
         try
         {
+            IntPtr shellUiOwnerHandle = s_hasAsyncShellOwnerHandleOverride
+                ? s_asyncShellOwnerHandleOverride
+                : ownerHandle;
+
             var op = new SHFILEOPSTRUCT
             {
-                hwnd = ownerHandle,
+                hwnd = shellUiOwnerHandle,
                 wFunc = func,
                 pFrom = pFrom,
                 pTo = pTo,
@@ -934,4 +957,43 @@ public class FileSystemService
 
         return resultingPaths;
     }
+
+    private static Task<T> RunShellOperationAsync<T>(Func<T> operation, IntPtr shellUiOwnerHandleOverride)
+    {
+        var tcs = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var thread = new Thread(() =>
+        {
+            bool previousHasOverride = s_hasAsyncShellOwnerHandleOverride;
+            IntPtr previousOwner = s_asyncShellOwnerHandleOverride;
+            try
+            {
+                s_hasAsyncShellOwnerHandleOverride = true;
+                s_asyncShellOwnerHandleOverride = shellUiOwnerHandleOverride;
+                T result = operation();
+                tcs.TrySetResult(result);
+            }
+            catch (Exception ex)
+            {
+                tcs.TrySetException(ex);
+            }
+            finally
+            {
+                s_hasAsyncShellOwnerHandleOverride = previousHasOverride;
+                s_asyncShellOwnerHandleOverride = previousOwner;
+            }
+        });
+
+        thread.IsBackground = true;
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+
+        return tcs.Task;
+    }
+
+    [ThreadStatic]
+    private static bool s_hasAsyncShellOwnerHandleOverride;
+
+    [ThreadStatic]
+    private static IntPtr s_asyncShellOwnerHandleOverride;
 }

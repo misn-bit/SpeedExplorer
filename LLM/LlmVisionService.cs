@@ -29,6 +29,7 @@ public class LlmVisionService
     /// </summary>
     public async Task<List<string>> GetImageTagsAsync(string userPrompt, string imagePath, string apiUrl, string? modelOverride = null, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var settings = AppSettings.Current;
         string model = string.IsNullOrWhiteSpace(modelOverride) ? settings.LlmModelName : modelOverride;
         string requestUrl = LlmModelManager.GetCompletionsApiUrl(string.IsNullOrWhiteSpace(apiUrl) ? settings.LlmApiUrl : apiUrl, null);
@@ -91,7 +92,8 @@ public class LlmVisionService
             if (!response.IsSuccessStatusCode &&
                 LlmModelManager.IsModelUnloadedError(responseText))
             {
-                if (await _modelManager.TryRecoverVisionModelAsync(requestUrl, model, "GetImageTags primary model-unloaded"))
+                cancellationToken.ThrowIfCancellationRequested();
+                if (await _modelManager.TryRecoverVisionModelAsync(requestUrl, model, "GetImageTags primary model-unloaded", cancellationToken))
                 {
                     using var recoveryContent = new StringContent(requestJson, Encoding.UTF8, "application/json");
                     response = await LlmModelManager.HttpClient.PostAsync(requestUrl, recoveryContent, cancellationToken);
@@ -135,7 +137,8 @@ public class LlmVisionService
                 if (!response.IsSuccessStatusCode &&
                     LlmModelManager.IsModelUnloadedError(responseText))
                 {
-                    if (await _modelManager.TryRecoverVisionModelAsync(requestUrl, model, "GetImageTags retry model-unloaded"))
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (await _modelManager.TryRecoverVisionModelAsync(requestUrl, model, "GetImageTags retry model-unloaded", cancellationToken))
                     {
                         using var retryRecoveryContent = new StringContent(requestJson, Encoding.UTF8, "application/json");
                         response = await LlmModelManager.HttpClient.PostAsync(requestUrl, retryRecoveryContent, cancellationToken);
@@ -154,15 +157,21 @@ public class LlmVisionService
             var choices = doc.RootElement.GetProperty("choices");
             if (choices.GetArrayLength() == 0) return new List<string>();
             
-            var messageContent = choices[0].GetProperty("message").GetProperty("content").GetString() ?? "";
+            var messageContent = LlmParsers.ExtractAssistantMessageText(
+                choices[0].GetProperty("message"),
+                allowReasoningFallback: true);
             LlmDebugLogger.LogResponse(messageContent);
 
-            using var resultDoc = JsonDocument.Parse(messageContent);
+            using var resultDoc = JsonDocument.Parse(LlmParsers.ExtractJsonObject(messageContent));
             if (resultDoc.RootElement.TryGetProperty("tags", out var tagsArray))
             {
                 return tagsArray.EnumerateArray().Select(x => x.GetString() ?? "").Where(s => !string.IsNullOrWhiteSpace(s)).ToList();
             }
             return new List<string>();
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -177,6 +186,7 @@ public class LlmVisionService
     /// </summary>
     public async Task<LlmImageTextResult?> ExtractImageTextAsync(string imagePath, string apiUrl, string? modelOverride = null, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var settings = AppSettings.Current;
         string model = string.IsNullOrWhiteSpace(modelOverride) ? settings.LlmModelName : modelOverride;
         string requestUrl = LlmModelManager.GetCompletionsApiUrl(string.IsNullOrWhiteSpace(apiUrl) ? settings.LlmApiUrl : apiUrl, null);
@@ -186,7 +196,8 @@ public class LlmVisionService
 
         async Task<bool> TryReloadModelAsync(string stage)
         {
-            return await _modelManager.TryRecoverVisionModelAsync(requestUrl, model, $"ExtractImageText {stage}");
+            cancellationToken.ThrowIfCancellationRequested();
+            return await _modelManager.TryRecoverVisionModelAsync(requestUrl, model, $"ExtractImageText {stage}", cancellationToken);
         }
 
         string systemPrompt =
@@ -294,6 +305,7 @@ public class LlmVisionService
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var attempt in attempts)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 string attemptKey = $"{attempt.MaxPixels}:{attempt.Quality}";
                 if (!seen.Add(attemptKey))
                     continue;
@@ -337,7 +349,8 @@ public class LlmVisionService
                         new[] { imageStats });
 
                     using var fallbackContent = new StringContent(fallbackJson, Encoding.UTF8, "application/json");
-                    using var fallbackCts = new CancellationTokenSource(TimeSpan.FromSeconds(ocrTimeoutSeconds));
+                    using var fallbackCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                    fallbackCts.CancelAfter(TimeSpan.FromSeconds(ocrTimeoutSeconds));
                     var fallbackResponse = await LlmModelManager.HttpClient.PostAsync(requestUrl, fallbackContent, fallbackCts.Token);
                     string fallbackResponseText = await fallbackResponse.Content.ReadAsStringAsync();
 
@@ -346,7 +359,8 @@ public class LlmVisionService
                         if (await TryReloadModelAsync($"fallback {attempt.MaxPixels}px"))
                         {
                             using var fallbackRetryContent = new StringContent(fallbackJson, Encoding.UTF8, "application/json");
-                            using var fallbackRetryCts = new CancellationTokenSource(TimeSpan.FromSeconds(ocrTimeoutSeconds));
+                            using var fallbackRetryCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                            fallbackRetryCts.CancelAfter(TimeSpan.FromSeconds(ocrTimeoutSeconds));
                             fallbackResponse = await LlmModelManager.HttpClient.PostAsync(requestUrl, fallbackRetryContent, fallbackRetryCts.Token);
                             fallbackResponseText = await fallbackResponse.Content.ReadAsStringAsync();
                         }
@@ -357,7 +371,7 @@ public class LlmVisionService
                         LlmDebugLogger.LogError($"ExtractImageText fallback API Error {fallbackResponse.StatusCode}: {fallbackResponseText}");
                         if (LlmModelManager.IsFailedToProcessImageError(fallbackResponse.StatusCode, fallbackResponseText))
                         {
-                            await Task.Delay(120);
+                            await Task.Delay(120, cancellationToken);
                             continue;
                         }
                         continue;
@@ -367,7 +381,9 @@ public class LlmVisionService
                     if (!fallbackDoc.RootElement.TryGetProperty("choices", out var fallbackChoices) || fallbackChoices.GetArrayLength() == 0)
                         continue;
 
-                    string fallbackMessage = fallbackChoices[0].GetProperty("message").GetProperty("content").GetString() ?? "";
+                    string fallbackMessage = LlmParsers.ExtractAssistantMessageText(
+                        fallbackChoices[0].GetProperty("message"),
+                        allowReasoningFallback: true);
                     LlmDebugLogger.LogResponse(fallbackMessage);
 
                     try
@@ -387,6 +403,10 @@ public class LlmVisionService
                             Blocks = new List<LlmImageTextBlock>()
                         };
                     }
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
                 }
                 catch (Exception ex)
                 {
@@ -487,7 +507,9 @@ public class LlmVisionService
             if (!doc.RootElement.TryGetProperty("choices", out var choices) || choices.GetArrayLength() == 0)
                 return null;
 
-            string messageContent = choices[0].GetProperty("message").GetProperty("content").GetString() ?? "";
+            string messageContent = LlmParsers.ExtractAssistantMessageText(
+                choices[0].GetProperty("message"),
+                allowReasoningFallback: true);
             LlmDebugLogger.LogResponse(messageContent);
             try
             {
@@ -507,6 +529,10 @@ public class LlmVisionService
                 };
             }
         }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             LlmDebugLogger.LogError($"ExtractImageText failed: {ex.Message}");
@@ -525,6 +551,7 @@ public class LlmVisionService
         string? modelOverride = null,
         CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var settings = AppSettings.Current;
         string model = string.IsNullOrWhiteSpace(modelOverride) ? settings.LlmModelName : modelOverride;
         string requestUrl = LlmModelManager.GetCompletionsApiUrl(string.IsNullOrWhiteSpace(apiUrl) ? settings.LlmApiUrl : apiUrl, null);
@@ -627,7 +654,9 @@ public class LlmVisionService
             if (!doc.RootElement.TryGetProperty("choices", out var choices) || choices.GetArrayLength() == 0)
                 return null;
 
-            string messageContent = choices[0].GetProperty("message").GetProperty("content").GetString() ?? "";
+            string messageContent = LlmParsers.ExtractAssistantMessageText(
+                choices[0].GetProperty("message"),
+                allowReasoningFallback: true);
             LlmDebugLogger.LogResponse(messageContent);
 
             var parsed = LlmParsers.ParseTranslationResult(messageContent, target);
@@ -639,6 +668,10 @@ public class LlmVisionService
                 parsed.TranslatedFullText = string.Join(Environment.NewLine, parsed.Translations);
 
             return parsed;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception ex)
         {

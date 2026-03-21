@@ -181,33 +181,47 @@ public partial class MainForm
                         isCut = true;
                 }
 
-                List<string> addedPaths;
-
-                if (isCut)
+                try
                 {
-                    addedPaths = FileSystemService.ShellMove(paths, _owner._currentPath, _owner.Handle, isSameFolder);
-                    _owner._cutPaths.Clear();
-                }
-                else
-                {
-                    // For same folder, use renameOnCollision=true for " - Copy" behavior.
-                    // For different folders, use renameOnCollision=false to get Windows conflict dialog.
-                    addedPaths = FileSystemService.ShellCopy(paths, _owner._currentPath, _owner.Handle, isSameFolder);
-                }
+                    List<string> addedPaths;
 
-                // Refresh with explicit selection of new files.
-                await _owner.RefreshCurrentAsync(addedPaths);
+                    if (isCut)
+                    {
+                        addedPaths = await FileSystemService.ShellMoveAsync(paths, _owner._currentPath, _owner.Handle, isSameFolder);
+                        _owner._cutPaths.Clear();
+                    }
+                    else
+                    {
+                        // For same folder, use renameOnCollision=true for " - Copy" behavior.
+                        // For different folders, use renameOnCollision=false to get Windows conflict dialog.
+                        addedPaths = await FileSystemService.ShellCopyAsync(paths, _owner._currentPath, _owner.Handle, isSameFolder);
+                    }
+
+                    // Refresh with explicit selection of new files.
+                    await _owner.RefreshCurrentAsync(addedPaths);
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"Paste operation failed: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
             }
         }
 
-        public void DeleteSelected(bool permanent)
+        public async void DeleteSelected(bool permanent)
         {
             var paths = _owner.GetSelectedPaths();
             if (paths.Length > 0)
             {
                 bool effectivePermanent = permanent || AppSettings.Current.PermanentDeleteByDefault;
-                FileSystemService.ShellDelete(paths, _owner.Handle, recordOperation: !effectivePermanent, permanent: effectivePermanent);
-                _ = _owner.RefreshCurrentAsync();
+                try
+                {
+                    await FileSystemService.ShellDeleteAsync(paths, _owner.Handle, recordOperation: !effectivePermanent, permanent: effectivePermanent);
+                    _ = _owner.RefreshCurrentAsync();
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"Delete operation failed: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
             }
         }
 

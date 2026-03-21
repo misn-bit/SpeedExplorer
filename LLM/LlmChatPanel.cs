@@ -789,14 +789,33 @@ public class LlmChatPanel : Panel
         try
         {
             string currentContext = BuildCurrentContextSnapshot(currentDir);
-            var decision = await _llmService.SendAgentChatDecisionAsync(
-                _chatHistory,
-                currentDir,
-                currentContext,
-                _taggingToggle.Checked,
-                _searchToggle.Checked,
-                forceReplyOnly: false,
-                modelOverride: selectedModel);
+            LlmAgentChatDecision decision;
+            string? heuristicRunTask = TryBuildHeuristicAgentRunTask(userPrompt);
+            if (!string.IsNullOrWhiteSpace(heuristicRunTask))
+            {
+                decision = new LlmAgentChatDecision
+                {
+                    Action = "start_agent_run",
+                    Message = "Working on that now.",
+                    RunTask = heuristicRunTask
+                };
+                _chatHistory.Add(new ChatMessage
+                {
+                    Role = "system",
+                    Content = "[LOCAL_ROUTER]\nPromoted this request directly to agent run because it clearly requires file changes."
+                });
+            }
+            else
+            {
+                decision = await _llmService.SendAgentChatDecisionAsync(
+                    _chatHistory,
+                    currentDir,
+                    currentContext,
+                    _taggingToggle.Checked,
+                    _searchToggle.Checked,
+                    forceReplyOnly: false,
+                    modelOverride: selectedModel);
+            }
 
             string action = (decision.Action ?? "reply").Trim().ToLowerInvariant();
 
@@ -1102,5 +1121,40 @@ public class LlmChatPanel : Panel
                 count += move.SourcePaths.Count;
         }
         return count;
+    }
+
+    private static string? TryBuildHeuristicAgentRunTask(string? userPrompt)
+    {
+        if (string.IsNullOrWhiteSpace(userPrompt))
+            return null;
+
+        string text = userPrompt.Trim();
+        string lower = text.ToLowerInvariant();
+
+        string[] writeSignals =
+        {
+            "move ", "rename ", "organize ", "reorganize ", "sort ", "group ", "put ",
+            "create folder", "make folder", "create file", "make file", "tag ", "retag ",
+            "split ", "separate ", "clean up", "cleanup ", "arrange ", "place "
+        };
+
+        string[] inspectionSignals =
+        {
+            "what files", "which files", "show ", "list ", "find ", "search ", "how many ",
+            "do i have", "is there", "what's in", "what is in", "check "
+        };
+
+        bool hasWriteSignal = writeSignals.Any(signal => lower.Contains(signal, StringComparison.Ordinal));
+        bool hasInspectionSignal = inspectionSignals.Any(signal => lower.Contains(signal, StringComparison.Ordinal));
+        bool mentionsDestination = lower.Contains(" into ") || lower.Contains(" to ") || lower.Contains(" folder");
+        bool mentionsExtension = lower.Contains("*.") || lower.Contains(" .jpg") || lower.Contains(" .jpeg") ||
+                                 lower.Contains(" .png") || lower.Contains(" .gif") || lower.Contains(" .webp") ||
+                                 lower.Contains(" .bmp") || lower.Contains(" .txt") || lower.Contains(" .pdf") ||
+                                 lower.Contains(" by extension");
+
+        if (hasWriteSignal || (mentionsExtension && mentionsDestination && !hasInspectionSignal))
+            return text;
+
+        return null;
     }
 }
