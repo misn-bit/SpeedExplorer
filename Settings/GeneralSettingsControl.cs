@@ -26,6 +26,8 @@ public sealed class GeneralSettingsControl : UserControl
     private readonly CheckBox _debugNavGcChk;
     private readonly CheckBox _debugNavUiQueueChk;
     private readonly CheckBox _debugNavPostBindChk;
+    private readonly CheckBox _debugCrashLogChk;
+    private readonly CheckBox _debugShellLogChk;
     private readonly ComboBox _languageCombo;
 
     private int Scale(int pixels) => (int)(pixels * (DeviceDpi / 96.0));
@@ -179,6 +181,11 @@ public sealed class GeneralSettingsControl : UserControl
 
         _debugNavPostBindChk = CreateCheckBox(Localization.T("debug_nav_postbind"), Point.Empty);
         panel.Controls.Add(_debugNavPostBindChk);
+        _debugCrashLogChk = CreateCheckBox(Localization.T("debug_crash_log"), Point.Empty);
+        panel.Controls.Add(_debugCrashLogChk);
+
+        _debugShellLogChk = CreateCheckBox(Localization.T("debug_shell_log"), Point.Empty);
+        panel.Controls.Add(_debugShellLogChk);
 
         panel.Controls.Add(new Panel { Height = Scale(30), Width = Scale(1), BackColor = Color.Transparent });
     }
@@ -207,6 +214,8 @@ public sealed class GeneralSettingsControl : UserControl
         _debugNavGcChk.Checked = s.DebugNavigationGcStats;
         _debugNavUiQueueChk.Checked = s.DebugNavigationUiQueue;
         _debugNavPostBindChk.Checked = s.DebugNavigationPostBind;
+        _debugCrashLogChk.Checked = s.DebugCrashLogging;
+        _debugShellLogChk.Checked = s.DebugShellLogging;
         UpdateToggles();
     }
 
@@ -234,6 +243,8 @@ public sealed class GeneralSettingsControl : UserControl
         s.DebugNavigationGcStats = _debugNavGcChk.Checked;
         s.DebugNavigationUiQueue = _debugNavUiQueueChk.Checked;
         s.DebugNavigationPostBind = _debugNavPostBindChk.Checked;
+        s.DebugCrashLogging = _debugCrashLogChk.Checked;
+        s.DebugShellLogging = _debugShellLogChk.Checked;
     }
 
     public bool ShowTrayIcon => _showTrayIconChk.Checked;
@@ -311,3 +322,4 @@ public sealed class GeneralSettingsControl : UserControl
         BackColor = Color.Transparent
     };
 }
+

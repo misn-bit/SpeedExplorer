@@ -148,6 +148,7 @@ public class ImageViewerForm : Form
     private int ControlPanelHeight => Scale(50);
     private int ControlButtonHeight => Scale(24);
     private int ZoomSliderVisualOffsetY => Scale(2);
+    private Padding WindowFramePadding => Scale(new Padding(2));
 
     public ImageViewerForm(List<string> imagePaths, int startIndex)
     {
@@ -167,7 +168,7 @@ public class ImageViewerForm : Form
         KeyPreview = true; 
         DoubleBuffered = true;
         FormBorderStyle = FormBorderStyle.None; 
-        Padding = Scale(new Padding(2));
+        Padding = WindowFramePadding;
 
         // --- Title Bar ---
         _titleBar = new Panel
@@ -562,7 +563,14 @@ public class ImageViewerForm : Form
         Controls.Add(_titleBar);
 
         // Custom Paint for Border
-        Paint += (s, e) => { using var p = new Pen(Color.FromArgb(60, 60, 60)); e.Graphics.DrawRectangle(p, 0, 0, Width - 1, Height - 1); };
+        Paint += (s, e) =>
+        {
+            if (_isFullscreen)
+                return;
+
+            using var p = new Pen(Color.FromArgb(60, 60, 60));
+            e.Graphics.DrawRectangle(p, 0, 0, Width - 1, Height - 1);
+        };
 
         LoadCurrentImage();
         LayoutControls();
@@ -2777,9 +2785,7 @@ public class ImageViewerForm : Form
             {
                 WindowState = _previousWindowState;
             }
-            
-            _controlPanel.Visible = true;
-            _titleBar.Visible = true;
+
             _isFullscreen = false;
         }
         else
@@ -2790,11 +2796,19 @@ public class ImageViewerForm : Form
             // Fullscreen should cover taskbar, so clear bounds
             MaximizedBounds = Rectangle.Empty; 
             WindowState = FormWindowState.Maximized;
-            _controlPanel.Visible = false;
-            _titleBar.Visible = false;
             _isFullscreen = true;
         }
+
+        ApplyChromeVisibility();
         FitToWindow();
+    }
+
+    private void ApplyChromeVisibility()
+    {
+        Padding = _isFullscreen ? Padding.Empty : WindowFramePadding;
+        _controlPanel.Visible = !_isFullscreen;
+        _titleBar.Visible = !_isFullscreen;
+        Invalidate();
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)

@@ -243,6 +243,9 @@ static class Program
 
     private static void LogCrash(string source, Exception? ex, string? extra = null)
     {
+        if (!IsCrashLoggingEnabled())
+            return;
+
         try
         {
             var lines = new StringBuilder();
@@ -255,6 +258,18 @@ static class Program
             File.AppendAllText(GetCrashLogPath(), lines.ToString());
         }
         catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+    }
+
+    private static bool IsCrashLoggingEnabled()
+    {
+        try
+        {
+            return AppSettings.Current.DebugCrashLogging;
+        }
+        catch
+        {
+            return true;
+        }
     }
 
     private static void WriteMiniDump(string source)

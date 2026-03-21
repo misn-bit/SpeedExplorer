@@ -31,6 +31,7 @@ public class LlmVisionService
     {
         cancellationToken.ThrowIfCancellationRequested();
         var settings = AppSettings.Current;
+        long visionMaxPixels = LlmImageProcessor.GetConfiguredVisionMaxPixels();
         string model = string.IsNullOrWhiteSpace(modelOverride) ? settings.LlmModelName : modelOverride;
         string requestUrl = LlmModelManager.GetCompletionsApiUrl(string.IsNullOrWhiteSpace(apiUrl) ? settings.LlmApiUrl : apiUrl, null);
         
@@ -44,7 +45,7 @@ public class LlmVisionService
         var stats = new LlmImageStats { Path = imagePath };
         try 
         {
-            var (imageBytes, s) = LlmImageProcessor.PrepareImageForVision(imagePath);
+            var (imageBytes, s) = LlmImageProcessor.PrepareImageForVision(imagePath, visionMaxPixels);
             stats = s;
             string base64 = Convert.ToBase64String(imageBytes);
             
@@ -105,7 +106,7 @@ public class LlmVisionService
                 LlmModelManager.IsFailedToProcessImageError(response.StatusCode, responseText))
             {
                 LlmDebugLogger.LogExecution("GetImageTags retry with aggressive resize/compression", success: false);
-                var (retryBytes, retryStats) = LlmImageProcessor.PrepareImageForVision(imagePath, 1024L * 1024L, 70);
+                var (retryBytes, retryStats) = LlmImageProcessor.PrepareImageForVision(imagePath, Math.Min(visionMaxPixels, 1024L * 1024L), 70);
                 string retryBase64 = Convert.ToBase64String(retryBytes);
                 var retryContentList = new List<object>
                 {
@@ -188,6 +189,7 @@ public class LlmVisionService
     {
         cancellationToken.ThrowIfCancellationRequested();
         var settings = AppSettings.Current;
+        long visionMaxPixels = LlmImageProcessor.GetConfiguredVisionMaxPixels();
         string model = string.IsNullOrWhiteSpace(modelOverride) ? settings.LlmModelName : modelOverride;
         string requestUrl = LlmModelManager.GetCompletionsApiUrl(string.IsNullOrWhiteSpace(apiUrl) ? settings.LlmApiUrl : apiUrl, null);
         int ocrMaxTokens = Math.Max(settings.LlmMaxTokens, 5000);
@@ -421,7 +423,7 @@ public class LlmVisionService
         List<LlmImageStats> stats;
         try
         {
-            (requestJson, stats) = BuildRequest(1536L * 1536L, 85);
+            (requestJson, stats) = BuildRequest(visionMaxPixels, 85);
         }
         catch (Exception ex)
         {
@@ -452,12 +454,12 @@ public class LlmVisionService
                 LlmModelManager.IsFailedToProcessImageError(response.StatusCode, responseText))
             {
                 LlmDebugLogger.LogExecution("ExtractImageText early fallback without response_format (primary failed to process image)", success: false);
-                var earlyFallback = await RunFallbackWithoutSchemaAsync(1536L * 1536L, 85, "primary failed_to_process_image");
+                var earlyFallback = await RunFallbackWithoutSchemaAsync(visionMaxPixels, 85, "primary failed_to_process_image");
                 if (earlyFallback != null)
                     return earlyFallback;
 
                 LlmDebugLogger.LogExecution("ExtractImageText retry with aggressive resize/compression", success: false);
-                (requestJson, stats) = BuildRequest(1024L * 1024L, 70);
+                (requestJson, stats) = BuildRequest(Math.Min(visionMaxPixels, 1024L * 1024L), 70);
                 LlmDebugLogger.LogRequest(Path.GetDirectoryName(imagePath) ?? "", userPrompt, systemPrompt, requestJson, new[] { imagePath }, stats);
 
                 using var retryContent = new StringContent(requestJson, Encoding.UTF8, "application/json");
@@ -478,7 +480,7 @@ public class LlmVisionService
                     LlmModelManager.IsFailedToProcessImageError(response.StatusCode, responseText))
                 {
                     LlmDebugLogger.LogExecution("ExtractImageText second retry with ultra resize/compression", success: false);
-                    (requestJson, stats) = BuildRequest(768L * 768L, 60);
+                    (requestJson, stats) = BuildRequest(Math.Min(visionMaxPixels, 768L * 768L), 60);
                     LlmDebugLogger.LogRequest(Path.GetDirectoryName(imagePath) ?? "", userPrompt, systemPrompt, requestJson, new[] { imagePath }, stats);
 
                     using var retryContent2 = new StringContent(requestJson, Encoding.UTF8, "application/json");
@@ -500,7 +502,7 @@ public class LlmVisionService
             if (!response.IsSuccessStatusCode)
             {
                 LlmDebugLogger.LogError($"ExtractImageText API Error {response.StatusCode}: {responseText}");
-                return await RunFallbackWithoutSchemaAsync(896L * 896L, 65, $"{(int)response.StatusCode} {response.StatusCode}");
+                return await RunFallbackWithoutSchemaAsync(Math.Min(visionMaxPixels, 896L * 896L), 65, $"{(int)response.StatusCode} {response.StatusCode}");
             }
 
             using var doc = JsonDocument.Parse(responseText);

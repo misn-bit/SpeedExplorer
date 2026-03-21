@@ -95,6 +95,9 @@ public static class LlmDebugLogger
 
     private static void Write(string text)
     {
+        if (!IsEnabled())
+            return;
+
         lock (_lock)
         {
             try
@@ -161,5 +164,17 @@ public static class LlmDebugLogger
         catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
 
         return Environment.CurrentDirectory;
+    }
+
+    private static bool IsEnabled()
+    {
+        try
+        {
+            return AppSettings.Current.DebugLlmLogging;
+        }
+        catch
+        {
+            return true;
+        }
     }
 }

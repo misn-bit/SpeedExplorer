@@ -199,7 +199,7 @@ internal sealed class ShellNavigationController
             if (rawPath.StartsWith(ShellIdPrefix, StringComparison.OrdinalIgnoreCase))
                 return null;
 
-            bool debugShell = File.Exists(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "debug_shell.txt"));
+            bool debugShell = AppSettings.Current.DebugShellLogging;
             string debugShellLog = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "debug_shell.log");
 
             dynamic folder = shell.NameSpace(rawPath);
@@ -366,7 +366,7 @@ internal sealed class ShellNavigationController
     public Task<List<FileItem>> GetShellItemsAsync(string shellPath, CancellationToken ct, string displayPath)
     {
         var tcs = new TaskCompletionSource<List<FileItem>>();
-        var debugShell = File.Exists(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "debug_shell.txt"));
+        var debugShell = AppSettings.Current.DebugShellLogging;
         var debugShellLog = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "debug_shell.log");
 
         if (IsShellIdPath(shellPath))

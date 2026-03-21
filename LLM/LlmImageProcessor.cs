@@ -15,11 +15,26 @@ namespace SpeedExplorer;
 /// </summary>
 public static class LlmImageProcessor
 {
+    public const long DefaultVisionMaxPixels = 1536L * 1536L;
+
+    public static long GetConfiguredVisionMaxPixels()
+    {
+        long configured = AppSettings.Current.LlmVisionMaxPixels;
+        if (configured <= 0)
+            configured = DefaultVisionMaxPixels;
+
+        long minPixels = 256L * 256L;
+        if (configured < minPixels)
+            configured = minPixels;
+
+        return configured;
+    }
+
     /// <summary>
     /// Resizes image for vision models to avoid payload issues while maintaining visibility.
     /// Targeted at ~2.36M pixels (1536x1536 equivalent).
     /// </summary>
-    public static (byte[], LlmImageStats) PrepareImageForVision(string path, long maxPixels = 1536L * 1536L, int jpegQuality = 85)
+    public static (byte[], LlmImageStats) PrepareImageForVision(string path, long maxPixels = DefaultVisionMaxPixels, int jpegQuality = 85)
     {
         var stats = new LlmImageStats { Path = path };
         if (maxPixels < 256L * 256L) maxPixels = 256L * 256L;

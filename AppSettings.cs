@@ -64,6 +64,8 @@ public class AppSettings
     public bool DebugNavigationGcStats { get; set; } = false;
     public bool DebugNavigationUiQueue { get; set; } = false;
     public bool DebugNavigationPostBind { get; set; } = false;
+    public bool DebugCrashLogging { get; set; } = true;
+    public bool DebugShellLogging { get; set; } = false;
     public bool DefaultFileManagerEnabled { get; set; } = false;
     public string DefaultFileManagerScope { get; set; } = "None";
     public string DefaultFileManagerBackupJson { get; set; } = "";
@@ -107,6 +109,7 @@ public class AppSettings
     public string LlmBatchVisionModelName { get; set; } = "";
     public int LlmMaxTokens { get; set; } = 4096;
     public double LlmTemperature { get; set; } = 0.3;
+    public int LlmVisionMaxPixels { get; set; } = 1536 * 1536;
     
     // Chat & Agent Mode Settings
     public string LlmChatApiUrl { get; set; } = "http://localhost:1234/api/v1/chat";
@@ -119,6 +122,7 @@ public class AppSettings
     public bool LlmTaggingEnabled { get; set; } = true;
     public bool LlmFullContextEnabled { get; set; } = false;
     public bool LlmThinkingEnabled { get; set; } = true;
+    public bool DebugLlmLogging { get; set; } = true;
     
     public System.Collections.Generic.Dictionary<string, string> Hotkeys { get; set; } = new()
     {
@@ -242,6 +246,9 @@ public class AppSettings
                 // Migrate: new separate default model for batch vision tasks.
                 if (string.IsNullOrWhiteSpace(settings.LlmBatchVisionModelName))
                     settings.LlmBatchVisionModelName = settings.LlmModelName;
+
+                if (settings.LlmVisionMaxPixels <= 0)
+                    settings.LlmVisionMaxPixels = new AppSettings().LlmVisionMaxPixels;
                 
                 return settings;
             }

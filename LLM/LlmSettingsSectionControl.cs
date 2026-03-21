@@ -17,6 +17,8 @@ public sealed class LlmSettingsSectionControl : UserControl
     private readonly NumericUpDown _llmMaxTokensNum;
     private readonly NumericUpDown _llmAgentMaxLoopsNum;
     private readonly NumericUpDown _llmTempNum;
+    private readonly NumericUpDown _llmVisionMaxMpNum;
+    private readonly CheckBox _llmDebugLogChk;
     private readonly Button _fetchModelsBtn;
 
     private int Scale(int pixels) => (int)(pixels * (DeviceDpi / 96.0));
@@ -139,12 +141,31 @@ public sealed class LlmSettingsSectionControl : UserControl
         tempPanel.Controls.Add(_llmTempNum);
         _panel.Controls.Add(tempPanel);
 
+        var visionPixelsPanel = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.LeftToRight, WrapContents = false };
+        visionPixelsPanel.Controls.Add(CreateLabel(Localization.T("vision_max_pixel_budget_mp"), new Point(0, Scale(5))));
+        _llmVisionMaxMpNum = new NumericUpDown
+        {
+            Minimum = 0.25M,
+            Maximum = 32.0M,
+            DecimalPlaces = 2,
+            Increment = 0.25M,
+            Location = Point.Empty,
+            Size = new Size(Scale(90), Scale(25)),
+            BackColor = Color.FromArgb(60, 60, 60),
+            ForeColor = Color.White
+        };
+        visionPixelsPanel.Controls.Add(_llmVisionMaxMpNum);
+        _panel.Controls.Add(visionPixelsPanel);
+
         var loopPanel = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.LeftToRight, WrapContents = false };
         loopPanel.Controls.Add(CreateLabel("Max Agent Loops", new Point(0, Scale(5))));
         _llmAgentMaxLoopsNum = CreateNumeric(1, 100, Point.Empty);
         _llmAgentMaxLoopsNum.Width = Scale(60);
         loopPanel.Controls.Add(_llmAgentMaxLoopsNum);
         _panel.Controls.Add(loopPanel);
+
+        _llmDebugLogChk = CreateCheckBox(Localization.T("debug_llm_log"), Point.Empty);
+        _panel.Controls.Add(_llmDebugLogChk);
 
         _panel.Controls.Add(CreateSpacer(16));
     }
@@ -159,7 +180,10 @@ public sealed class LlmSettingsSectionControl : UserControl
         _llmBatchVisionModelComboBox.Text = settings.LlmBatchVisionModelName;
         _llmMaxTokensNum.Value = Math.Clamp(settings.LlmMaxTokens, 100, 32000);
         _llmTempNum.Value = (decimal)Math.Clamp(settings.LlmTemperature, 0, 2.0);
+        decimal visionMp = (decimal)Math.Max(settings.LlmVisionMaxPixels, 256 * 256) / 1_000_000M;
+        _llmVisionMaxMpNum.Value = Math.Clamp(visionMp, _llmVisionMaxMpNum.Minimum, _llmVisionMaxMpNum.Maximum);
         _llmAgentMaxLoopsNum.Value = Math.Clamp(settings.LlmAgentMaxLoops, 1, 100);
+        _llmDebugLogChk.Checked = settings.DebugLlmLogging;
     }
 
     public void ApplyToSettings(AppSettings settings)
@@ -172,7 +196,9 @@ public sealed class LlmSettingsSectionControl : UserControl
         settings.LlmBatchVisionModelName = _llmBatchVisionModelComboBox.Text.Trim();
         settings.LlmMaxTokens = (int)_llmMaxTokensNum.Value;
         settings.LlmTemperature = (double)_llmTempNum.Value;
+        settings.LlmVisionMaxPixels = Math.Max(256 * 256, (int)Math.Round((double)_llmVisionMaxMpNum.Value * 1_000_000.0));
         settings.LlmAgentMaxLoops = (int)_llmAgentMaxLoopsNum.Value;
+        settings.DebugLlmLogging = _llmDebugLogChk.Checked;
     }
 
     private async void FetchModels_Click(object? sender, EventArgs e)

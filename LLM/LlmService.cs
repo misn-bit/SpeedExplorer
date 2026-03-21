@@ -1261,6 +1261,7 @@ public class LlmService
 
         // Get settings from AppSettings
         var settings = AppSettings.Current;
+        long visionMaxPixels = LlmImageProcessor.GetConfiguredVisionMaxPixels();
         string model = string.IsNullOrWhiteSpace(modelOverride) ? settings.LlmModelName : modelOverride;
         string requestUrl = GetCompletionsApiUrl(string.IsNullOrWhiteSpace(ApiUrl) ? settings.LlmApiUrl : ApiUrl, null);
         
@@ -1325,7 +1326,7 @@ public class LlmService
         
         if (isVisionRequest)
         {
-            var (json, imageStats) = BuildVisionRequestJson(1536L * 1536L, 85);
+            var (json, imageStats) = BuildVisionRequestJson(visionMaxPixels, 85);
             requestJson = json;
             LlmDebugLogger.LogRequest(currentDir, userPrompt, systemPrompt, requestJson, imagePaths, imageStats);
         }
@@ -1376,7 +1377,7 @@ public class LlmService
                 IsFailedToProcessImageError(response.StatusCode, responseText))
             {
                 LlmDebugLogger.LogExecution("Vision request retry with aggressive resize/compression", success: false);
-                var (retryJson, retryStats) = BuildVisionRequestJson(1024L * 1024L, 70);
+                var (retryJson, retryStats) = BuildVisionRequestJson(Math.Min(visionMaxPixels, 1024L * 1024L), 70);
                 LlmDebugLogger.LogRequest(currentDir, userPrompt, systemPrompt, retryJson, imagePaths, retryStats);
 
                 using var retryContent = new StringContent(retryJson, Encoding.UTF8, "application/json");
