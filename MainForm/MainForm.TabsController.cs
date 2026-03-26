@@ -720,12 +720,12 @@ public partial class MainForm
 
         private int GetTabPanelWidth()
         {
-            if (_tabStrip == null) return _owner.Scale(160);
+            if (_tabStrip == null) return _owner.Scale(240);
             int count = _tabs.Count;
-            if (count <= 0) return _owner.Scale(160);
+            if (count <= 0) return _owner.Scale(240);
 
-            int maxWidth = _owner.Scale(160);
-            int minWidth = _owner.Scale(70);
+            int maxWidth = _owner.Scale(240);
+            int minWidth = _owner.Scale(105);
             int available = Math.Max(0, _tabStrip.ClientSize.Width - GetTabActionsWidth() - _owner.Scale(1));
             int perTab = available / count;
             return Math.Max(minWidth, Math.Min(maxWidth, perTab));
