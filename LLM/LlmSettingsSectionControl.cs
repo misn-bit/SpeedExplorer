@@ -9,6 +9,7 @@ public sealed class LlmSettingsSectionControl : UserControl
 {
     private readonly FlowLayoutPanel _panel;
     private readonly CheckBox _llmEnabledChk;
+    private readonly CheckBox _llmBatchProcessingChk;
     private readonly TextBox _llmApiUrlBox;
     private readonly CheckBox _llmChatEnabledChk;
     private readonly TextBox _llmChatApiUrlBox;
@@ -48,6 +49,9 @@ public sealed class LlmSettingsSectionControl : UserControl
 
         _llmEnabledChk = CreateCheckBox(Localization.T("llm_enable"), Point.Empty);
         _panel.Controls.Add(_llmEnabledChk);
+
+        _llmBatchProcessingChk = CreateCheckBox(Localization.T("llm_batch_enable"), Point.Empty);
+        _panel.Controls.Add(_llmBatchProcessingChk);
 
         _panel.Controls.Add(CreateLabel(Localization.T("api_url"), Point.Empty));
         _llmApiUrlBox = new TextBox
@@ -173,6 +177,7 @@ public sealed class LlmSettingsSectionControl : UserControl
     public void LoadFromSettings(AppSettings settings)
     {
         _llmEnabledChk.Checked = settings.LlmEnabled;
+        _llmBatchProcessingChk.Checked = settings.LlmBatchProcessingEnabled;
         _llmApiUrlBox.Text = settings.LlmApiUrl;
         _llmChatEnabledChk.Checked = settings.ChatModeEnabled;
         _llmChatApiUrlBox.Text = settings.LlmChatApiUrl;
@@ -189,6 +194,7 @@ public sealed class LlmSettingsSectionControl : UserControl
     public void ApplyToSettings(AppSettings settings)
     {
         settings.LlmEnabled = _llmEnabledChk.Checked;
+        settings.LlmBatchProcessingEnabled = _llmBatchProcessingChk.Checked;
         settings.LlmApiUrl = _llmApiUrlBox.Text.Trim();
         settings.ChatModeEnabled = _llmChatEnabledChk.Checked;
         settings.LlmChatApiUrl = _llmChatApiUrlBox.Text.Trim();

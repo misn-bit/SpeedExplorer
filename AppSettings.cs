@@ -102,7 +102,8 @@ public class AppSettings
     };
 
     // LLM Settings
-    public bool LlmEnabled { get; set; } = true;
+    public bool LlmEnabled { get; set; } = false;
+    public bool LlmBatchProcessingEnabled { get; set; } = false;
     public string LlmApiUrl { get; set; } = "http://localhost:1234/v1/chat/completions";
     public string LlmApiBaseUrl { get; set; } = "http://localhost:1234/api/v1/models"; // For /models
     public string LlmModelName { get; set; } = "qwen/qwen3-4b-thinking-2507";
@@ -118,10 +119,10 @@ public class AppSettings
     public int LlmAgentMaxLoops { get; set; } = 3; // Maximum loops in autonomous agent mode
     public bool LlmAgentModeEnabled { get; set; } = false;
     // LLM UI Toggles
-    public bool LlmSearchEnabled { get; set; } = true;
-    public bool LlmTaggingEnabled { get; set; } = true;
+    public bool LlmSearchEnabled { get; set; } = false;
+    public bool LlmTaggingEnabled { get; set; } = false;
     public bool LlmFullContextEnabled { get; set; } = false;
-    public bool LlmThinkingEnabled { get; set; } = true;
+    public bool LlmThinkingEnabled { get; set; } = false;
     public bool DebugLlmLogging { get; set; } = true;
     
     public System.Collections.Generic.Dictionary<string, string> Hotkeys { get; set; } = new()
@@ -153,7 +154,9 @@ public class AppSettings
         { "EditTags", "Control, Alt, T" },
         { "NewTab", "Control, T" },
         { "NextTab", "Control, PageDown" },
-        { "PrevTab", "Control, PageUp" }
+        { "PrevTab", "Control, PageUp" },
+        { "ToggleOcrBoxes", "OemOpenBrackets" },
+        { "ToggleSavedTranslation", "OemCloseBrackets" }
     };
     
     // Future extensible
@@ -242,6 +245,9 @@ public class AppSettings
                     if (!settings.DriveColumnWidths.ContainsKey(kvp.Key) || settings.DriveColumnWidths[kvp.Key] < 50)
                         settings.DriveColumnWidths[kvp.Key] = kvp.Value;
                 }
+
+                if (!json.Contains("LlmBatchProcessingEnabled", StringComparison.Ordinal))
+                    settings.LlmBatchProcessingEnabled = settings.LlmEnabled;
 
                 // Migrate: new separate default model for batch vision tasks.
                 if (string.IsNullOrWhiteSpace(settings.LlmBatchVisionModelName))

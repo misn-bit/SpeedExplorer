@@ -109,6 +109,7 @@ public class ImageViewerForm : Form
     private readonly List<OverlayTextBlock> _overlayBlocks = new();
     private bool _currentOverlayFromSavedCache;
     private bool _suppressSavedTranslationToggleEvent;
+    private bool _showSavedTranslationPreferred;
 
     private sealed class OverlayTextBlock
     {
@@ -391,6 +392,7 @@ public class ImageViewerForm : Form
             BackColor = Color.Transparent,
             Margin = new Padding(0, Scale(3), 0, 0)
         };
+        _showSavedTranslationPreferred = _showSavedTranslationCheck.Checked;
         savedToggleRow.Controls.Add(_showSavedOcrCheck);
         savedToggleRow.Controls.Add(_showSavedTranslationCheck);
 
@@ -446,7 +448,7 @@ public class ImageViewerForm : Form
         _tagBtn.Click += async (s, e) => await RunViewerTaggingAsync();
         _overlayToggle.CheckedChanged += (s, e) => _pictureBox.Invalidate();
         _showSavedOcrCheck.CheckedChanged += (s, e) => OnShowSavedOcrToggled();
-        _showSavedTranslationCheck.CheckedChanged += (s, e) => ApplySavedTranslationToggleForCurrentImage();
+        _showSavedTranslationCheck.CheckedChanged += (s, e) => OnShowSavedTranslationToggled();
         _clearOverlayBtn.Click += (s, e) => DeleteSavedOcrForCurrentImage();
         _openSavedOcrFileBtn.Click += (s, e) => OpenSavedOcrFileForCurrentImage();
         _copyResultBtn.Click += (s, e) =>
@@ -615,6 +617,17 @@ public class ImageViewerForm : Form
             return true;
         }
         
+        if (IsHotkeyPressed("ToggleOcrBoxes", keyData))
+        {
+            ToggleOverlayBoxes();
+            return true;
+        }
+        if (IsHotkeyPressed("ToggleSavedTranslation", keyData))
+        {
+            ToggleSavedTranslation();
+            return true;
+        }
+
         // Handle Ctrl+0 and Ctrl+1
         // Note: Keys.Control is the modifier bit
         if (keyData == (Keys.Control | Keys.D0) || keyData == (Keys.Control | Keys.NumPad0))
@@ -1275,8 +1288,11 @@ public class ImageViewerForm : Form
         }
     }
 
-    private void SetShowSavedTranslationChecked(bool value)
+    private void SetShowSavedTranslationChecked(bool value, bool updatePreference = false)
     {
+        if (updatePreference)
+            _showSavedTranslationPreferred = value;
+
         _suppressSavedTranslationToggleEvent = true;
         try
         {
@@ -1298,10 +1314,15 @@ public class ImageViewerForm : Form
         _openSavedOcrFileBtn.Enabled = !_aiBusy && hasSaved;
         _clearOverlayBtn.Enabled = !_aiBusy && hasSaved;
 
-        if (_savedTranslationForCurrentImage == null && _showSavedTranslationCheck.Checked)
-            SetShowSavedTranslationChecked(false);
-
         _showSavedTranslationCheck.Enabled = !_aiBusy && _showSavedOcrCheck.Checked && _savedTranslationForCurrentImage != null;
+    }
+
+    private void OnShowSavedTranslationToggled()
+    {
+        if (!_suppressSavedTranslationToggleEvent)
+            _showSavedTranslationPreferred = _showSavedTranslationCheck.Checked;
+
+        ApplySavedTranslationToggleForCurrentImage();
     }
 
     private void OnShowSavedOcrToggled()
@@ -1372,7 +1393,6 @@ public class ImageViewerForm : Form
         _aiOutputBox.Clear();
         _pictureBox.Invalidate();
         _currentOverlayFromSavedCache = false;
-        SetShowSavedTranslationChecked(false);
 
         if (!_aiBusy)
             _aiStatusLabel.Text = "Deleted saved OCR";
@@ -1553,9 +1573,6 @@ public class ImageViewerForm : Form
                 : $"Loaded OCR from cache (saved translation: {_savedTranslationForCurrentImage.TargetLanguage})";
         }
 
-        if (_savedTranslationForCurrentImage == null && _showSavedTranslationCheck.Checked)
-            SetShowSavedTranslationChecked(false);
-
         UpdateSavedCacheUiState();
     }
 
@@ -1565,7 +1582,7 @@ public class ImageViewerForm : Form
             return;
         if (!_showSavedOcrCheck.Checked)
         {
-            SetShowSavedTranslationChecked(false);
+            UpdateSavedCacheUiState();
             return;
         }
 
@@ -1588,7 +1605,7 @@ public class ImageViewerForm : Form
             if (_savedTranslationForCurrentImage == null)
             {
                 _aiStatusLabel.Text = "No saved translation for this image";
-                SetShowSavedTranslationChecked(false);
+                UpdateSavedCacheUiState();
                 return;
             }
 
@@ -1654,7 +1671,6 @@ public class ImageViewerForm : Form
             _lastTranslations = new List<string>();
             SetOverlayFromOcrResult(ocr, null);
             _aiOutputBox.Text = RenderOcrResult(ocr);
-            SetShowSavedTranslationChecked(false);
 
             if (!string.IsNullOrWhiteSpace(model))
                 SaveOcrResultToCache(imagePath, model, ocr);
@@ -1684,7 +1700,7 @@ public class ImageViewerForm : Form
             ApplyTranslationsToOverlay(_lastTranslations);
             _aiOutputBox.Text = RenderTranslatedResult(ocr, translation);
             SaveTranslationToCache(imagePath, model, ocr, translation);
-            SetShowSavedTranslationChecked(true);
+            SetShowSavedTranslationChecked(true, updatePreference: true);
             _currentOverlayFromSavedCache = false;
             SetAiBusy(false, $"Translated to {translation.TargetLanguage}");
             UpdateSavedCacheUiState();
@@ -2754,6 +2770,58 @@ public class ImageViewerForm : Form
             _currentIndex++;
             LoadCurrentImage();
         }
+    }
+
+    private void ToggleOverlayBoxes()
+    {
+        _overlayToggle.Checked = !_overlayToggle.Checked;
+        if (!_aiBusy)
+            _aiStatusLabel.Text = _overlayToggle.Checked ? "OCR boxes shown" : "OCR boxes hidden";
+    }
+
+    private void ToggleSavedTranslation()
+    {
+        if (!_showSavedOcrCheck.Checked)
+        {
+            if (!_aiBusy)
+                _aiStatusLabel.Text = "Enable saved OCR display first";
+            return;
+        }
+
+        _showSavedTranslationCheck.Checked = !_showSavedTranslationCheck.Checked;
+    }
+
+    private static bool IsHotkeyPressed(string action, Keys keyData)
+    {
+        if (!AppSettings.Current.Hotkeys.TryGetValue(action, out var bindingText) || string.IsNullOrWhiteSpace(bindingText))
+            return false;
+
+        try
+        {
+            var converted = new KeysConverter().ConvertFromString(bindingText);
+            if (converted is not Keys parsed)
+                return false;
+
+            return NormalizeHotkeyKeyData(keyData) == NormalizeHotkeyBinding(parsed);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static Keys NormalizeHotkeyKeyData(Keys keyData)
+    {
+        var code = keyData & Keys.KeyCode;
+        var mods = Control.ModifierKeys & (Keys.Control | Keys.Shift | Keys.Alt);
+        return code | mods;
+    }
+
+    private static Keys NormalizeHotkeyBinding(Keys binding)
+    {
+        var code = binding & Keys.KeyCode;
+        var mods = binding & (Keys.Control | Keys.Shift | Keys.Alt);
+        return code | mods;
     }
 
     private void ToggleMaximize()

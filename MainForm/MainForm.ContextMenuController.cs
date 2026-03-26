@@ -292,10 +292,10 @@ public partial class MainForm
             _openInOtherItem.Text = defaultIsTab ? Localization.T("open_new_window") : Localization.T("open_new_tab");
 
             // Batch AI item
-            bool llmEnabled = AppSettings.Current.LlmEnabled;
+            bool batchAiEnabled = AppSettings.Current.LlmBatchProcessingEnabled;
             bool allFiles = hasSelection && paths.All(p => File.Exists(p) && !Directory.Exists(p));
-            _batchAiItem.Visible = llmEnabled && allFiles;
-            _batchAiSeparator.Visible = llmEnabled && allFiles;
+            _batchAiItem.Visible = batchAiEnabled && allFiles;
+            _batchAiSeparator.Visible = batchAiEnabled && allFiles;
 
             // Archive (ZIP)
             bool isZip = hasSelection && paths.Length == 1 && IsZipFilePath(firstPath);

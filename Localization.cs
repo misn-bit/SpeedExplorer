@@ -69,6 +69,7 @@ public static class Localization
             ["restore_default_images"] = "Restore Image Defaults",
             ["llm_section"] = "AI Assistant (LLM)",
             ["llm_enable"] = "Enable AI Assistant (requires LM Studio)",
+            ["llm_batch_enable"] = "Enable Batch AI Processing",
             ["api_url"] = "API URL:",
             ["chat_enable"] = "Enable Chat Mode (History)",
             ["chat_api_url"] = "Chat API URL:",
@@ -249,6 +250,8 @@ public static class Localization
             ["hotkey_new_tab"] = "New Tab",
             ["hotkey_next_tab"] = "Next Tab",
             ["hotkey_prev_tab"] = "Previous Tab",
+            ["hotkey_toggle_ocr_boxes"] = "Toggle OCR Boxes",
+            ["hotkey_toggle_saved_translation"] = "Toggle Saved Translation",
             ["hotkey_toggle_drag"] = "Toggle Drag Box",
         },
         ["ru"] = new Dictionary<string, string>
@@ -313,6 +316,7 @@ public static class Localization
             ["restore_default_images"] = "Вернуть стандарт для изображений",
             ["llm_section"] = "AI помощник (LLM)",
             ["llm_enable"] = "Включить AI помощник (нужен LM Studio)",
+            ["llm_batch_enable"] = "Включить пакетную обработку AI",
             ["api_url"] = "API URL:",
             ["chat_enable"] = "Включить чат (история)",
             ["chat_api_url"] = "Chat API URL:",
@@ -493,6 +497,8 @@ public static class Localization
             ["hotkey_new_tab"] = "Новая вкладка",
             ["hotkey_next_tab"] = "Следующая вкладка",
             ["hotkey_prev_tab"] = "Предыдущая вкладка",
+            ["hotkey_toggle_ocr_boxes"] = "Показать или скрыть OCR-боксы",
+            ["hotkey_toggle_saved_translation"] = "Показать или скрыть сохранённый перевод",
             ["hotkey_toggle_drag"] = "Рамка выделения",
         }
     };

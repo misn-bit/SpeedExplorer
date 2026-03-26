@@ -489,6 +489,8 @@ public class SettingsForm : Form
         "NewTab" => Localization.T("hotkey_new_tab"),
         "NextTab" => Localization.T("hotkey_next_tab"),
         "PrevTab" => Localization.T("hotkey_prev_tab"),
+        "ToggleOcrBoxes" => Localization.T("hotkey_toggle_ocr_boxes"),
+        "ToggleSavedTranslation" => Localization.T("hotkey_toggle_saved_translation"),
         _ => action
     };
 
