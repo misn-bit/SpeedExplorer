@@ -87,29 +87,29 @@ public partial class MainForm
             _addTabButton = new Button
             {
                 Text = "+",
-                Size = new Size(_owner.Scale(28), _owner.Scale(25)),
+                Size = new Size(_owner.Scale(30), _owner.Scale(38)),
                 FlatStyle = FlatStyle.Flat,
                 BackColor = Color.Transparent,
                 ForeColor = ForeColor_Dark,
-                Font = new Font("Segoe UI", 11, FontStyle.Bold),
+                Font = new Font("Segoe UI Semibold", 12),
                 Cursor = Cursors.Hand,
-                Margin = new Padding(_owner.Scale(6), _owner.Scale(8), 0, 0)
+                Margin = new Padding(_owner.Scale(1), _owner.Scale(1), 0, 0)
             };
             _addTabButton.FlatAppearance.BorderSize = 0;
             _addTabButton.FlatAppearance.MouseOverBackColor = Color.FromArgb(60, 60, 60);
-            ApplyButtonTextOffset(_addTabButton, "+", -_owner.Scale(1));
+            ApplyButtonTextOffset(_addTabButton, "+", -_owner.Scale(5));
             _addTabButton.Click += (s, e) => AddNewTab();
 
             _tabOverflowButton = new Button
             {
                 Text = "⋯",
-                Size = new Size(_owner.Scale(28), _owner.Scale(24)),
+                Size = new Size(_owner.Scale(30), _owner.Scale(38)),
                 FlatStyle = FlatStyle.Flat,
                 BackColor = Color.Transparent,
                 ForeColor = ForeColor_Dark,
-                Font = new Font("Segoe UI", 11, FontStyle.Bold),
+                Font = new Font("Segoe UI Semibold", 12),
                 Cursor = Cursors.Hand,
-                Margin = new Padding(_owner.Scale(4), _owner.Scale(8), 0, 0),
+                Margin = new Padding(_owner.Scale(1), _owner.Scale(1), 0, 0),
                 Visible = false
             };
             _tabOverflowButton.FlatAppearance.BorderSize = 0;
@@ -593,9 +593,9 @@ public partial class MainForm
 
                 var tabPanel = new Panel
                 {
-                    Height = _owner.Scale(25),
+                    Height = _owner.Scale(38),
                     Width = tabWidth,
-                    Margin = new Padding(_owner.Scale(4), _owner.Scale(8), 0, 0),
+                    Margin = new Padding(i == startIndex ? 0 : _owner.Scale(1), _owner.Scale(1), 0, 0),
                     BackColor = isActive ? Color.FromArgb(55, 55, 55) : Color.FromArgb(40, 40, 40)
                 };
                 tabPanel.Tag = tab.Id;
@@ -606,8 +606,9 @@ public partial class MainForm
                     Text = tab.Title,
                     ForeColor = ForeColor_Dark,
                     AutoEllipsis = true,
-                    Location = new Point(_owner.Scale(8), _owner.Scale(4)),
-                    Size = new Size(Math.Max(_owner.Scale(40), tabPanel.Width - _owner.Scale(34)), _owner.Scale(18)),
+                    Font = new Font("Segoe UI Semibold", 10),
+                    Location = new Point(_owner.Scale(10), _owner.Scale(5)),
+                    Size = new Size(Math.Max(_owner.Scale(40), tabPanel.Width - _owner.Scale(40)), _owner.Scale(20)),
                     Cursor = Cursors.Hand
                 };
                 title.Tag = "title";
@@ -618,8 +619,9 @@ public partial class MainForm
                     ForeColor = Color.FromArgb(200, 200, 200),
                     AutoSize = false,
                     TextAlign = ContentAlignment.MiddleCenter,
-                    Size = new Size(_owner.Scale(18), _owner.Scale(18)),
-                    Location = new Point(tabPanel.Width - _owner.Scale(22), _owner.Scale(2)),
+                    Font = new Font("Segoe UI Symbol", 11, FontStyle.Bold),
+                    Size = new Size(_owner.Scale(20), _owner.Scale(20)),
+                    Location = new Point(tabPanel.Width - _owner.Scale(25), _owner.Scale(5)),
                     Cursor = Cursors.Hand
                 };
 
@@ -695,12 +697,12 @@ public partial class MainForm
                 {
                     if (c is Label lbl && (lbl.Tag as string) == "title")
                     {
-                        lbl.Location = new Point(_owner.Scale(8), _owner.Scale(4));
-                        lbl.Size = new Size(Math.Max(_owner.Scale(40), panel.Width - _owner.Scale(34)), _owner.Scale(18));
+                        lbl.Location = new Point(_owner.Scale(10), _owner.Scale(5));
+                        lbl.Size = new Size(Math.Max(_owner.Scale(40), panel.Width - _owner.Scale(40)), _owner.Scale(20));
                     }
                     else if (c is Label close && close.Text == "×")
                     {
-                        close.Location = new Point(panel.Width - _owner.Scale(22), _owner.Scale(2));
+                        close.Location = new Point(panel.Width - _owner.Scale(25), _owner.Scale(5));
                     }
                 }
             }
@@ -724,7 +726,7 @@ public partial class MainForm
 
             int maxWidth = _owner.Scale(160);
             int minWidth = _owner.Scale(70);
-            int available = Math.Max(0, _tabStrip.ClientSize.Width - GetTabActionsWidth() - _owner.Scale(8));
+            int available = Math.Max(0, _tabStrip.ClientSize.Width - GetTabActionsWidth() - _owner.Scale(1));
             int perTab = available / count;
             return Math.Max(minWidth, Math.Min(maxWidth, perTab));
         }
@@ -736,8 +738,8 @@ public partial class MainForm
             if (_tabStrip == null || _tabs.Count == 0) return;
 
             int tabWidth = GetTabPanelWidth();
-            int tabSlot = tabWidth + _owner.Scale(4);
-            int available = Math.Max(0, _tabStrip.ClientSize.Width - GetTabActionsWidth() - _owner.Scale(8));
+            int tabSlot = tabWidth + _owner.Scale(1);
+            int available = Math.Max(0, _tabStrip.ClientSize.Width - GetTabActionsWidth() - _owner.Scale(1));
             int maxVisible = Math.Max(1, available / tabSlot);
 
             if (maxVisible >= _tabs.Count)

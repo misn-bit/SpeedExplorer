@@ -78,7 +78,7 @@ public partial class MainForm
                 Height = _owner.Scale(40),
                 BackColor = MainForm.TitleBarColor
             };
-            titleBar.Padding = new Padding(_owner.Scale(6), 0, _owner.Scale(6), 0);
+            titleBar.Padding = new Padding(_owner.Scale(1), 0, _owner.Scale(1), 0);
 
             titleBar.MouseDown += (s, e) =>
             {
