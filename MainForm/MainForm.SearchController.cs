@@ -94,11 +94,14 @@ public partial class MainForm
     {
         private readonly MainForm _owner;
         private readonly string[] _spinnerFrames = new[] { "|", "/", "-", "\\" };
+        private const int LivePublishMinIntervalMs = 120;
+        private const int LivePublishMinResultsDelta = 40;
         private System.Windows.Forms.Timer? _spinnerTimer;
         private string _searchStatusBase = "";
         private int _spinnerFrameIndex = 0;
 
         private CancellationTokenSource? _cts;
+        private bool _userScrolledDuringSearch;
 
         public bool IsSearchMode { get; private set; }
         public bool IsSearchInProgress { get; private set; }
@@ -116,6 +119,12 @@ public partial class MainForm
         {
             IsTagSearchOnly = !IsTagSearchOnly;
             return IsTagSearchOnly;
+        }
+
+        public void NotifyScrollInteraction()
+        {
+            if (IsSearchMode && IsSearchInProgress)
+                _userScrolledDuringSearch = true;
         }
 
         public void CancelActive()
@@ -265,6 +274,7 @@ public partial class MainForm
             CancelActive();
             var cts = new CancellationTokenSource();
             _cts = cts;
+            _userScrolledDuringSearch = false;
 
             IsSearchMode = true;
             IsSearchInProgress = false;
@@ -293,9 +303,11 @@ public partial class MainForm
             }
 
             List<FileItem> results = new List<FileItem>();
+            int publishedCount = 0;
             int finalScanned = 0;
             int lastReportedScanned = -1;
             long lastReportTick = Environment.TickCount64;
+            long lastLivePublishTick = 0;
             try
             {
                 bool ShouldPublishStatus(int scanned)
@@ -310,7 +322,37 @@ public partial class MainForm
                     return false;
                 }
 
-                bool firstBatchViewportReset = false;
+                void PublishLiveResults(bool force)
+                {
+                    if (_owner._listView == null || _owner._listView.IsDisposed)
+                        return;
+
+                    int availableCount = results.Count;
+                    if (!force && availableCount == publishedCount)
+                        return;
+
+                    long now = Environment.TickCount64;
+                    if (!force &&
+                        publishedCount > 0 &&
+                        availableCount - publishedCount < LivePublishMinResultsDelta &&
+                        now - lastLivePublishTick < LivePublishMinIntervalMs)
+                    {
+                        return;
+                    }
+
+                    _owner._items = results;
+                    RefreshVirtualListSize();
+                    if (publishedCount == 0 && availableCount > 0 && !_userScrolledDuringSearch)
+                    {
+                        _owner.LogListViewState("SEARCH", "first-batch-before-reset");
+                        _owner.ResetListViewportTopAsync(0, "SEARCH-first-batch");
+                    }
+
+                    publishedCount = availableCount;
+                    lastLivePublishTick = now;
+                    _owner._listView.Invalidate();
+                    _owner.RefreshSearchOverlayVisibility();
+                }
 
                 var uiUpdateAction = new Action<List<FileItem>>(foundBatch =>
                 {
@@ -321,16 +363,7 @@ public partial class MainForm
                         if (IsCurrentSearch(cts))
                         {
                             results.AddRange(foundBatch);
-                            _owner._items = results;
-                            RefreshVirtualListSize();
-                            if (!firstBatchViewportReset && results.Count > 0)
-                            {
-                                firstBatchViewportReset = true;
-                                _owner.LogListViewState("SEARCH", "first-batch-before-reset");
-                                _owner.ResetListViewportTopAsync(0, "SEARCH-first-batch");
-                            }
-                            _owner._listView.Invalidate();
-                            _owner.RefreshSearchOverlayVisibility();
+                            PublishLiveResults(force: false);
                         }
                     }));
                 });
@@ -398,6 +431,7 @@ public partial class MainForm
 
                 if (!IsCurrentSearch(cts)) return;
 
+                PublishLiveResults(force: true);
                 FileSystemService.SortItems(results, _owner._sortColumn, _owner._sortDirection, _owner._taggedFilesOnTop);
                 _owner._items = results;
                 IsSearchInProgress = false;
@@ -408,7 +442,7 @@ public partial class MainForm
                     _owner._listView.SelectedIndices.Clear();
                     _owner._listView.VirtualListSize = 0;
                     _owner._listView.VirtualListSize = _owner._items.Count;
-                    if (_owner._items.Count > 0)
+                    if (_owner._items.Count > 0 && !_userScrolledDuringSearch)
                     {
                         try { _owner._listView.TopItem = _owner._listView.Items[0]; } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                         try { _owner._listView.Items[0].EnsureVisible(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
@@ -423,7 +457,8 @@ public partial class MainForm
                 finalScanned = Math.Max(finalScanned, _owner._items.Count);
                 _owner._statusLabel.Text = string.Format(Localization.T("status_search_done"), _owner._items.Count, finalScanned);
                 _owner.LogListViewState("SEARCH", "done-before-reset");
-                _owner.ResetListViewportTopAsync(0, "SEARCH-done");
+                if (!_userScrolledDuringSearch)
+                    _owner.ResetListViewportTopAsync(0, "SEARCH-done");
                 _owner.RefreshSearchOverlayVisibility();
             }
             catch (OperationCanceledException)
@@ -441,7 +476,8 @@ public partial class MainForm
                             StopStatusSpinner();
                             _owner._statusLabel.Text = string.Format(Localization.T("status_search_stopped"), _owner._items.Count);
                             _owner.LogListViewState("SEARCH", "stopped-before-reset");
-                            _owner.ResetListViewportTopAsync(0, "SEARCH-stopped");
+                            if (!_userScrolledDuringSearch)
+                                _owner.ResetListViewportTopAsync(0, "SEARCH-stopped");
                             _owner._listView.Invalidate();
                             _owner.RefreshSearchOverlayVisibility();
                         }

@@ -10,7 +10,11 @@ namespace SpeedExplorer
     public class PolishedListView : ListView
     {
         private const int WM_PAINT = 0x000F;
+        private const int WM_VSCROLL = 0x0115;
+        private const int WM_MOUSEWHEEL = 0x020A;
         private const int LVM_GETHEADER = 0x101F;
+
+        public event EventHandler? ScrollActivity;
 
         [StructLayout(LayoutKind.Sequential)]
         private struct RECT
@@ -59,6 +63,8 @@ namespace SpeedExplorer
         protected override void WndProc(ref Message m)
         {
             base.WndProc(ref m);
+            if (m.Msg == WM_VSCROLL || m.Msg == WM_MOUSEWHEEL)
+                ScrollActivity?.Invoke(this, EventArgs.Empty);
             if (m.Msg == WM_PAINT)
             {
                 PaintTailBackgroundSafe();

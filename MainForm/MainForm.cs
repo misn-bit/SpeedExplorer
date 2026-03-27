@@ -550,6 +550,8 @@ public partial class MainForm : Form
 
     private void ClearSearch() => _searchController.ClearSearch();
 
+    private void NotifySearchScrollInteraction() => _searchController.NotifyScrollInteraction();
+
     private void StretchTagsColumn()
         => _listViewController.StretchTagsColumn();
 
