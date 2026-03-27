@@ -35,6 +35,7 @@ public partial class MainForm : Form
     private TextBox _addressTextBox = null!;
     private FlowLayoutPanel _breadcrumbPanel = null!;
     private TextBox _searchBox = null!;
+    private Button _searchTagToggleBtn = null!;
     private Label _searchingOverlay = null!;
     private TreeView _sidebar;
     private SidebarController _sidebarController;

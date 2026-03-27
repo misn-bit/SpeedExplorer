@@ -192,6 +192,7 @@ public partial class MainForm
             }
 
             int changedCount = 0;
+            var invalidatedThumbnailPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             foreach (var change in changes)
             {
@@ -202,6 +203,10 @@ public partial class MainForm
                 {
                     continue;
                 }
+
+                InvalidateThumbnailPath(change.Path, invalidatedThumbnailPaths);
+                if (!string.IsNullOrWhiteSpace(change.OldPath))
+                    InvalidateThumbnailPath(change.OldPath!, invalidatedThumbnailPaths);
 
                 switch (change.Kind)
                 {
@@ -243,6 +248,7 @@ public partial class MainForm
                 return true;
 
             _owner._allItems = map.Values.ToList();
+            _owner.QueueGenericIconsWarmup(_owner._allItems);
             FileSystemService.SortItems(_owner._allItems, _owner._sortColumn, _owner._sortDirection, _owner._taggedFilesOnTop);
             _owner._items = new List<FileItem>(_owner._allItems);
 
@@ -290,6 +296,19 @@ public partial class MainForm
             _owner._tabsController.SyncPathSnapshot(_owner._currentPath, _owner._items, _owner._allItems);
             _owner._statusLabel.Text = string.Format(Localization.T("status_ready_items"), _owner._items.Count);
             return true;
+        }
+
+        private void InvalidateThumbnailPath(string path, HashSet<string> invalidatedPaths)
+        {
+            if (string.IsNullOrWhiteSpace(path) ||
+                !BelongsToCurrentDirectory(path) ||
+                !FileSystemService.IsImageFile(path) ||
+                !invalidatedPaths.Add(path))
+            {
+                return;
+            }
+
+            _owner._iconLoadService?.InvalidateCachedIcon(path);
         }
 
         private bool BelongsToCurrentDirectory(string path)

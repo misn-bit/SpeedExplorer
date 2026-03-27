@@ -465,6 +465,7 @@ public class SettingsForm : Form
         "NavForward" => Localization.T("hotkey_nav_forward"),
         "FocusAddress" => Localization.T("hotkey_focus_address"),
         "FocusSearch" => Localization.T("hotkey_focus_search"),
+        "FocusTagSearch" => Localization.T("hotkey_focus_tag_search"),
         "FocusSidebar" => Localization.T("hotkey_focus_sidebar"),
         "Refresh" => Localization.T("hotkey_refresh"),
         "ShowProperties" => Localization.T("hotkey_properties"),

@@ -22,6 +22,7 @@ internal sealed class IconLoadService : IDisposable
     private readonly ConcurrentQueue<IconLoadRequest> _highQueue = new();
     private readonly ConcurrentQueue<IconLoadRequest> _lowQueue = new();
     private readonly ConcurrentQueue<ReadyIcon> _ready = new();
+    private readonly ConcurrentDictionary<string, long> _thumbnailRetryAfter = new(StringComparer.OrdinalIgnoreCase);
     private readonly AutoResetEvent _signal = new(false);
 
     private volatile bool _stop;
@@ -29,6 +30,8 @@ internal sealed class IconLoadService : IDisposable
     private int _generation;
     private int _flushScheduled;
     private Thread? _worker;
+
+    private const int UniqueImageRetryDelayMs = 1500;
 
     private struct IconLoadRequest
     {
@@ -96,8 +99,39 @@ internal sealed class IconLoadService : IDisposable
         lock (_pending) { _pending.Clear(); }
         while (_highQueue.TryDequeue(out _)) { }
         while (_lowQueue.TryDequeue(out _)) { }
+        _thumbnailRetryAfter.Clear();
         DrainReadyQueue();
         _signal.Set();
+    }
+
+    public void InvalidateCachedIcon(string keyOrPath)
+    {
+        if (string.IsNullOrWhiteSpace(keyOrPath))
+            return;
+
+        lock (_pending)
+        {
+            _pending.Remove(keyOrPath);
+        }
+        _thumbnailRetryAfter.TryRemove(keyOrPath, out _);
+
+        void RemoveCached()
+        {
+            try { _smallIcons.Images.RemoveByKey(keyOrPath); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+            try { _largeIcons.Images.RemoveByKey(keyOrPath); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+        }
+
+        if (_ui.IsDisposed)
+            return;
+
+        if (_ui.InvokeRequired)
+        {
+            try { _ui.BeginInvoke((Action)RemoveCached); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+        }
+        else
+        {
+            RemoveCached();
+        }
     }
 
     public void EnsureGenericIcon(string key, string extension, bool isDirectory, bool colored)
@@ -112,6 +146,16 @@ internal sealed class IconLoadService : IDisposable
     {
         if (string.IsNullOrWhiteSpace(keyOrPath))
             return;
+
+        if (AppSettings.Current.ShowThumbnails &&
+            !isDirectory &&
+            (keyOrPath.Contains("\\") || keyOrPath.Contains("/")) &&
+            FileSystemService.IsImageFile(keyOrPath) &&
+            _thumbnailRetryAfter.TryGetValue(keyOrPath, out long retryAfter) &&
+            Environment.TickCount64 < retryAfter)
+        {
+            return;
+        }
 
         bool effectiveLowPriority = lowPriority;
         if (!effectiveLowPriority &&
@@ -233,6 +277,7 @@ internal sealed class IconLoadService : IDisposable
                     (_shouldLoadLargeIcons?.Invoke() ?? true) ||
                     _largeIcons.ImageSize.Width > 48 ||
                     _smallIcons.ImageSize.Width > 48;
+                bool isUniqueImageThumbnail = isUnique && isImage && AppSettings.Current.ShowThumbnails;
 
                 if (isImage && AppSettings.Current.ShowThumbnails)
                 {
@@ -243,8 +288,20 @@ internal sealed class IconLoadService : IDisposable
                         try { smallIcon?.Dispose(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                         continue;
                     }
-                    if (needLarge)
+                    if (needLarge && smallIcon != null)
                         largeIcon = IconHelper.GetThumbnail(lookupPath, _largeIcons.ImageSize.Width);
+                    else if (smallIcon != null)
+                        largeIcon = ResizeBitmapNoDispose(smallIcon, _largeIcons.ImageSize.Width);
+                }
+
+                if (smallIcon != null && largeIcon == null)
+                    largeIcon = ResizeBitmapNoDispose(smallIcon, _largeIcons.ImageSize.Width);
+
+                if (isUniqueImageThumbnail && smallIcon == null)
+                {
+                    _thumbnailRetryAfter[keyOrPath] = Environment.TickCount64 + UniqueImageRetryDelayMs;
+                    try { largeIcon?.Dispose(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+                    continue;
                 }
 
                 if (smallIcon == null)
@@ -266,6 +323,9 @@ internal sealed class IconLoadService : IDisposable
                     else if (smallIcon != null)
                         largeIcon ??= ResizeBitmapNoDispose(smallIcon, _largeIcons.ImageSize.Width);
                 }
+
+                if (isUniqueImageThumbnail)
+                    _thumbnailRetryAfter.TryRemove(keyOrPath, out _);
 
                 if (smallIcon == null || largeIcon == null)
                 {

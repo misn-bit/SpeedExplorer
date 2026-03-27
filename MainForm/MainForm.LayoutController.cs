@@ -124,7 +124,7 @@ public partial class MainForm
                 }
             };
 
-            var tagToggleBtn = new Button
+            var tagToggleBtn = _owner._searchTagToggleBtn = new Button
             {
                 Text = "🏷️",
                 Dock = DockStyle.Right,
@@ -145,9 +145,8 @@ public partial class MainForm
 
             tagToggleBtn.Click += (s, e) =>
             {
-                bool enabled = _owner._searchController.ToggleTagOnly();
-                tagToggleBtn.ForeColor = enabled ? AccentColor : Color.Gray;
-                tagToggleBtn.BackColor = enabled ? Color.FromArgb(60, 60, 60) : Color.FromArgb(45, 45, 45);
+                _owner._searchController.ToggleTagOnly();
+                _owner.UpdateSearchTagToggleButtonState();
 
                 if (!string.IsNullOrWhiteSpace(_owner._searchBox.Text) &&
                     _owner._searchBox.Text != Localization.T("search_placeholder"))
@@ -188,6 +187,7 @@ public partial class MainForm
             panel.Controls.Add(tagToggleBtn);
             panel.Controls.Add(clearBtn);
 
+            _owner.UpdateSearchTagToggleButtonState();
             return panel;
         }
 

@@ -131,6 +131,7 @@ public class AppSettings
         { "NavForward", "Alt, Right" },
         { "FocusAddress", "Control, L" },
         { "FocusSearch", "Control, F" },
+        { "FocusTagSearch", "Control, Shift, F" },
         { "FocusSidebar", "Control, D" },
         { "Refresh", "F5" },
         { "ShowProperties", "Alt, Return" },

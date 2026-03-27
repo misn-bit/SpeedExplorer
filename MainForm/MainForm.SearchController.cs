@@ -12,6 +12,30 @@ namespace SpeedExplorer;
 public partial class MainForm
 {
     private Font? _searchOverlayFont;
+    private void UpdateSearchTagToggleButtonState()
+    {
+        if (_searchTagToggleBtn == null || _searchTagToggleBtn.IsDisposed)
+            return;
+
+        bool enabled = _searchController.IsTagSearchOnly;
+        _searchTagToggleBtn.ForeColor = enabled ? AccentColor : Color.Gray;
+        _searchTagToggleBtn.BackColor = enabled ? Color.FromArgb(60, 60, 60) : Color.FromArgb(45, 45, 45);
+    }
+
+    private void FocusSearchBox(bool tagOnly)
+    {
+        _searchController.SetTagOnly(tagOnly);
+        UpdateSearchTagToggleButtonState();
+        _searchBox.Focus();
+        _searchBox.SelectAll();
+
+        if (!string.IsNullOrWhiteSpace(_searchBox.Text) &&
+            _searchBox.Text != Localization.T("search_placeholder"))
+        {
+            _searchController.StartSearch(_searchBox.Text);
+        }
+    }
+
 
     private void InitializeSearchOverlay()
     {

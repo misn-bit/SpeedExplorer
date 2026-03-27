@@ -146,7 +146,8 @@ public partial class MainForm
                 case "NavBack": _owner.GoBack(); break;
                 case "NavForward": _owner.GoForward(); break;
                 case "FocusAddress": _owner.EnableAddressEdit(); break;
-                case "FocusSearch": _owner._searchBox.Focus(); _owner._searchBox.SelectAll(); break;
+                case "FocusSearch": _owner.FocusSearchBox(tagOnly: false); break;
+                case "FocusTagSearch": _owner.FocusSearchBox(tagOnly: true); break;
                 case "FocusSidebar": _owner._sidebar.Focus(); break;
                 case "Refresh": _ = _owner.RefreshCurrentAsync(); break;
                 case "ShowProperties": _owner.ShowProperties(); break;
