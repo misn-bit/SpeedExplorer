@@ -189,6 +189,7 @@ static class Program
             StartPipeListener(context);
 
             StartupService.SyncWithSettings();
+            WindowsRecentService.RefreshTaskbarJumpList();
 
             string? startPath = ExtractStartPathFromArgs(args);
             bool startMinimized = args.Any(a => a.Equals("--minimized", StringComparison.OrdinalIgnoreCase));

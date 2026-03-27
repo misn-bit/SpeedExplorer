@@ -133,6 +133,7 @@ public partial class MainForm
         try
         {
             SHAddToRecentDocs(SHARD_PATHW, folderPath);
+            WindowsRecentService.RefreshTaskbarJumpList();
         }
         catch
         {

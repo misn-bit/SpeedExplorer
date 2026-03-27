@@ -445,55 +445,7 @@ public partial class MainForm
         }
 
         private static List<string> GetRecentFolders(int maxCount)
-        {
-            var recentFolders = new List<string>();
-            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-            try
-            {
-                var recentPath = Environment.GetFolderPath(Environment.SpecialFolder.Recent);
-                if (string.IsNullOrEmpty(recentPath) || !Directory.Exists(recentPath))
-                    return recentFolders;
-
-                var links = Directory.EnumerateFiles(recentPath, "*.lnk", SearchOption.TopDirectoryOnly)
-                    .Select(static p => new FileInfo(p))
-                    .OrderByDescending(static fi => fi.LastWriteTimeUtc);
-
-                var wshType = Type.GetTypeFromProgID("WScript.Shell");
-                if (wshType == null)
-                    return recentFolders;
-
-                dynamic? wsh = Activator.CreateInstance(wshType);
-                if (wsh == null)
-                    return recentFolders;
-
-                foreach (var link in links)
-                {
-                    try
-                    {
-                        dynamic? shortcut = wsh.CreateShortcut(link.FullName);
-                        string? target = shortcut?.TargetPath as string;
-                        if (string.IsNullOrWhiteSpace(target)) continue;
-                        if (!Directory.Exists(target)) continue;
-                        if (!seen.Add(target)) continue;
-
-                        recentFolders.Add(target);
-                        if (recentFolders.Count >= maxCount)
-                            break;
-                    }
-                    catch
-                    {
-                        // Ignore malformed links.
-                    }
-                }
-            }
-            catch
-            {
-                // Keep sidebar usable even if recent resolution fails.
-            }
-
-            return recentFolders;
-        }
+            => WindowsRecentService.GetRecentFolders(maxCount);
 
         private List<(string Name, object Item)> GetPortableDevices()
         {
