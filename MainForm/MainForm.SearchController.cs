@@ -142,6 +142,7 @@ public partial class MainForm
             IsSearchMode = true;
             IsSearchInProgress = false;
             StopStatusSpinner();
+            _owner.UpdateActiveTabTitle();
 
             if (_owner._listView != null && !_owner._listView.IsDisposed)
             {
@@ -233,6 +234,7 @@ public partial class MainForm
 
             _owner._statusLabel.Text = string.Format(Localization.T("status_ready_items"), _owner._items.Count);
             _owner.RefreshSearchOverlayVisibility();
+            _owner.UpdateActiveTabTitle();
         }
 
         public void ExitSearchModeOnNavigate()
@@ -243,6 +245,7 @@ public partial class MainForm
             IsSearchInProgress = false;
             StopStatusSpinner();
             _owner.RefreshSearchOverlayVisibility();
+            _owner.UpdateActiveTabTitle();
         }
 
         private async Task PerformSearchAsync(string query)
@@ -267,6 +270,7 @@ public partial class MainForm
             IsSearchInProgress = false;
             StopStatusSpinner();
             _owner.RefreshSearchOverlayVisibility();
+            _owner.UpdateActiveTabTitle();
             _owner.LogListViewState("SEARCH", "start-before-reset");
             _owner.ResetListViewportTopAsync(0, "SEARCH-start");
 

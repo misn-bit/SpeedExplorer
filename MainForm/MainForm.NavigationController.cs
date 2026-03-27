@@ -287,7 +287,7 @@ public partial class MainForm
                 _allItems = cachedAllItems;
                 _items = cachedItems;
 
-                if (path == ThisPcPath)
+                if (path == ThisPcPath && !cacheIsSearchSnapshot)
                     SetupDriveColumns(_listView);
                 else
                     SetupFileColumns(_listView);

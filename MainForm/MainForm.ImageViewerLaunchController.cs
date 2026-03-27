@@ -110,7 +110,7 @@ public partial class MainForm
         {
             foreach (var candidate in preferredImagePool)
             {
-                if (TryNormalizeImageCandidate(candidate, directory, out var normalized) && seen.Add(normalized))
+                if (TryNormalizeImageCandidate(candidate, out var normalized) && seen.Add(normalized))
                     results.Add(normalized);
             }
         }
@@ -138,7 +138,7 @@ public partial class MainForm
         return results;
     }
 
-    private static bool TryNormalizeImageCandidate(string? candidatePath, string requiredDirectory, out string normalizedPath)
+    private static bool TryNormalizeImageCandidate(string? candidatePath, out string normalizedPath)
     {
         normalizedPath = string.Empty;
         if (string.IsNullOrWhiteSpace(candidatePath))
@@ -159,7 +159,16 @@ public partial class MainForm
         if (!FileSystemService.IsImageFile(candidate))
             return false;
 
-        var candidateDir = Path.GetDirectoryName(candidate);
+        normalizedPath = candidate;
+        return true;
+    }
+
+    private static bool TryNormalizeImageCandidate(string? candidatePath, string requiredDirectory, out string normalizedPath)
+    {
+        if (!TryNormalizeImageCandidate(candidatePath, out normalizedPath))
+            return false;
+
+        var candidateDir = Path.GetDirectoryName(normalizedPath);
         if (string.IsNullOrWhiteSpace(candidateDir))
             return false;
 
@@ -168,10 +177,10 @@ public partial class MainForm
                 requiredDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
                 StringComparison.OrdinalIgnoreCase))
         {
+            normalizedPath = string.Empty;
             return false;
         }
 
-        normalizedPath = candidate;
         return true;
     }
 }

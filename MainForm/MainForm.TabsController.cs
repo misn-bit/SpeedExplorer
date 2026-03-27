@@ -28,6 +28,7 @@ public partial class MainForm
         private Button? _addTabButton;
         private Button? _tabOverflowButton;
         private int _tabLoadRequestId;
+        private string? _pendingSearchRestoreTabId;
 
         public int Count => _tabs.Count;
         public int ActiveIndex => _activeTabIndex;
@@ -76,7 +77,7 @@ public partial class MainForm
             {
                 CurrentPath = startPath,
                 CurrentDisplayPath = startPath,
-                Title = GetTabTitleForPath(startPath),
+                Title = GetTabTitleForPath(startPath, false),
                 SortColumn = initialSort.Column,
                 SortDirection = initialSort.Direction,
                 TaggedFilesOnTop = initialSort.TaggedOnTop
@@ -187,7 +188,7 @@ public partial class MainForm
                 {
                     CurrentPath = normalized,
                     CurrentDisplayPath = normalized,
-                    Title = GetTabTitleForPath(normalized),
+                    Title = GetTabTitleForPath(normalized, false),
                     SortColumn = initialSort.Column,
                     SortDirection = initialSort.Direction,
                     TaggedFilesOnTop = initialSort.TaggedOnTop
@@ -218,7 +219,7 @@ public partial class MainForm
             {
                 CurrentPath = startPath,
                 CurrentDisplayPath = startPath,
-                Title = GetTabTitleForPath(startPath),
+                Title = GetTabTitleForPath(startPath, false),
                 SortColumn = initialSort.Column,
                 SortDirection = initialSort.Direction,
                 TaggedFilesOnTop = initialSort.TaggedOnTop
@@ -242,7 +243,7 @@ public partial class MainForm
             {
                 CurrentPath = path,
                 CurrentDisplayPath = path,
-                Title = GetTabTitleForPath(path),
+                Title = GetTabTitleForPath(path, false),
                 SortColumn = initialSort.Column,
                 SortDirection = initialSort.Direction,
                 TaggedFilesOnTop = initialSort.TaggedOnTop,
@@ -324,7 +325,7 @@ public partial class MainForm
             tab.ForwardHistory = CloneStack(_owner._nav.ForwardHistory);
             tab.IsShellMode = _owner._isShellMode;
             tab.CurrentShellId = ShellNavigationController.IsShellIdPath(_owner._currentPath) ? _owner._currentPath : "";
-            tab.Title = GetTabTitleForPath(_owner._currentPath);
+            tab.Title = GetTabTitleForPath(_owner._currentPath, tab.IsSearchMode);
             tab.CachedPath = _owner._currentPath;
             tab.CachedItems = new List<FileItem>(_owner._items);
             tab.CachedAllItems = new List<FileItem>(_owner._allItems);
@@ -341,11 +342,14 @@ public partial class MainForm
         private async Task LoadTabStateAsync(TabState tab, int requestId)
         {
             _owner.LogListViewState("TAB", $"load-begin req={requestId} path=\"{TraceText(tab.CurrentPath)}\" search={tab.IsSearchMode}");
+            bool restoreSearchMode = tab.IsSearchMode;
+            string restoreSearchText = tab.SearchText;
+            _pendingSearchRestoreTabId = restoreSearchMode ? tab.Id : null;
             _owner._nav.LastSelection = new Dictionary<string, string>(tab.LastSelection);
             _owner._nav.BackHistory = CloneStack(tab.BackHistory);
             _owner._nav.ForwardHistory = CloneStack(tab.ForwardHistory);
             List<string>? restoreSelection = null;
-            if (!tab.IsSearchMode && tab.SelectedPaths.Count > 0)
+            if (!restoreSearchMode && tab.SelectedPaths.Count > 0)
             {
                 restoreSelection = new List<string>(tab.SelectedPaths);
             }
@@ -363,7 +367,7 @@ public partial class MainForm
                 _owner._pendingTabCachePath = tab.CurrentPath;
                 _owner._pendingTabCacheItems = tab.CachedItems;
                 _owner._pendingTabCacheAllItems = tab.CachedAllItems;
-                _owner._pendingTabCacheIsSearchMode = tab.IsSearchMode;
+                _owner._pendingTabCacheIsSearchMode = restoreSearchMode;
             }
             else
             {
@@ -373,7 +377,7 @@ public partial class MainForm
                 _owner._pendingTabCacheIsSearchMode = false;
             }
 
-            if (!tab.IsSearchMode && tab.TopItemIndex >= 0)
+            if (!restoreSearchMode && tab.TopItemIndex >= 0)
             {
                 _owner._pendingTabTopRestorePath = tab.CurrentPath;
                 _owner._pendingTabTopRestoreIndex = tab.TopItemIndex;
@@ -413,14 +417,14 @@ public partial class MainForm
                 return;
             _owner.LogListViewState("TAB", $"load-after-nav req={requestId}");
 
-            if (tab.IsSearchMode && !IsShellPath(tab.CurrentPath) &&
-                !string.IsNullOrWhiteSpace(tab.SearchText) &&
-                tab.SearchText != Localization.T("search_placeholder"))
+            if (restoreSearchMode && !IsShellPath(tab.CurrentPath) &&
+                !string.IsNullOrWhiteSpace(restoreSearchText) &&
+                restoreSearchText != Localization.T("search_placeholder"))
             {
                 _owner._suppressSearchTextChanged = true;
                 try
                 {
-                    _owner._searchBox.Text = tab.SearchText;
+                    _owner._searchBox.Text = restoreSearchText;
                     _owner._searchBox.ForeColor = ForeColor_Dark;
                 }
                 finally
@@ -430,14 +434,21 @@ public partial class MainForm
 
                 if (useCachedSnapshot)
                 {
-                    _owner._searchController.RestoreCachedSearchState(tab.SearchText);
+                    _owner._searchController.RestoreCachedSearchState(restoreSearchText);
                     _owner.LogListViewState("TAB", $"load-after-search-cache req={requestId}");
                 }
                 else
                 {
-                    _owner._searchController.StartSearch(tab.SearchText);
+                    _owner._searchController.StartSearch(restoreSearchText);
                     _owner.LogListViewState("TAB", $"load-after-search-start req={requestId}");
                 }
+
+                if (string.Equals(_pendingSearchRestoreTabId, tab.Id, StringComparison.Ordinal))
+                    _pendingSearchRestoreTabId = null;
+            }
+            else if (string.Equals(_pendingSearchRestoreTabId, tab.Id, StringComparison.Ordinal))
+            {
+                _pendingSearchRestoreTabId = null;
             }
 
             // Force a clean repaint to avoid stale virtual list viewport artifacts.
@@ -458,7 +469,11 @@ public partial class MainForm
         public void UpdateActiveTabTitle()
         {
             if (_activeTabIndex < 0 || _activeTabIndex >= _tabs.Count) return;
-            _tabs[_activeTabIndex].Title = GetTabTitleForPath(_owner._currentPath);
+            var tab = _tabs[_activeTabIndex];
+            bool keepSearchTitle = string.Equals(_pendingSearchRestoreTabId, tab.Id, StringComparison.Ordinal);
+            tab.IsSearchMode = _owner.IsSearchMode || keepSearchTitle;
+            tab.SearchText = tab.IsSearchMode ? _owner._searchBox.Text : "";
+            tab.Title = GetTabTitleForPath(_owner._currentPath, tab.IsSearchMode);
             UpdateTabStripVisuals();
         }
 
@@ -470,23 +485,48 @@ public partial class MainForm
             var tab = _tabs[_activeTabIndex];
             tab.CurrentPath = currentPath;
             tab.CurrentDisplayPath = currentDisplayPath;
-            tab.Title = GetTabTitleForPath(currentPath);
+            bool keepSearchTitle = string.Equals(_pendingSearchRestoreTabId, tab.Id, StringComparison.Ordinal);
+            tab.IsSearchMode = _owner.IsSearchMode || keepSearchTitle;
+            if (!tab.IsSearchMode)
+                tab.SearchText = "";
+            tab.Title = GetTabTitleForPath(currentPath, tab.IsSearchMode);
             UpdateTabStripVisuals();
         }
 
         public string GetTabTitleForPath(string path)
+            => GetTabTitleForPath(path, false);
+
+        public string GetTabTitleForPath(string path, bool isSearchMode)
         {
-            if (string.IsNullOrEmpty(path)) return "Tab";
-            if (path == ThisPcPath) return Localization.T("this_pc");
-            if (IsShellPath(path)) return _owner.GetShellDisplayName(path);
-            try
+            string title;
+            if (string.IsNullOrEmpty(path))
             {
-                return new DirectoryInfo(path).Name;
+                title = "Tab";
             }
-            catch
+            else if (path == ThisPcPath)
             {
-                return path;
+                title = Localization.T("this_pc");
             }
+            else if (IsShellPath(path))
+            {
+                title = _owner.GetShellDisplayName(path);
+            }
+            else
+            {
+                try
+                {
+                    title = new DirectoryInfo(path).Name;
+                }
+                catch
+                {
+                    title = path;
+                }
+            }
+
+            if (!isSearchMode)
+                return title;
+
+            return string.Format(Localization.T("tab_title_search"), title);
         }
 
         private Stack<string> CloneStack(Stack<string> source) => new Stack<string>(source.Reverse());
