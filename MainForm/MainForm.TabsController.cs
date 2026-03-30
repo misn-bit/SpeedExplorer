@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
@@ -269,6 +270,7 @@ public partial class MainForm
             {
                 RebuildTabStrip();
                 UpdateTabStripVisuals();
+                StartBackgroundTabPreload(tab);
             }
         }
 
@@ -760,6 +762,87 @@ public partial class MainForm
             var sidebarTarget = exactNode ?? driveNode;
             if (sidebarTarget != null && _owner._sidebar.SelectedNode != sidebarTarget)
                 _owner._sidebar.SelectedNode = sidebarTarget;
+        }
+
+        private void StartBackgroundTabPreload(TabState tab)
+        {
+            if (tab == null)
+                return;
+            if (tab.IsPreloading)
+                return;
+            if (tab.IsSearchMode || tab.IsShellMode)
+                return;
+            if (string.IsNullOrWhiteSpace(tab.CurrentPath) || tab.CurrentPath == ThisPcPath)
+                return;
+            if (tab.HasCachedSnapshot &&
+                string.Equals(tab.CachedPath, tab.CurrentPath, StringComparison.OrdinalIgnoreCase) &&
+                tab.CachedItems != null &&
+                tab.CachedAllItems != null)
+                return;
+            if (!Directory.Exists(tab.CurrentPath))
+                return;
+
+            tab.IsPreloading = true;
+            int preloadVersion = unchecked(tab.PreloadVersion + 1);
+            tab.PreloadVersion = preloadVersion;
+            _owner.ObserveTask(PreloadTabSnapshotAsync(tab, preloadVersion), $"TabsController.Preload/{tab.CurrentPath}");
+        }
+
+        private async Task PreloadTabSnapshotAsync(TabState tab, int preloadVersion)
+        {
+            string path = tab.CurrentPath;
+            try
+            {
+                var allItems = await FileSystemService.GetFilesAsync(path, CancellationToken.None);
+                await Task.Run(() => FileSystemService.SortItems(allItems, tab.SortColumn, tab.SortDirection, tab.TaggedFilesOnTop));
+                var items = new List<FileItem>(allItems);
+
+                if (_owner.IsDisposed || _owner.Disposing)
+                    return;
+
+                try
+                {
+                    _owner.BeginInvoke((Action)(() =>
+                    {
+                        if (_owner.IsDisposed || _owner.Disposing)
+                            return;
+                        if (!_tabs.Contains(tab))
+                            return;
+                        if (tab.PreloadVersion != preloadVersion)
+                            return;
+                        if (!string.Equals(tab.CurrentPath, path, StringComparison.OrdinalIgnoreCase))
+                            return;
+
+                        tab.CachedPath = path;
+                        tab.CachedAllItems = allItems;
+                        tab.CachedItems = items;
+                        tab.HasCachedSnapshot = true;
+                        tab.IsPreloading = false;
+                    }));
+                }
+                catch (InvalidOperationException)
+                {
+                    if (_tabs.Contains(tab) &&
+                        tab.PreloadVersion == preloadVersion &&
+                        string.Equals(tab.CurrentPath, path, StringComparison.OrdinalIgnoreCase))
+                    {
+                        tab.CachedPath = path;
+                        tab.CachedAllItems = allItems;
+                        tab.CachedItems = items;
+                        tab.HasCachedSnapshot = true;
+                        tab.IsPreloading = false;
+                    }
+                }
+            }
+            catch (Exception __ex)
+            {
+                System.Diagnostics.Debug.WriteLine(__ex);
+                if (_tabs.Contains(tab) &&
+                    tab.PreloadVersion == preloadVersion)
+                {
+                    tab.IsPreloading = false;
+                }
+            }
         }
 
         public void UpdateActiveTabTitle()

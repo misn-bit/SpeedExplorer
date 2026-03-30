@@ -126,7 +126,6 @@ public partial class MainForm : Form
     private List<string>? _startupSelectPaths;
     private bool _fastStartup = false;
     private long _navigationTraceSeq = 0;
-    private PictureBox? _navigationFreezeOverlay;
     private bool _navigationFreezeActive = false;
     private static readonly object SearchProgressRowTag = new object();
     private string? _pendingTabTopRestorePath;
@@ -158,47 +157,11 @@ public partial class MainForm : Form
         // with owner-drawn virtual list rows near the bottom edge.
         if (!_loadCompleted) return;
         if (_navigationFreezeActive) return;
-        if (_listView == null || _listView.IsDisposed || !_listView.Visible) return;
-        if (_splitContainer == null || _splitContainer.IsDisposed) return;
-        if (_listView.Width <= 1 || _listView.Height <= 1) return;
+        if (_listView == null || _listView.IsDisposed || !_listView.Visible || !_listView.IsHandleCreated) return;
 
         try
         {
-            _navigationFreezeOverlay ??= new PictureBox
-            {
-                Visible = false,
-                BackColor = ListBackColor,
-                SizeMode = PictureBoxSizeMode.Normal
-            };
-
-            if (_navigationFreezeOverlay.Parent == null)
-            {
-                _splitContainer.Panel2.Controls.Add(_navigationFreezeOverlay);
-            }
-
-            var bmp = new Bitmap(_listView.Width, _listView.Height);
-            try
-            {
-                using (var g = Graphics.FromImage(bmp))
-                {
-                    var screenPoint = _listView.PointToScreen(Point.Empty);
-                    g.CopyFromScreen(screenPoint, Point.Empty, _listView.Size);
-                }
-
-                var old = _navigationFreezeOverlay.Image;
-                _navigationFreezeOverlay.Image = bmp;
-                old?.Dispose();
-            }
-            catch
-            {
-                bmp.Dispose();
-                throw;
-            }
-
-            _navigationFreezeOverlay.Bounds = _listView.Bounds;
-            _navigationFreezeOverlay.Visible = true;
-            _navigationFreezeOverlay.BringToFront();
-            _listView.Visible = false;
+            SetNavigationCommitRedraw(enabled: false);
             _navigationFreezeActive = true;
         }
         catch (Exception ex)
@@ -214,17 +177,46 @@ public partial class MainForm : Form
 
         try
         {
-            if (_listView != null && !_listView.IsDisposed)
-                _listView.Visible = true;
+            SetNavigationCommitRedraw(enabled: true);
+            FlushNavigationChromeCommit();
         }
         catch (Exception ex) { Debug.WriteLine($"EndNavigationFreezeVisual listView restore failed: {ex.Message}"); }
+    }
 
-        try
+    private void SetNavigationCommitRedraw(bool enabled)
+    {
+        const uint RDW_INVALIDATE = 0x0001;
+        const uint RDW_ALLCHILDREN = 0x0080;
+        const uint RDW_UPDATENOW = 0x0100;
+
+        foreach (var control in new Control?[] { _sidebar, _addressBar, _titleBar, _statusBar, _listView })
         {
-            if (_navigationFreezeOverlay != null && !_navigationFreezeOverlay.IsDisposed)
-                _navigationFreezeOverlay.Visible = false;
+            if (control == null || control.IsDisposed || !control.IsHandleCreated)
+                continue;
+
+            try
+            {
+                SendMessage(control.Handle, WM_SETREDRAW, enabled ? 1 : 0, 0);
+                if (enabled)
+                    RedrawWindow(control.Handle, IntPtr.Zero, IntPtr.Zero, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+            }
+            catch (Exception ex) { Debug.WriteLine($"SetNavigationCommitRedraw failed: {ex.Message}"); }
         }
-        catch (Exception ex) { Debug.WriteLine($"EndNavigationFreezeVisual overlay hide failed: {ex.Message}"); }
+    }
+
+    private void FlushNavigationChromeCommit()
+    {
+        foreach (var control in new Control?[] { _sidebar, _addressBar, _tabStrip, _titleBar, _statusBar })
+        {
+            if (control == null || control.IsDisposed || !control.IsHandleCreated)
+                continue;
+
+            try
+            {
+                control.Refresh();
+            }
+            catch (Exception ex) { Debug.WriteLine($"FlushNavigationChromeCommit failed: {ex.Message}"); }
+        }
     }
 
     private void ForceListViewportTopAndRedraw(int preferredIndex, string reason, int pass)

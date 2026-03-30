@@ -416,7 +416,8 @@ public partial class MainForm
             EndNavigationFreezeVisual();
             // Run a post-unfreeze viewport guard once the list is visible again.
             // Some virtual list glitches only manifest after visibility is restored.
-            EnsureListViewportAndPaint("NAV-final");
+            if (ListViewportNeedsRepair())
+                EnsureListViewportAndPaint("NAV-final");
             try
             {
                 if (!IsDisposed && !Disposing && _listView != null && !_listView.IsDisposed)
@@ -651,19 +652,6 @@ public partial class MainForm
         bool isRenaming = _renameTextBox != null && !_renameTextBox.IsDisposed;
         if (!preserveAiPanelFocus && !isRenaming)
             _listView.Focus();
-        _listView.Invalidate();
-        try { _listView.Update(); } catch (Exception ex) { Debug.WriteLine($"{scope} Update failed: {ex.Message}"); }
-        if (_listView.IsHandleCreated)
-        {
-            try
-            {
-                const uint RDW_INVALIDATE = 0x0001;
-                const uint RDW_ALLCHILDREN = 0x0080;
-                const uint RDW_UPDATENOW = 0x0100;
-                RedrawWindow(_listView.Handle, IntPtr.Zero, IntPtr.Zero, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
-            }
-            catch (Exception ex) { Debug.WriteLine($"{scope} RedrawWindow post-bind failed: {ex.Message}"); }
-        }
         LogListViewState($"{scope}#{navTraceId}", "post-bind-pre-reset");
         swBind.Stop();
         NavigationDebugLogger.Log($"{scope}#{navTraceId} BIND ms={swBind.ElapsedMilliseconds} selected={_listView.SelectedIndices.Count}");
@@ -677,8 +665,16 @@ public partial class MainForm
             _tabsController.SyncPathSnapshot(path, _items, _allItems);
 
         _statusLabel.Text = string.Format(Localization.T("status_loaded"), totalSw.ElapsedMilliseconds, _items.Count);
-        try { _statusBar?.Refresh(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
-        EnsureListViewportAndPaint($"{scope}-post");
+        try
+        {
+            if (_navigationFreezeActive)
+                _statusBar?.Invalidate();
+            else
+                _statusBar?.Refresh();
+        }
+        catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+        if (!_navigationFreezeActive && ListViewportNeedsRepair())
+            EnsureListViewportAndPaint($"{scope}-post");
         NavigationDebugLogger.Log($"{scope}#{navTraceId} DONE totalMs={totalSw.ElapsedMilliseconds} items={_items.Count}");
         if (_retryLoadPending && !IsDriveItemsOnly()) _retryLoadPending = false;
     }
@@ -935,6 +931,26 @@ public partial class MainForm
 
         int doneAfterRecreate = SendMessage(_listView.Handle, LVM_GETTOPINDEX, 0, 0);
         NavigationDebugLogger.Log($"{scope}#{navTraceId} VIEWPORT_HARD_RESET_RECREATE done top={doneAfterRecreate} count={_items.Count} sel={target}");
+    }
+
+    private bool ListViewportNeedsRepair()
+    {
+        if (_listView == null || _listView.IsDisposed || !_listView.IsHandleCreated)
+            return false;
+        if (IsTileView || !_listView.VirtualMode || _items.Count <= 0)
+            return false;
+
+        try
+        {
+            const int LVM_GETTOPINDEX = 0x1027;
+            int top = SendMessage(_listView.Handle, LVM_GETTOPINDEX, 0, 0);
+            return top < 0 || top >= _items.Count;
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"ListViewportNeedsRepair failed: {ex.Message}");
+            return true;
+        }
     }
 
     private void EnsureListViewportAndPaint(string scope)

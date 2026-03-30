@@ -26,4 +26,6 @@ internal sealed class TabState
     public string CachedPath { get; set; } = "";
     public List<FileItem>? CachedItems { get; set; }
     public List<FileItem>? CachedAllItems { get; set; }
+    public bool IsPreloading { get; set; }
+    public int PreloadVersion { get; set; }
 }
