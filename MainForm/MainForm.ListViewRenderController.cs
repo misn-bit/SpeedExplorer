@@ -24,14 +24,14 @@ public partial class MainForm
             var x = (float)bounds.X + 4;
 
             // Use a lighter gray for pills if the row is already highlighted with the standard gray.
-            Color pillColor = TagColor;
-            if (rowBackColor.R == 60 && rowBackColor.G == 60 && rowBackColor.B == 60)
+            Color pillColor = _owner.TagColor;
+            if (rowBackColor.ToArgb() == _owner.SelectionUnfocusedColor.ToArgb())
             {
-                pillColor = Color.FromArgb(90, 90, 90);
+                pillColor = _owner.TagSelectedColor;
             }
 
             using var bgBrush = new SolidBrush(pillColor);
-            using var textBrush = new SolidBrush(TagForeColor);
+            using var textBrush = new SolidBrush(_owner.TagForeColor);
             using var selectedTextBrush = new SolidBrush(Color.White);
             using var font = new Font(_owner._listView.Font.FontFamily, 8f);
 
@@ -62,11 +62,11 @@ public partial class MainForm
 
         public void DrawColumnHeader(object? sender, DrawListViewColumnHeaderEventArgs e)
         {
-            using var brush = new SolidBrush(Color.FromArgb(45, 45, 45));
+            using var brush = new SolidBrush(_owner.HeaderBackColor);
             e.Graphics.FillRectangle(brush, e.Bounds);
 
             // Draw separator on the right (header only).
-            using var pen = new Pen(Color.FromArgb(80, 80, 80));
+            using var pen = new Pen(_owner.BorderStrongColor);
             e.Graphics.DrawLine(pen, e.Bounds.Right - 1, e.Bounds.Top + 4, e.Bounds.Right - 1, e.Bounds.Bottom - 4);
 
             var text = e.Header?.Text ?? "";
@@ -124,7 +124,7 @@ public partial class MainForm
             }
 
             var textBounds = new Rectangle(e.Bounds.X + 4, e.Bounds.Y, e.Bounds.Width - 8, e.Bounds.Height);
-            using var textBrush = new SolidBrush(ForeColor_Dark);
+            using var textBrush = new SolidBrush(_owner.ForeColor_Dark);
             var headerFont = e.Font ?? _owner._listView.Font;
             e.Graphics.DrawString(text + sortIndicator, headerFont, textBrush, textBounds, sf);
         }
@@ -139,7 +139,7 @@ public partial class MainForm
         public void DrawSubItem(object? sender, DrawListViewSubItemEventArgs e)
         {
             _ = sender;
-            Color rowBackColor = ListBackColor;
+            Color rowBackColor = _owner.ListBackColor;
             bool isDriveView = _owner._currentPath == ThisPcPath && !_owner.IsSearchMode;
 
             var drawItem = e.Item;
@@ -150,21 +150,21 @@ public partial class MainForm
 
             if (isProgressRow)
             {
-                rowBackColor = ListBackColor;
+                rowBackColor = _owner.ListBackColor;
             }
             else if (drawItem.Selected)
             {
                 rowBackColor = _owner._listView.Focused
-                    ? Color.FromArgb(0, 120, 212)
-                    : Color.FromArgb(60, 60, 60);
+                    ? _owner.SelectionFocusedColor
+                    : _owner.SelectionUnfocusedColor;
             }
             else if (e.ItemIndex == _owner._dragDropController.HoverIndex)
             {
-                rowBackColor = Color.FromArgb(0, 90, 160);
+                rowBackColor = _owner.DropTargetBackColor;
             }
             else if (e.ItemIndex == _owner._hoveredIndex)
             {
-                rowBackColor = Color.FromArgb(60, 60, 60);
+                rowBackColor = _owner.HoverBackColor;
             }
 
             var fillRect = new Rectangle(e.Bounds.X, e.Bounds.Y, e.Bounds.Width + 1, e.Bounds.Height);
@@ -225,10 +225,10 @@ public partial class MainForm
 
                 using var textBrush = new SolidBrush(
                     isProgressRow
-                        ? Color.FromArgb(180, 180, 180)
+                        ? _owner.MutedForeColor
                         : drawItem.Tag is FileItem fs && _owner._cutPaths.Contains(fs.FullPath)
-                        ? Color.FromArgb(120, ForeColor_Dark)
-                        : ForeColor_Dark);
+                        ? Color.FromArgb(120, _owner.ForeColor_Dark)
+                        : _owner.ForeColor_Dark);
 
                 var textX = x + iconWidth;
                 var textRect = new Rectangle(textX, e.Bounds.Y, e.Bounds.Width - (textX - e.Bounds.X), e.Bounds.Height);
@@ -261,7 +261,7 @@ public partial class MainForm
                     (fi.Extension == ".drive" || fi.Extension == ".usb"))
                 {
                     var barRect = new Rectangle(e.Bounds.X + 5, e.Bounds.Y + 4, e.Bounds.Width - 10, e.Bounds.Height - 8);
-                    using (var bgBrush = new SolidBrush(Color.FromArgb(60, 60, 60)))
+                    using (var bgBrush = new SolidBrush(_owner.HoverBackColor))
                         e.Graphics.FillRectangle(bgBrush, barRect);
 
                     if (fi.Size > 0)
@@ -287,7 +287,7 @@ public partial class MainForm
                         using var fillBrush = new SolidBrush(barColor);
                         e.Graphics.FillRectangle(fillBrush, usageFillRect);
                     }
-                    using (var pen = new Pen(Color.FromArgb(100, 100, 100)))
+                    using (var pen = new Pen(_owner.BorderSoftColor))
                         e.Graphics.DrawRectangle(pen, barRect);
                 }
                 else if (_owner._currentPath != ThisPcPath && e.ColumnIndex == ColumnIndex_Tags)
@@ -317,7 +317,7 @@ public partial class MainForm
                             break;
                     }
 
-                    using var textBrush = new SolidBrush(ForeColor_Dark);
+                    using var textBrush = new SolidBrush(_owner.ForeColor_Dark);
                     var textBounds = new Rectangle(e.Bounds.X + 4, e.Bounds.Y, e.Bounds.Width - 8, e.Bounds.Height);
                     e.Graphics.DrawString(text, _owner._listView.Font, textBrush, textBounds, sf);
                 }

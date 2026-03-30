@@ -29,6 +29,7 @@ public sealed class GeneralSettingsControl : UserControl
     private readonly CheckBox _debugCrashLogChk;
     private readonly CheckBox _debugShellLogChk;
     private readonly ComboBox _languageCombo;
+    private readonly ComboBox _themeCombo;
 
     private int Scale(int pixels) => (int)(pixels * (DeviceDpi / 96.0));
 
@@ -68,6 +69,26 @@ public sealed class GeneralSettingsControl : UserControl
         _iconSizeNum.Width = Scale(90);
         sizeRow.Controls.Add(_iconSizeNum);
         panel.Controls.Add(sizeRow);
+
+        var themeRow = new FlowLayoutPanel
+        {
+            AutoSize = true,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false,
+            Margin = new Padding(0, 0, 0, Scale(6))
+        };
+        themeRow.Controls.Add(CreateLabel(Localization.T("theme"), Point.Empty));
+        _themeCombo = new ComboBox
+        {
+            Width = Scale(160),
+            BackColor = Color.FromArgb(60, 60, 60),
+            ForeColor = Color.White,
+            FlatStyle = FlatStyle.Flat,
+            DropDownStyle = ComboBoxStyle.DropDownList
+        };
+        _themeCombo.Items.AddRange(new object[] { Localization.T("theme_dark"), Localization.T("theme_light") });
+        themeRow.Controls.Add(_themeCombo);
+        panel.Controls.Add(themeRow);
 
         var langRow = new FlowLayoutPanel
         {
@@ -206,6 +227,7 @@ public sealed class GeneralSettingsControl : UserControl
         _showPicturesChk.Checked = s.ShowSidebarPictures;
         _showRecentChk.Checked = s.ShowSidebarRecent;
         _showSidebarVScrollChk.Checked = s.ShowSidebarVerticalScrollbar;
+        _themeCombo.SelectedIndex = string.Equals(s.MainThemePreset, "Light", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
         _languageCombo.SelectedIndex = string.Equals(s.UiLanguage, "ru", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
         _runAtStartupChk.Checked = s.RunAtStartup;
         _runInBackgroundChk.Checked = s.RunInBackground;
@@ -235,6 +257,7 @@ public sealed class GeneralSettingsControl : UserControl
         s.ShowSidebarPictures = _showPicturesChk.Checked;
         s.ShowSidebarRecent = _showRecentChk.Checked;
         s.ShowSidebarVerticalScrollbar = _showSidebarVScrollChk.Checked;
+        s.MainThemePreset = _themeCombo.SelectedIndex == 1 ? "Light" : "Dark";
         s.UiLanguage = _languageCombo.SelectedIndex == 1 ? "ru" : "en";
         s.RunAtStartup = _runAtStartupChk.Checked;
         s.RunInBackground = _runInBackgroundChk.Checked;
@@ -322,4 +345,6 @@ public sealed class GeneralSettingsControl : UserControl
         BackColor = Color.Transparent
     };
 }
+
+
 

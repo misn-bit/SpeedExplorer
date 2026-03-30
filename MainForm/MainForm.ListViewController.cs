@@ -76,8 +76,8 @@ public partial class MainForm
                 View = View.Details,
                 VirtualMode = true,
                 VirtualListSize = 0,
-                BackColor = ListBackColor,
-                ForeColor = ForeColor_Dark,
+                BackColor = _owner.ListBackColor,
+                ForeColor = _owner.ForeColor_Dark,
                 BorderStyle = BorderStyle.None,
                 FullRowSelect = true,
                 Font = new Font("Segoe UI", 10),
@@ -149,7 +149,7 @@ public partial class MainForm
 
             lv.HandleCreated += (s, e) =>
             {
-                SetWindowTheme(lv.Handle, "DarkMode_Explorer", null);
+                SetWindowTheme(lv.Handle, _owner._themeController.IsDarkTheme ? "DarkMode_Explorer" : "Explorer", null);
 
                 void ApplyListViewExStyles()
                 {
@@ -175,13 +175,15 @@ public partial class MainForm
                     ApplyListViewExStyles();
                 }));
 
-                int darkMode = 1;
+                int darkMode = _owner._themeController.IsDarkTheme ? 1 : 0;
                 DwmSetWindowAttribute(lv.Handle, DWMWA_USE_IMMERSIVE_DARK_MODE, ref darkMode, sizeof(int));
 
                 var headerHandle = SendMessagePtr(lv.Handle, LVM_GETHEADER, IntPtr.Zero, IntPtr.Zero);
                 if (headerHandle != IntPtr.Zero)
                 {
-                    SetWindowTheme(headerHandle, "DarkMode_Explorer", null);
+                    SetWindowTheme(headerHandle, _owner._themeController.IsDarkTheme ? "DarkMode_Explorer" : "ItemsView", null);
+                    int headerDarkMode = _owner._themeController.IsDarkTheme ? 1 : 0;
+                    DwmSetWindowAttribute(headerHandle, DWMWA_USE_IMMERSIVE_DARK_MODE, ref headerDarkMode, sizeof(int));
                     _owner._headerHandle = headerHandle;
                     _owner._headerTailController.Attach(headerHandle);
                     _owner._headerTailController.Invalidate();
@@ -204,7 +206,13 @@ public partial class MainForm
             if (headerHandle == IntPtr.Zero) return;
 
             _owner._headerHandle = headerHandle;
-            try { SetWindowTheme(headerHandle, "DarkMode_Explorer", null); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+            try
+            {
+                SetWindowTheme(headerHandle, _owner._themeController.IsDarkTheme ? "DarkMode_Explorer" : "ItemsView", null);
+                int darkMode = _owner._themeController.IsDarkTheme ? 1 : 0;
+                DwmSetWindowAttribute(headerHandle, DWMWA_USE_IMMERSIVE_DARK_MODE, ref darkMode, sizeof(int));
+            }
+            catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
             _owner._headerTailController.Attach(headerHandle);
             _owner._headerTailController.Invalidate();
         }

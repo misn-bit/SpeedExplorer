@@ -30,9 +30,9 @@ public partial class MainForm
         public void ApplyDarkMode()
         {
             if (_owner.Handle == IntPtr.Zero) return;
-            int darkMode = 1;
+            int darkMode = _owner._themeController.IsDarkTheme ? 1 : 0;
             DwmSetWindowAttribute(_owner.Handle, DWMWA_USE_IMMERSIVE_DARK_MODE, ref darkMode, sizeof(int));
-            int borderColor = ColorTranslator.ToWin32(Color.FromArgb(45, 45, 48));
+            int borderColor = ColorTranslator.ToWin32(_owner.WindowBorderColor);
             DwmSetWindowAttribute(_owner.Handle, DWMWA_BORDER_COLOR, ref borderColor, sizeof(int));
         }
 
@@ -76,7 +76,7 @@ public partial class MainForm
             var titleBar = new Panel
             {
                 Height = _owner.Scale(40),
-                BackColor = MainForm.TitleBarColor
+                BackColor = _owner.TitleBarColor
             };
             titleBar.Padding = new Padding(_owner.Scale(1), 0, _owner.Scale(1), 0);
 
@@ -101,7 +101,7 @@ public partial class MainForm
                 WrapContents = false,
                 AutoScroll = false,
                 FlowDirection = FlowDirection.LeftToRight,
-                BackColor = MainForm.TitleBarColor,
+                BackColor = _owner.TitleBarColor,
                 Padding = new Padding(0),
                 Margin = new Padding(0)
             };
@@ -110,7 +110,7 @@ public partial class MainForm
             {
                 Dock = DockStyle.Right,
                 Width = _owner.Scale(138),
-                BackColor = MainForm.TitleBarColor
+                BackColor = _owner.TitleBarColor
             };
 
             _owner._windowCloseButton = CreateWindowButton("X", "Close");
@@ -153,13 +153,13 @@ public partial class MainForm
                 Size = new Size(_owner.Scale(46), _owner.Scale(34)),
                 FlatStyle = FlatStyle.Flat,
                 BackColor = Color.Transparent,
-                ForeColor = MainForm.ForeColor_Dark,
+                ForeColor = _owner.ForeColor_Dark,
                 Font = new Font("Segoe UI", 10),
                 Cursor = Cursors.Hand,
                 Margin = _owner.Scale(new Padding(0))
             };
             btn.FlatAppearance.BorderSize = 0;
-            btn.FlatAppearance.MouseOverBackColor = Color.FromArgb(60, 60, 60);
+            btn.FlatAppearance.MouseOverBackColor = _owner.ControlHoverColor;
 
             var tt = new ToolTip();
             tt.SetToolTip(btn, tooltip);

@@ -19,7 +19,7 @@ public partial class MainForm
 
         bool enabled = _searchController.IsTagSearchOnly;
         _searchTagToggleBtn.ForeColor = enabled ? AccentColor : Color.Gray;
-        _searchTagToggleBtn.BackColor = enabled ? Color.FromArgb(60, 60, 60) : Color.FromArgb(45, 45, 45);
+        _searchTagToggleBtn.BackColor = enabled ? HoverBackColor : ControlBackColor;
     }
 
     private void FocusSearchBox(bool tagOnly)
@@ -46,7 +46,7 @@ public partial class MainForm
             AutoSize = false,
             TextAlign = ContentAlignment.MiddleCenter,
             BackColor = ListBackColor,
-            ForeColor = Color.FromArgb(190, 190, 190)
+            ForeColor = MutedForeColor
         };
 
         UpdateSearchOverlayTextAndStyle();
@@ -61,7 +61,7 @@ public partial class MainForm
 
         _searchingOverlay.Text = Localization.T("search_overlay_searching");
         _searchingOverlay.BackColor = ListBackColor;
-        _searchingOverlay.ForeColor = Color.FromArgb(190, 190, 190);
+        _searchingOverlay.ForeColor = MutedForeColor;
 
         float targetSize = Math.Max(18f, _listView.Font.Size * 2.1f);
         if (_searchOverlayFont == null ||

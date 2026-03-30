@@ -58,6 +58,7 @@ public class AppSettings
     public bool EnableShellContextMenu { get; set; } = false;
     public bool UseWindowsContextMenu { get; set; } = false;
     public string UiLanguage { get; set; } = "en";
+    public string MainThemePreset { get; set; } = "Dark";
     public System.Collections.Generic.List<ManualContextAction> ManualContextActions { get; set; } = new();
     public bool MiddleClickOpensNewTab { get; set; } = true;
     public bool DebugNavigationLogging { get; set; } = false;
@@ -256,6 +257,8 @@ public class AppSettings
 
                 if (settings.LlmVisionMaxPixels <= 0)
                     settings.LlmVisionMaxPixels = new AppSettings().LlmVisionMaxPixels;
+
+                settings.MainThemePreset = NormalizeThemePreset(settings.MainThemePreset);
                 
                 return settings;
             }
@@ -270,5 +273,12 @@ public class AppSettings
     public static void ReloadCurrent()
     {
         _instance = Load();
+    }
+
+    private static string NormalizeThemePreset(string? preset)
+    {
+        if (string.Equals(preset, "Light", StringComparison.OrdinalIgnoreCase))
+            return "Light";
+        return "Dark";
     }
 }

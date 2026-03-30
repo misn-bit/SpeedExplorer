@@ -21,8 +21,8 @@ public partial class MainForm
         {
             _owner._addressTextBox = new TextBox
             {
-                BackColor = Color.FromArgb(45, 45, 45),
-                ForeColor = ForeColor_Dark,
+                BackColor = _owner.ControlBackColor,
+                ForeColor = _owner.ForeColor_Dark,
                 BorderStyle = BorderStyle.None,
                 Font = new Font("Segoe UI", 11f),
                 Dock = DockStyle.Fill,
@@ -67,7 +67,7 @@ public partial class MainForm
             _owner._breadcrumbPanel = new FlowLayoutPanel
             {
                 Dock = DockStyle.Fill,
-                BackColor = Color.FromArgb(45, 45, 45),
+                BackColor = _owner.ControlBackColor,
                 WrapContents = false,
                 AutoScroll = false,
                 Cursor = Cursors.IBeam,
@@ -86,7 +86,7 @@ public partial class MainForm
                 TextAlign = ContentAlignment.MiddleCenter,
                 Padding = new Padding(0, 0, 0, _owner.Scale(3)),
                 Margin = new Padding(0),
-                ForeColor = ForeColor_Dark,
+                ForeColor = _owner.ForeColor_Dark,
                 Cursor = Cursors.Hand,
                 Font = new Font("Segoe UI", 12)
             };
@@ -96,7 +96,7 @@ public partial class MainForm
             {
                 Dock = DockStyle.Fill,
                 Padding = _owner.Scale(new Padding(0, 2, 0, 0)),
-                BackColor = Color.FromArgb(45, 45, 45)
+                BackColor = _owner.ControlBackColor
             };
             contentWrapper.Controls.Add(_owner._addressTextBox);
             contentWrapper.Controls.Add(_owner._breadcrumbPanel);
@@ -104,7 +104,7 @@ public partial class MainForm
 
             var panel = new Panel
             {
-                BackColor = Color.FromArgb(45, 45, 45),
+                BackColor = _owner.ControlBackColor,
                 BorderStyle = BorderStyle.FixedSingle,
                 Padding = _owner.Scale(new Padding(2, 0, 2, 0))
             };
@@ -180,15 +180,15 @@ public partial class MainForm
                 AutoSize = true,
                 Padding = new Padding(_owner.Scale(4), 0, _owner.Scale(4), 0),
                 Margin = new Padding(0),
-                ForeColor = Color.FromArgb(220, 220, 220),
+                ForeColor = _owner.SecondaryForeColor,
                 Cursor = Cursors.Hand,
                 TextAlign = ContentAlignment.MiddleLeft,
                 Height = _owner.Scale(30),
                 Font = new Font("Segoe UI", 11f)
             };
 
-            btn.MouseEnter += (s, e) => btn.ForeColor = AccentColor;
-            btn.MouseLeave += (s, e) => btn.ForeColor = Color.FromArgb(220, 220, 220);
+            btn.MouseEnter += (s, e) => btn.ForeColor = _owner.AccentColor;
+            btn.MouseLeave += (s, e) => btn.ForeColor = _owner.SecondaryForeColor;
             btn.Click += (s, e) => _owner.ObserveTask(_owner.NavigateTo(targetPath), "AddressBar.BreadcrumbNavigate");
 
             _owner._breadcrumbPanel.Controls.Add(btn);
@@ -199,7 +199,7 @@ public partial class MainForm
             var sep = new BreadcrumbSeparator
             {
                 Text = "\u203A",
-                ForeColor = Color.FromArgb(180, 180, 180),
+                ForeColor = _owner.MutedForeColor,
                 Font = new Font("Segoe UI", 13f),
                 Size = new Size(_owner.Scale(18), _owner.Scale(32)),
                 Margin = new Padding(0),

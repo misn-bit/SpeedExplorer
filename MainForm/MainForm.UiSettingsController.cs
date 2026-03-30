@@ -59,6 +59,8 @@ public partial class MainForm
             if (_owner._listView == null || _owner._listView.IsDisposed)
                 return;
 
+            _owner._themeController.ApplyMainWindowTheme();
+
             int selectedIndexBefore = -1;
             try
             {

@@ -59,9 +59,9 @@ public partial class MainForm
 
             Menu = new ContextMenuStrip
             {
-                Renderer = new DarkToolStripRenderer(),
+                Renderer = CreateRenderer(),
                 ShowImageMargin = false,
-                BackColor = Color.FromArgb(30, 30, 30)
+                BackColor = _owner.BackColor_Dark
             };
             Menu.Opening += ContextMenu_Opening;
 
@@ -161,6 +161,36 @@ public partial class MainForm
                 _propertiesItem
             });
         }
+
+        public void ApplyTheme()
+        {
+            Menu.Renderer = CreateRenderer();
+            Menu.BackColor = _owner.BackColor_Dark;
+            Menu.ForeColor = _owner.ForeColor_Dark;
+
+            foreach (ToolStripItem item in Menu.Items)
+            {
+                item.ForeColor = _owner.ForeColor_Dark;
+                if (item is ToolStripMenuItem menuItem)
+                    ApplyTheme(menuItem.DropDown);
+            }
+        }
+
+        private void ApplyTheme(ToolStripDropDown dropDown)
+        {
+            dropDown.Renderer = CreateRenderer();
+            dropDown.BackColor = _owner.BackColor_Dark;
+            dropDown.ForeColor = _owner.ForeColor_Dark;
+            foreach (ToolStripItem item in dropDown.Items)
+            {
+                item.ForeColor = _owner.ForeColor_Dark;
+                if (item is ToolStripMenuItem menuItem)
+                    ApplyTheme(menuItem.DropDown);
+            }
+        }
+
+        private ToolStripRenderer CreateRenderer()
+            => _owner._themeController.IsDarkTheme ? new DarkToolStripRenderer() : new LightToolStripRenderer();
 
         private void ContextMenu_Opening(object? sender, CancelEventArgs e)
         {

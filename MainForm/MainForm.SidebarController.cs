@@ -42,8 +42,8 @@ public partial class MainForm
         {
             var tree = new TreeView
             {
-                BackColor = SidebarColor,
-                ForeColor = ForeColor_Dark,
+                BackColor = _owner.SidebarColor,
+                ForeColor = _owner.ForeColor_Dark,
                 BorderStyle = BorderStyle.None,
                 Font = new Font("Segoe UI Emoji", 10),
                 ShowLines = false,
@@ -175,8 +175,8 @@ public partial class MainForm
 
             tree.HandleCreated += (s, e) =>
             {
-                SetWindowTheme(tree.Handle, "DarkMode_Explorer", null);
-                int darkMode = 1;
+                SetWindowTheme(tree.Handle, _owner._themeController.IsDarkTheme ? "DarkMode_Explorer" : "Explorer", null);
+                int darkMode = _owner._themeController.IsDarkTheme ? 1 : 0;
                 DwmSetWindowAttribute(tree.Handle, DWMWA_USE_IMMERSIVE_DARK_MODE, ref darkMode, sizeof(int));
                 ApplySidebarScrollbars(tree);
             };
@@ -296,7 +296,7 @@ public partial class MainForm
                 if (!blockNodes.TryGetValue(blockId, out var nodes) || nodes.Count == 0)
                     continue;
 
-                _tree.Nodes.Add(new TreeNode("") { ForeColor = Color.FromArgb(80, 80, 80), Tag = CreateSeparatorTag(blockId) });
+                _tree.Nodes.Add(new TreeNode("") { ForeColor = _owner.BorderStrongColor, Tag = CreateSeparatorTag(blockId) });
                 foreach (var node in nodes)
                 {
                     _tree.Nodes.Add(node);
@@ -512,11 +512,13 @@ public partial class MainForm
             int right = tree.ClientRectangle.Width;
             var bgRect = new Rectangle(0, e.Bounds.Y, right, e.Bounds.Height);
 
-            Color rowColor = SidebarColor;
+            bool windowHasFocus = _owner.ContainsFocus;
+
+            Color rowColor = _owner.SidebarColor;
             if (!isSeparator && isSelected)
-                rowColor = Color.FromArgb(0, 120, 212);
+                rowColor = windowHasFocus ? _owner.SelectionFocusedColor : _owner.SelectionUnfocusedColor;
             else if (!isSeparator && e.Node == _hoveredNode)
-                rowColor = Color.FromArgb(60, 60, 60);
+                rowColor = _owner.HoverBackColor;
 
             using (var brush = new SolidBrush(rowColor))
                 e.Graphics.FillRectangle(brush, bgRect);
@@ -524,7 +526,7 @@ public partial class MainForm
             if (isSeparator)
             {
                 int y = e.Bounds.Top + (e.Bounds.Height / 2);
-                using var pen = new Pen(Color.FromArgb(80, 80, 80), 1);
+                using var pen = new Pen(_owner.BorderStrongColor, 1);
                 e.Graphics.DrawLine(pen, _owner.Scale(8), y, right - _owner.Scale(8), y);
 
                 if (!string.IsNullOrEmpty(_dragBlockId) && _dragBlockInsertIndex >= 0 && !string.IsNullOrEmpty(separatorBlockId))
@@ -536,13 +538,13 @@ public partial class MainForm
                         if (_dragBlockInsertIndex == idx)
                         {
                             int yTop = e.Bounds.Top;
-                            using var insertPen = new Pen(Color.FromArgb(140, 140, 140), 1);
+                            using var insertPen = new Pen(_owner.BorderSoftColor, 1);
                             e.Graphics.DrawLine(insertPen, _owner.Scale(6), yTop, right - _owner.Scale(6), yTop);
                         }
                         else if (_dragBlockInsertIndex == idx + 1)
                         {
                             int yBottom = e.Bounds.Bottom - 1;
-                            using var insertPen = new Pen(Color.FromArgb(140, 140, 140), 1);
+                            using var insertPen = new Pen(_owner.BorderSoftColor, 1);
                             e.Graphics.DrawLine(insertPen, _owner.Scale(6), yBottom, right - _owner.Scale(6), yBottom);
                         }
                     }
@@ -552,7 +554,7 @@ public partial class MainForm
             }
 
             var text = e.Node.Text;
-            var textColor = isSelected ? Color.White : ForeColor_Dark;
+            var textColor = isSelected ? (windowHasFocus ? Color.White : _owner.ForeColor_Dark) : _owner.ForeColor_Dark;
             var textRect = new Rectangle(0, e.Bounds.Y, right, e.Bounds.Height);
 
             var flags = TextFormatFlags.VerticalCenter | TextFormatFlags.Left | TextFormatFlags.NoPadding |
@@ -563,7 +565,7 @@ public partial class MainForm
             if (!string.IsNullOrEmpty(_dragPath) && e.Node.Tag is string nodePath &&
                 string.Equals(nodePath, _dragPath, StringComparison.OrdinalIgnoreCase))
             {
-                using var overlay = new SolidBrush(Color.FromArgb(80, 255, 255, 255));
+                using var overlay = new SolidBrush(_owner.SidebarGhostOverlayColor);
                 e.Graphics.FillRectangle(overlay, new Rectangle(0, e.Bounds.Y, right, e.Bounds.Height));
             }
 
@@ -575,13 +577,13 @@ public partial class MainForm
                 if (idx >= 0 && _dragInsertIndex == idx)
                 {
                     int y = e.Bounds.Top;
-                    using var pen = new Pen(Color.FromArgb(140, 140, 140), 1);
+                    using var pen = new Pen(_owner.BorderSoftColor, 1);
                     e.Graphics.DrawLine(pen, _owner.Scale(6), y, right - _owner.Scale(6), y);
                 }
                 else if (idx >= 0 && _dragInsertIndex == idx + 1)
                 {
                     int y = e.Bounds.Bottom - 1;
-                    using var pen = new Pen(Color.FromArgb(140, 140, 140), 1);
+                    using var pen = new Pen(_owner.BorderSoftColor, 1);
                     e.Graphics.DrawLine(pen, _owner.Scale(6), y, right - _owner.Scale(6), y);
                 }
             }

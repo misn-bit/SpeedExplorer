@@ -36,6 +36,7 @@ public partial class MainForm : Form
     private FlowLayoutPanel _breadcrumbPanel = null!;
     private TextBox _searchBox = null!;
     private Button _searchTagToggleBtn = null!;
+    private Button _searchClearBtn = null!;
     private Label _searchingOverlay = null!;
     private TreeView _sidebar;
     private SidebarController _sidebarController;
@@ -363,15 +364,32 @@ public partial class MainForm : Form
     private const int ColumnIndex_DriveCapacity = 5; // Drive view Capacity bar column
 
 
-    // Dark theme colors
-    private static readonly Color BackColor_Dark = Color.FromArgb(30, 30, 30);
-    private static readonly Color ForeColor_Dark = Color.FromArgb(240, 240, 240);
-    private static readonly Color AccentColor = Color.FromArgb(0, 120, 212);
-    private static readonly Color SidebarColor = Color.FromArgb(37, 37, 38);
-    private static readonly Color ListBackColor = Color.FromArgb(25, 25, 25);
-    private static readonly Color TitleBarColor = Color.FromArgb(32, 32, 32);
-    private static readonly Color TagColor = Color.FromArgb(60, 60, 60);
-    private static readonly Color TagForeColor = Color.FromArgb(200, 200, 200);
+    private ThemeController.Palette ThemePalette => _themeController.CurrentPalette;
+    private Color BackColor_Dark => ThemePalette.PanelBackground;
+    private Color ForeColor_Dark => ThemePalette.Foreground;
+    private Color SecondaryForeColor => ThemePalette.ForegroundSecondary;
+    private Color MutedForeColor => ThemePalette.ForegroundMuted;
+    private Color AccentColor => ThemePalette.Accent;
+    private Color SidebarColor => ThemePalette.SidebarBackground;
+    private Color ListBackColor => ThemePalette.ListBackground;
+    private Color TitleBarColor => ThemePalette.TitleBarBackground;
+    private Color WindowBackgroundColor => ThemePalette.WindowBackground;
+    private Color WindowBorderColor => ThemePalette.WindowBorder;
+    private Color ControlBackColor => ThemePalette.ControlBackground;
+    private Color ControlHoverColor => ThemePalette.ControlHoverBackground;
+    private Color SelectionFocusedColor => ThemePalette.SelectionFocused;
+    private Color SelectionUnfocusedColor => ThemePalette.SelectionUnfocused;
+    private Color HoverBackColor => ThemePalette.HoverBackground;
+    private Color DropTargetBackColor => ThemePalette.DropTargetBackground;
+    private Color HeaderBackColor => ThemePalette.HeaderBackground;
+    private Color BorderStrongColor => ThemePalette.BorderStrong;
+    private Color BorderSoftColor => ThemePalette.BorderSoft;
+    private Color TagColor => ThemePalette.TagBackground;
+    private Color TagSelectedColor => ThemePalette.TagBackgroundSelected;
+    private Color TagForeColor => ThemePalette.TagForeground;
+    private Color ActiveTabBackColor => ThemePalette.ActiveTabBackground;
+    private Color InactiveTabBackColor => ThemePalette.InactiveTabBackground;
+    private Color SidebarGhostOverlayColor => ThemePalette.SidebarGhostOverlay;
 
     public MainForm(string? initialPath = null)
     {

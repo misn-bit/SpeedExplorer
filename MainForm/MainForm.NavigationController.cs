@@ -255,16 +255,12 @@ public partial class MainForm
             _addressTextBox.Text = path;
             _statusLabel.Text = Localization.T("status_loading");
             _tabsController.SyncActiveTabPath(_currentPath, _currentDisplayPath);
-            UpdateActiveTabTitle();
-            // Push navigation chrome updates immediately so path/title/crumbs do not feel delayed.
+            // Invalidate chrome promptly, but don't block folder enumeration on synchronous repaints.
             try
             {
                 _addressBar?.Invalidate();
-                _addressBar?.Update();
                 _titleBar?.Invalidate();
-                _titleBar?.Update();
                 _statusBar?.Invalidate();
-                _statusBar?.Update();
             }
             catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
             try
@@ -275,7 +271,6 @@ public partial class MainForm
                     _listView.Focus();
             }
             catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
-            await Task.Yield();
 
             _tileViewController.ApplyViewModeForNavigation();
 
@@ -291,6 +286,18 @@ public partial class MainForm
                     SetupDriveColumns(_listView);
                 else
                     SetupFileColumns(_listView);
+
+                // Let the newly selected tab/title/address chrome paint before the cached list bind,
+                // otherwise large cached restores can make the UI look staged.
+                await Task.Yield();
+                try
+                {
+                    _addressBar?.Refresh();
+                    _tabStrip?.Refresh();
+                    _titleBar?.Refresh();
+                    _statusBar?.Refresh();
+                }
+                catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
 
                 BindItemsToListView(navTraceId, cacheIsSearchSnapshot ? "NAVCACHE_SEARCH" : "NAVCACHE", path, pathsToSelect, totalSw, gcStart);
                 return;
@@ -344,9 +351,7 @@ public partial class MainForm
             }
 
             _statusLabel.Text = Localization.T("status_loading_items");
-            // Avoid Application.DoEvents re-entrancy; just force a paint and yield once.
-            try { _statusBar?.Invalidate(); _statusBar?.Update(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
-            await Task.Yield();
+            try { _statusBar?.Invalidate(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
 
             // Cancel previous load
             _loadCts?.Cancel();
@@ -672,6 +677,7 @@ public partial class MainForm
             _tabsController.SyncPathSnapshot(path, _items, _allItems);
 
         _statusLabel.Text = string.Format(Localization.T("status_loaded"), totalSw.ElapsedMilliseconds, _items.Count);
+        try { _statusBar?.Refresh(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
         EnsureListViewportAndPaint($"{scope}-post");
         NavigationDebugLogger.Log($"{scope}#{navTraceId} DONE totalMs={totalSw.ElapsedMilliseconds} items={_items.Count}");
         if (_retryLoadPending && !IsDriveItemsOnly()) _retryLoadPending = false;

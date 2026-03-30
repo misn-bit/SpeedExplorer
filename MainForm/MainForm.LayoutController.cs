@@ -33,13 +33,13 @@ public partial class MainForm
                 Size = new Size(_owner.Scale(36), _owner.Scale(31)),
                 FlatStyle = FlatStyle.Flat,
                 BackColor = Color.Transparent,
-                ForeColor = ForeColor_Dark,
+                ForeColor = _owner.ForeColor_Dark,
                 Font = new Font("Segoe UI", 12),
                 Cursor = Cursors.Hand,
                 Margin = _owner.Scale(new Padding(2, 0, 2, 0))
             };
             btn.FlatAppearance.BorderSize = 0;
-            btn.FlatAppearance.MouseOverBackColor = Color.FromArgb(60, 60, 60);
+            btn.FlatAppearance.MouseOverBackColor = _owner.ControlHoverColor;
 
             var tt = new ToolTip();
             tt.SetToolTip(btn, tooltip);
@@ -69,7 +69,7 @@ public partial class MainForm
         {
             _owner._searchBox = new TextBox
             {
-                BackColor = Color.FromArgb(45, 45, 45),
+                BackColor = _owner.ControlBackColor,
                 ForeColor = Color.Gray,
                 BorderStyle = BorderStyle.None,
                 Font = new Font("Segoe UI", 10),
@@ -82,7 +82,7 @@ public partial class MainForm
                 if (_owner._searchBox.Text == Localization.T("search_placeholder"))
                 {
                     _owner._searchBox.Text = "";
-                    _owner._searchBox.ForeColor = ForeColor_Dark;
+                    _owner._searchBox.ForeColor = _owner.ForeColor_Dark;
                 }
             };
 
@@ -131,13 +131,13 @@ public partial class MainForm
                 Width = _owner.Scale(26),
                 Font = new Font("Segoe UI Emoji", 9f, FontStyle.Regular),
                 FlatStyle = FlatStyle.Flat,
-                BackColor = Color.FromArgb(45, 45, 45),
+                BackColor = _owner.ControlBackColor,
                 ForeColor = Color.Gray,
                 Cursor = Cursors.Hand,
                 Margin = new Padding(_owner.Scale(6), _owner.Scale(8), 0, 0)
             };
             tagToggleBtn.FlatAppearance.BorderSize = 0;
-            tagToggleBtn.FlatAppearance.MouseOverBackColor = Color.FromArgb(60, 60, 60);
+            tagToggleBtn.FlatAppearance.MouseOverBackColor = _owner.ControlHoverColor;
             ApplyNavButtonTextOffset(tagToggleBtn, -_owner.Scale(1));
 
             var tt = new ToolTip();
@@ -155,20 +155,20 @@ public partial class MainForm
                 }
             };
 
-            var clearBtn = new Button
+            var clearBtn = _owner._searchClearBtn = new Button
             {
                 Text = "✕",
                 Dock = DockStyle.Right,
                 Width = _owner.Scale(24),
                 Font = new Font("Segoe UI Emoji", 10f, FontStyle.Regular),
                 FlatStyle = FlatStyle.Flat,
-                BackColor = Color.FromArgb(45, 45, 45),
+                BackColor = _owner.ControlBackColor,
                 ForeColor = Color.Gray,
                 Cursor = Cursors.Hand,
                 Margin = new Padding(0)
             };
             clearBtn.FlatAppearance.BorderSize = 0;
-            clearBtn.FlatAppearance.MouseOverBackColor = Color.FromArgb(60, 60, 60);
+            clearBtn.FlatAppearance.MouseOverBackColor = _owner.ControlHoverColor;
             ApplyNavButtonTextOffset(clearBtn, -_owner.Scale(0));
             clearBtn.Click += (s, e) =>
             {
@@ -178,7 +178,7 @@ public partial class MainForm
 
             var panel = new Panel
             {
-                BackColor = Color.FromArgb(45, 45, 45),
+                BackColor = _owner.ControlBackColor,
                 BorderStyle = BorderStyle.FixedSingle,
                 Padding = _owner.Scale(new Padding(2))
             };
@@ -195,8 +195,8 @@ public partial class MainForm
         {
             var status = new StatusStrip
             {
-                BackColor = BackColor_Dark,
-                ForeColor = ForeColor_Dark,
+                BackColor = _owner.BackColor_Dark,
+                ForeColor = _owner.ForeColor_Dark,
                 SizingGrip = true
             };
 
@@ -220,7 +220,7 @@ public partial class MainForm
                 IsLink = false
             };
             _owner._viewToggleLabel.Click += (s, e) => _owner.ToggleTileView();
-            _owner._viewToggleLabel.ForeColor = Color.LightGray;
+            _owner._viewToggleLabel.ForeColor = _owner.MutedForeColor;
             _owner._viewToggleLabel.Margin = new Padding(10, 0, 10, 0);
 
             status.Items.Add(_owner._pathLabel);
@@ -238,7 +238,7 @@ public partial class MainForm
             {
                 Dock = DockStyle.Top,
                 Height = _owner.Scale(47),
-                BackColor = BackColor_Dark,
+                BackColor = _owner.BackColor_Dark,
                 Padding = _owner.Scale(new Padding(10, 5, 10, 5))
             };
 
@@ -248,7 +248,7 @@ public partial class MainForm
             {
                 Dock = DockStyle.Left,
                 Width = _owner.Scale(200),
-                BackColor = BackColor_Dark
+                BackColor = _owner.BackColor_Dark
             };
 
             _owner._backBtn = CreateNavButton("<", Localization.T("tooltip_back"));
@@ -299,7 +299,7 @@ public partial class MainForm
                 WrapContents = false,
                 AutoScroll = false,
                 FlowDirection = FlowDirection.LeftToRight,
-                BackColor = BackColor_Dark,
+                BackColor = _owner.BackColor_Dark,
                 Padding = new Padding(0),
                 Margin = new Padding(0)
             };
@@ -312,7 +312,7 @@ public partial class MainForm
 
             _owner._navPanel.Controls.Add(_owner._addressBar);
             _owner._navPanel.Controls.Add(_owner._navButtonsPanel);
-            _owner._navPanel.Controls.Add(new Panel { Dock = DockStyle.Right, Width = _owner.Scale(10), BackColor = BackColor_Dark });
+            _owner._navPanel.Controls.Add(new Panel { Dock = DockStyle.Right, Width = _owner.Scale(10), BackColor = _owner.BackColor_Dark });
             _owner._navPanel.Controls.Add(_owner._searchControl);
 
             _owner.ApplySettings();
@@ -321,11 +321,11 @@ public partial class MainForm
             {
                 Dock = DockStyle.Fill,
                 SplitterWidth = _owner.Scale(3),
-                BackColor = BackColor_Dark,
+                BackColor = _owner.BackColor_Dark,
                 Panel1MinSize = _owner.Scale(120)
             };
-            _owner._splitContainer.Panel1.BackColor = SidebarColor;
-            _owner._splitContainer.Panel2.BackColor = ListBackColor;
+            _owner._splitContainer.Panel1.BackColor = _owner.SidebarColor;
+            _owner._splitContainer.Panel2.BackColor = _owner.ListBackColor;
             _owner._sidebar.Dock = DockStyle.Fill;
             _owner._listView.Dock = DockStyle.Fill;
             _owner._splitContainer.Panel1.Controls.Add(_owner._sidebar);

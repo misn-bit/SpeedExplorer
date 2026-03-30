@@ -79,7 +79,7 @@ public partial class MainForm
 
                 var tail = new Rectangle(used, 0, w - used, h);
                 using var g = Graphics.FromHwnd(_hwnd);
-                using var b = new SolidBrush(Color.FromArgb(45, 45, 45));
+                using var b = new SolidBrush(_owner.HeaderBackColor);
                 g.FillRectangle(b, tail);
             }
             catch
@@ -104,4 +104,3 @@ public partial class MainForm
         }
     }
 }
-

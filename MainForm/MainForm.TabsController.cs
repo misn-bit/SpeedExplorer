@@ -91,13 +91,13 @@ public partial class MainForm
                 Size = new Size(_owner.Scale(30), _owner.Scale(38)),
                 FlatStyle = FlatStyle.Flat,
                 BackColor = Color.Transparent,
-                ForeColor = ForeColor_Dark,
+                ForeColor = _owner.ForeColor_Dark,
                 Font = new Font("Segoe UI Semibold", 12),
                 Cursor = Cursors.Hand,
                 Margin = new Padding(_owner.Scale(1), _owner.Scale(1), 0, 0)
             };
             _addTabButton.FlatAppearance.BorderSize = 0;
-            _addTabButton.FlatAppearance.MouseOverBackColor = Color.FromArgb(60, 60, 60);
+            _addTabButton.FlatAppearance.MouseOverBackColor = _owner.ControlHoverColor;
             ApplyButtonTextOffset(_addTabButton, "+", -_owner.Scale(5));
             _addTabButton.Click += (s, e) => AddNewTab();
 
@@ -107,14 +107,14 @@ public partial class MainForm
                 Size = new Size(_owner.Scale(30), _owner.Scale(38)),
                 FlatStyle = FlatStyle.Flat,
                 BackColor = Color.Transparent,
-                ForeColor = ForeColor_Dark,
+                ForeColor = _owner.ForeColor_Dark,
                 Font = new Font("Segoe UI Semibold", 12),
                 Cursor = Cursors.Hand,
                 Margin = new Padding(_owner.Scale(1), _owner.Scale(1), 0, 0),
                 Visible = false
             };
             _tabOverflowButton.FlatAppearance.BorderSize = 0;
-            _tabOverflowButton.FlatAppearance.MouseOverBackColor = Color.FromArgb(60, 60, 60);
+            _tabOverflowButton.FlatAppearance.MouseOverBackColor = _owner.ControlHoverColor;
             _tabOverflowButton.Click += (s, e) => ShowTabOverflowMenu();
 
             RebuildTabStrip();
@@ -197,6 +197,8 @@ public partial class MainForm
                 int newIndex = _tabs.Count - 1;
                 _activeTabIndex = newIndex;
                 RebuildTabStrip();
+                _tabStrip?.Refresh();
+                _titleBar?.Refresh();
                 SwitchToTab(newIndex, force: true, saveCurrent: false, skipNavigation: true);
                 _owner.ObserveTask(
                     _owner.NavigateToAndMaybeOpenImageViewerAsync(normalized, selectPaths, imagePathForViewer),
@@ -228,6 +230,8 @@ public partial class MainForm
             int newIndex = _tabs.Count - 1;
             _activeTabIndex = newIndex;
             RebuildTabStrip();
+            _tabStrip?.Refresh();
+            _titleBar?.Refresh();
             SwitchToTab(newIndex, force: true, saveCurrent: false);
         }
 
@@ -257,6 +261,8 @@ public partial class MainForm
             {
                 _activeTabIndex = newIndex;
                 RebuildTabStrip();
+                _tabStrip?.Refresh();
+                _titleBar?.Refresh();
                 SwitchToTab(newIndex, force: true, saveCurrent: false);
             }
             else
@@ -275,10 +281,11 @@ public partial class MainForm
                 return;
             }
 
-            SaveCurrentTabState();
             _tabs.RemoveAt(index);
             if (_activeTabIndex >= _tabs.Count) _activeTabIndex = _tabs.Count - 1;
             RebuildTabStrip();
+            _tabStrip?.Refresh();
+            _titleBar?.Refresh();
             SwitchToTab(_activeTabIndex, force: true, saveCurrent: false);
         }
 
@@ -291,6 +298,11 @@ public partial class MainForm
             if (saveCurrent) SaveCurrentTabState();
             _activeTabIndex = index;
 
+            if (ShouldShowTabOverflow())
+                RebuildTabStrip();
+            else
+                UpdateTabStripVisuals();
+
             if (skipNavigation)
             {
                 UpdateActiveTabTitle();
@@ -299,11 +311,6 @@ public partial class MainForm
             {
                 LoadTabState(_tabs[index]);
             }
-
-            if (ShouldShowTabOverflow())
-                RebuildTabStrip();
-            else
-                UpdateTabStripVisuals();
 
             _owner.LogListViewState("TAB", $"switch-end active={_activeTabIndex}");
         }
@@ -327,8 +334,8 @@ public partial class MainForm
             tab.CurrentShellId = ShellNavigationController.IsShellIdPath(_owner._currentPath) ? _owner._currentPath : "";
             tab.Title = GetTabTitleForPath(_owner._currentPath, tab.IsSearchMode);
             tab.CachedPath = _owner._currentPath;
-            tab.CachedItems = new List<FileItem>(_owner._items);
-            tab.CachedAllItems = new List<FileItem>(_owner._allItems);
+            tab.CachedItems = _owner._items;
+            tab.CachedAllItems = _owner._allItems;
             tab.HasCachedSnapshot = true;
             CaptureListState(tab);
         }
@@ -388,6 +395,19 @@ public partial class MainForm
                 _owner._pendingTabTopRestoreIndex = -1;
             }
 
+            if (useCachedSnapshot)
+            {
+                RestoreCachedTabState(tab, restoreSelection, restoreSearchMode, restoreSearchText);
+                _owner._pendingTabTopRestorePath = null;
+                _owner._pendingTabTopRestoreIndex = -1;
+                _owner._pendingTabCachePath = null;
+                _owner._pendingTabCacheItems = null;
+                _owner._pendingTabCacheAllItems = null;
+                _owner._pendingTabCacheIsSearchMode = false;
+                _pendingSearchRestoreTabId = null;
+                return;
+            }
+
             _owner._suppressHistoryUpdate = true;
             try
             {
@@ -425,7 +445,7 @@ public partial class MainForm
                 try
                 {
                     _owner._searchBox.Text = restoreSearchText;
-                    _owner._searchBox.ForeColor = ForeColor_Dark;
+                    _owner._searchBox.ForeColor = _owner.ForeColor_Dark;
                 }
                 finally
                 {
@@ -464,6 +484,282 @@ public partial class MainForm
                 catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                 _owner.LogListViewState("TAB", $"load-end req={requestId}");
             }));
+        }
+
+        private void RestoreCachedTabState(
+            TabState tab,
+            List<string>? restoreSelection,
+            bool restoreSearchMode,
+            string restoreSearchText)
+        {
+            string path = tab.CurrentPath;
+            var redrawScope = new Control?[]
+            {
+                _owner._sidebar,
+                _owner._listView,
+                _owner._addressBar,
+                _tabStrip,
+                _titleBar,
+                _owner._statusBar
+            };
+
+            SetRedraw(redrawScope, enabled: false);
+            try
+            {
+                _owner._searchController.TryCancelActiveSearch();
+                _owner._isShellMode = tab.IsShellMode;
+                _owner._sortColumn = tab.SortColumn;
+                _owner._sortDirection = tab.SortDirection;
+                _owner._taggedFilesOnTop = tab.TaggedFilesOnTop;
+                _owner._currentPath = path;
+                _owner._currentDisplayPath = string.IsNullOrWhiteSpace(tab.CurrentDisplayPath) ? path : tab.CurrentDisplayPath;
+
+                UpdateWindowTitle(path, _owner._currentDisplayPath);
+                SyncSidebarSelection(path);
+                _owner.UpdateWatcher(path);
+                _owner.UpdateBreadcrumbs(path);
+                _owner._addressTextBox.Text = path;
+
+                _owner._suppressSearchTextChanged = true;
+                try
+                {
+                    _owner._searchBox.Enabled = true;
+                    if (restoreSearchMode &&
+                        !string.IsNullOrWhiteSpace(restoreSearchText) &&
+                        restoreSearchText != Localization.T("search_placeholder"))
+                    {
+                        _owner._searchBox.Text = restoreSearchText;
+                        _owner._searchBox.ForeColor = _owner.ForeColor_Dark;
+                    }
+                    else
+                    {
+                        _owner._searchBox.Text = Localization.T("search_placeholder");
+                        _owner._searchBox.ForeColor = Color.Gray;
+                    }
+                }
+                finally
+                {
+                    _owner._suppressSearchTextChanged = false;
+                }
+
+                _owner._allItems = tab.CachedAllItems ?? new List<FileItem>();
+                _owner._items = tab.CachedItems ?? new List<FileItem>();
+
+                if (path == ThisPcPath && !restoreSearchMode)
+                    _owner.SetupDriveColumns(_owner._listView);
+                else
+                    _owner.SetupFileColumns(_owner._listView);
+
+                RestoreListViewSnapshot(path, restoreSelection, tab.TopItemIndex);
+
+                if (restoreSearchMode &&
+                    !string.IsNullOrWhiteSpace(restoreSearchText) &&
+                    restoreSearchText != Localization.T("search_placeholder"))
+                {
+                    _owner._searchController.RestoreCachedSearchState(restoreSearchText);
+                }
+                else
+                {
+                    _owner._searchController.ExitSearchModeOnNavigate();
+                    _owner._statusLabel.Text = string.Format(Localization.T("status_ready_items"), _owner._items.Count);
+                }
+
+                SyncActiveTabPath(_owner._currentPath, _owner._currentDisplayPath);
+                _owner.RefreshSearchOverlayVisibility();
+            }
+            finally
+            {
+                SetRedraw(redrawScope, enabled: true);
+            }
+
+            try
+            {
+                _owner._listView.Refresh();
+                _owner._addressBar?.Refresh();
+                _owner._statusBar?.Refresh();
+                _tabStrip?.Refresh();
+                _titleBar?.Refresh();
+            }
+            catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+
+            _owner.LogListViewState("TAB", $"load-fast-cache path=\"{TraceText(path)}\" count={_owner._items.Count}");
+        }
+
+        private static void SetRedraw(IEnumerable<Control?> controls, bool enabled)
+        {
+            const uint RDW_INVALIDATE = 0x0001;
+            const uint RDW_ALLCHILDREN = 0x0080;
+            const uint RDW_UPDATENOW = 0x0100;
+
+            foreach (var control in controls)
+            {
+                if (control == null || control.IsDisposed || !control.IsHandleCreated)
+                    continue;
+
+                try
+                {
+                    SendMessage(control.Handle, WM_SETREDRAW, enabled ? 1 : 0, 0);
+                    if (enabled)
+                        RedrawWindow(control.Handle, IntPtr.Zero, IntPtr.Zero, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+                }
+                catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+            }
+        }
+
+        private void RestoreListViewSnapshot(string path, List<string>? restoreSelection, int topItemIndex)
+        {
+            _owner._listView.BeginUpdate();
+            try
+            {
+                _owner._listView.SelectedIndices.Clear();
+                _owner.SetListSelectionAnchor(-1);
+
+                if (_owner.IsTileView)
+                {
+                    _owner.PopulateTileItems();
+                }
+                else
+                {
+                    _owner._listView.VirtualListSize = 0;
+                    _owner._listView.VirtualListSize = _owner._items.Count;
+                }
+
+                if (_owner._items.Count > 0)
+                {
+                    bool restored = false;
+
+                    if (restoreSelection != null && restoreSelection.Count > 0)
+                    {
+                        foreach (var p in restoreSelection)
+                        {
+                            int index = _owner._items.FindIndex(x =>
+                                x.FullPath.Equals(p, StringComparison.OrdinalIgnoreCase) ||
+                                x.Name.Equals(Path.GetFileName(p), StringComparison.OrdinalIgnoreCase));
+                            if (index < 0)
+                                continue;
+                            if (_owner.IsTileView && index >= _owner._listView.Items.Count)
+                                continue;
+
+                            _owner._listView.SelectedIndices.Add(index);
+                            if (!restored)
+                            {
+                                _owner.FocusAndAnchorListIndex(index, ensureVisible: false);
+                                restored = true;
+                            }
+                        }
+                    }
+
+                    if (!restored && _owner._nav.LastSelection.TryGetValue(path, out var lastSelectedName))
+                    {
+                        int index = _owner._items.FindIndex(x => x.Name == lastSelectedName);
+                        if (index >= 0 && (!_owner.IsTileView || index < _owner._listView.Items.Count))
+                        {
+                            _owner._listView.SelectedIndices.Add(index);
+                            _owner.FocusAndAnchorListIndex(index, ensureVisible: false);
+                            restored = true;
+                        }
+                    }
+
+                    if (!restored)
+                    {
+                        _owner._listView.SelectedIndices.Add(0);
+                        _owner.FocusAndAnchorListIndex(0, ensureVisible: false);
+                    }
+
+                    if (topItemIndex >= 0 && topItemIndex < _owner._items.Count)
+                    {
+                        try
+                        {
+                            if (!_owner.IsTileView && topItemIndex < _owner._listView.Items.Count)
+                                _owner._listView.TopItem = _owner._listView.Items[topItemIndex];
+                            else
+                                _owner._listView.EnsureVisible(topItemIndex);
+                        }
+                        catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+                    }
+                }
+            }
+            finally
+            {
+                _owner._listView.EndUpdate();
+            }
+
+            bool preserveAiPanelFocus = _owner._llmChatPanel != null && _owner._llmChatPanel.IsExpanded;
+            bool isRenaming = _owner._renameTextBox != null && !_owner._renameTextBox.IsDisposed;
+            if (!preserveAiPanelFocus && !isRenaming)
+                _owner._listView.Focus();
+        }
+
+        private void UpdateWindowTitle(string path, string displayPath)
+        {
+            if (path == ThisPcPath)
+            {
+                _owner.Text = Localization.T("this_pc");
+                _owner._pathLabel.Text = Localization.T("this_pc");
+                return;
+            }
+
+            if (IsShellPath(path))
+            {
+                _owner.Text = displayPath;
+                _owner._pathLabel.Text = displayPath;
+                return;
+            }
+
+            string folderName;
+            try
+            {
+                var trimmed = path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                folderName = Path.GetFileName(trimmed);
+                if (string.IsNullOrEmpty(folderName))
+                    folderName = trimmed;
+                if (string.IsNullOrEmpty(folderName))
+                    folderName = path;
+            }
+            catch
+            {
+                folderName = path;
+            }
+
+            _owner.Text = folderName;
+            _owner._pathLabel.Text = path;
+        }
+
+        private void SyncSidebarSelection(string path)
+        {
+            TreeNode? exactNode = null;
+            TreeNode? driveNode = null;
+
+            if (_owner._sidebar.SelectedNode?.Tag is string selectedPath &&
+                string.Equals(selectedPath, path, StringComparison.OrdinalIgnoreCase))
+            {
+                exactNode = _owner._sidebar.SelectedNode;
+            }
+
+            foreach (TreeNode node in _owner._sidebar.Nodes)
+            {
+                if (node.Tag is not string nodePath || string.IsNullOrWhiteSpace(nodePath))
+                    continue;
+                if (nodePath.StartsWith(SidebarSeparatorTag, StringComparison.Ordinal))
+                    continue;
+
+                if (exactNode == null && string.Equals(nodePath, path, StringComparison.OrdinalIgnoreCase))
+                {
+                    exactNode = node;
+                    break;
+                }
+
+                if (driveNode == null &&
+                    nodePath.Length <= 3 &&
+                    path.StartsWith(nodePath, StringComparison.OrdinalIgnoreCase))
+                {
+                    driveNode = node;
+                }
+            }
+
+            var sidebarTarget = exactNode ?? driveNode;
+            if (sidebarTarget != null && _owner._sidebar.SelectedNode != sidebarTarget)
+                _owner._sidebar.SelectedNode = sidebarTarget;
         }
 
         public void UpdateActiveTabTitle()
@@ -636,7 +932,7 @@ public partial class MainForm
                     Height = _owner.Scale(38),
                     Width = tabWidth,
                     Margin = new Padding(i == startIndex ? 0 : _owner.Scale(1), _owner.Scale(1), 0, 0),
-                    BackColor = isActive ? Color.FromArgb(55, 55, 55) : Color.FromArgb(40, 40, 40)
+                    BackColor = isActive ? _owner.ActiveTabBackColor : _owner.InactiveTabBackColor
                 };
                 tabPanel.Tag = tab.Id;
                 EnableDoubleBuffering(tabPanel);
@@ -644,7 +940,7 @@ public partial class MainForm
                 var title = new Label
                 {
                     Text = tab.Title,
-                    ForeColor = ForeColor_Dark,
+                    ForeColor = _owner.ForeColor_Dark,
                     AutoEllipsis = true,
                     Font = new Font("Segoe UI Semibold", 10),
                     Location = new Point(_owner.Scale(10), _owner.Scale(5)),
@@ -656,7 +952,7 @@ public partial class MainForm
                 var close = new Label
                 {
                     Text = "×",
-                    ForeColor = Color.FromArgb(200, 200, 200),
+                    ForeColor = _owner.SecondaryForeColor,
                     AutoSize = false,
                     TextAlign = ContentAlignment.MiddleCenter,
                     Font = new Font("Segoe UI Symbol", 11, FontStyle.Bold),
@@ -695,7 +991,7 @@ public partial class MainForm
             UpdateTabStripLayout();
         }
 
-        private void UpdateTabStripVisuals()
+        internal void UpdateTabStripVisuals()
         {
             if (_tabStrip == null) return;
             _tabStrip.SuspendLayout();
@@ -704,16 +1000,40 @@ public partial class MainForm
                 var tab = _tabs[i];
                 if (!_tabPanelsById.TryGetValue(tab.Id, out var panel)) continue;
                 bool isActive = i == _activeTabIndex;
-                panel.BackColor = isActive ? Color.FromArgb(55, 55, 55) : Color.FromArgb(40, 40, 40);
+                panel.BackColor = isActive ? _owner.ActiveTabBackColor : _owner.InactiveTabBackColor;
                 foreach (Control c in panel.Controls)
                 {
                     if (c is Label lbl && (lbl.Tag as string) == "title")
                     {
                         lbl.Text = tab.Title;
-                        break;
+                        lbl.ForeColor = _owner.ForeColor_Dark;
+                    }
+                    else if (c is Label close && close.Text == "×")
+                    {
+                        close.ForeColor = _owner.SecondaryForeColor;
                     }
                 }
+                panel.Invalidate();
             }
+
+            if (_addTabButton != null)
+            {
+                _addTabButton.BackColor = _owner.TitleBarColor;
+                _addTabButton.ForeColor = _owner.ForeColor_Dark;
+                _addTabButton.FlatAppearance.MouseOverBackColor = _owner.ControlHoverColor;
+                _addTabButton.Invalidate();
+            }
+
+            if (_tabOverflowButton != null)
+            {
+                _tabOverflowButton.BackColor = _owner.TitleBarColor;
+                _tabOverflowButton.ForeColor = _owner.ForeColor_Dark;
+                _tabOverflowButton.FlatAppearance.MouseOverBackColor = _owner.ControlHoverColor;
+                _tabOverflowButton.Invalidate();
+            }
+
+            _tabStrip.Invalidate();
+            _titleBar?.Invalidate();
             _tabStrip.ResumeLayout();
         }
 
@@ -811,9 +1131,9 @@ public partial class MainForm
 
             var menu = new ContextMenuStrip
             {
-                Renderer = new DarkToolStripRenderer(),
+                Renderer = _owner._themeController.IsDarkTheme ? new DarkToolStripRenderer() : new LightToolStripRenderer(),
                 ShowImageMargin = false,
-                BackColor = Color.FromArgb(30, 30, 30)
+                BackColor = _owner.BackColor_Dark
             };
 
             for (int i = 0; i < _tabs.Count; i++)

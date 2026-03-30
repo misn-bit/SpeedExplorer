@@ -263,7 +263,7 @@ public partial class MainForm
                     item.Text,
                     _listView.Font,
                     textRect,
-                    ForeColor_Dark,
+                    _owner.ForeColor_Dark,
                     TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
             }
 
