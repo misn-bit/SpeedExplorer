@@ -158,7 +158,8 @@ public class AppSettings
         { "NextTab", "Control, PageDown" },
         { "PrevTab", "Control, PageUp" },
         { "ToggleOcrBoxes", "OemOpenBrackets" },
-        { "ToggleSavedTranslation", "OemCloseBrackets" }
+        { "ToggleSavedTranslation", "OemCloseBrackets" },
+        { "FitSmallDimension", "D2" }
     };
     
     // Future extensible
@@ -205,6 +206,8 @@ public class AppSettings
                     settings.Hotkeys["FocusAI"] = "Control, Shift, D2";
                 if (settings.Hotkeys.TryGetValue("EditTags", out var editTags) && editTags == "Control, T")
                     settings.Hotkeys["EditTags"] = "Control, Alt, T";
+                if (settings.Hotkeys.TryGetValue("FitSmallDimension", out var fitSmall) && fitSmall == "Control, D2")
+                    settings.Hotkeys["FitSmallDimension"] = "D2";
 
                 // Migrate: sidebar block order
                 var defaultSidebarOrder = new AppSettings().SidebarBlockOrder;

@@ -44,6 +44,12 @@ public class SettingsForm : Form
     private Dictionary<string, Button> _hotkeyButtons = new();
     private Dictionary<string, string> _hotkeyEdits = new();
     private string? _recordingAction = null;
+    private static readonly HashSet<string> ImageViewerHotkeyActions = new(StringComparer.Ordinal)
+    {
+        "ToggleOcrBoxes",
+        "ToggleSavedTranslation",
+        "FitSmallDimension"
+    };
 
     private int Scale(int pixels) => (int)(pixels * (this.DeviceDpi / 96.0));
     private Padding Scale(Padding p) => new Padding(Scale(p.Left), Scale(p.Top), Scale(p.Right), Scale(p.Bottom));
@@ -414,14 +420,38 @@ public class SettingsForm : Form
         defaultBtn.Click += RevertToDefaults;
         _hotkeyPanel.Controls.Add(defaultBtn);
 
-        foreach (var kvp in _hotkeyEdits)
+        var mainAppHotkeys = _hotkeyEdits.Where(kvp => !ImageViewerHotkeyActions.Contains(kvp.Key));
+        var imageViewerHotkeys = _hotkeyEdits.Where(kvp => ImageViewerHotkeyActions.Contains(kvp.Key));
+
+        AddHotkeySection(Localization.T("hotkeys_main_app_section"), mainAppHotkeys);
+        AddHotkeySection(Localization.T("hotkeys_image_viewer_section"), imageViewerHotkeys);
+
+        _hotkeyPanel.Controls.Add(new Panel { Height = Scale(12), Width = Scale(1), BackColor = Color.FromArgb(45, 45, 48) });
+    }
+
+    private void AddHotkeySection(string title, IEnumerable<KeyValuePair<string, string>> hotkeys)
+    {
+        var sectionLabel = new Label
+        {
+            Text = title,
+            AutoSize = false,
+            Width = Scale(440),
+            Height = Scale(34),
+            ForeColor = Color.White,
+            Font = new Font("Segoe UI", 11, FontStyle.Bold),
+            Margin = Scale(new Padding(5, 2, 5, 10)),
+            TextAlign = ContentAlignment.MiddleLeft
+        };
+        _hotkeyPanel.Controls.Add(sectionLabel);
+
+        foreach (var kvp in hotkeys)
         {
             var row = new Panel { Width = Scale(440), Height = Scale(45), BackColor = Color.Transparent, Margin = Scale(new Padding(0, 0, 0, 5)) };
-            var lbl = new Label { 
-                Text = GetActionName(kvp.Key), 
-                AutoSize = false, 
-                Width = Scale(220), 
-                Height = Scale(32), 
+            var lbl = new Label {
+                Text = GetActionName(kvp.Key),
+                AutoSize = false,
+                Width = Scale(220),
+                Height = Scale(32),
                 TextAlign = ContentAlignment.MiddleLeft,
                 Location = new Point(Scale(5), Scale(6)),
                 ForeColor = Color.White
@@ -435,15 +465,15 @@ public class SettingsForm : Form
             };
             SettingsButtonStyle.ApplySubtle(btn);
             btn.Click += HotkeyBtn_Click;
-            
+
             row.Controls.Add(lbl);
             row.Controls.Add(btn);
             _hotkeyPanel.Controls.Add(row);
-            
+
             _hotkeyButtons[kvp.Key] = btn;
         }
 
-        _hotkeyPanel.Controls.Add(new Panel { Height = Scale(12), Width = Scale(1), BackColor = Color.FromArgb(45, 45, 48) });
+        _hotkeyPanel.Controls.Add(new Panel { Height = Scale(10), Width = Scale(1), BackColor = Color.FromArgb(45, 45, 48) });
     }
 
     private string FormatHotkey(string keys) => (keys ?? "None").Replace(", ", "+");
@@ -492,6 +522,7 @@ public class SettingsForm : Form
         "PrevTab" => Localization.T("hotkey_prev_tab"),
         "ToggleOcrBoxes" => Localization.T("hotkey_toggle_ocr_boxes"),
         "ToggleSavedTranslation" => Localization.T("hotkey_toggle_saved_translation"),
+        "FitSmallDimension" => Localization.T("hotkey_fit_small_dimension"),
         _ => action
     };
 

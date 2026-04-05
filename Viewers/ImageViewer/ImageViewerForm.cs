@@ -100,6 +100,8 @@ public class ImageViewerForm : Form
     private bool _isFullscreen;
     private FormWindowState _previousWindowState;
     private bool _autoFitEnabled = true;
+    private bool _autoFitBySmallerDimension;
+    private int _rotationQuarterTurns;
     private bool _suppressZoomSliderEvent;
     private bool _aiBusy;
     private string? _ocrImagePath;
@@ -627,6 +629,21 @@ public class ImageViewerForm : Form
             ToggleSavedTranslation();
             return true;
         }
+        if (IsHotkeyPressed("FitSmallDimension", keyData))
+        {
+            FitToWindowBySmallerDimension();
+            return true;
+        }
+        if (IsHotkeyPressed("EditTags", keyData))
+        {
+            EditCurrentImageTags();
+            return true;
+        }
+        if (keyData == (Keys.Control | Keys.R))
+        {
+            RotateImageClockwise();
+            return true;
+        }
 
         // Handle Ctrl+0 and Ctrl+1
         // Note: Keys.Control is the modifier bit
@@ -640,6 +657,11 @@ public class ImageViewerForm : Form
             ActualSize();
             return true;
         }
+        if (keyData == (Keys.Control | Keys.D2) || keyData == (Keys.Control | Keys.NumPad2))
+        {
+            FitToWindowBySmallerDimension();
+            return true;
+        }
         // Also support plain 0 and 1 as fallback/alternate (as per user request implicit)
         if (keyData == Keys.D0 || keyData == Keys.NumPad0)
         {
@@ -649,6 +671,11 @@ public class ImageViewerForm : Form
         if (keyData == Keys.D1 || keyData == Keys.NumPad1)
         {
              ActualSize();
+             return true;
+        }
+        if (keyData == Keys.D2 || keyData == Keys.NumPad2)
+        {
+             FitToWindowBySmallerDimension();
              return true;
         }
 
@@ -732,7 +759,10 @@ public class ImageViewerForm : Form
         base.OnResize(e);
         if (_autoFitEnabled && !_isFullscreen)
         {
-            FitToWindow(allowUpscale: false);
+            if (_autoFitBySmallerDimension)
+                FitToWindowBySmallerDimension(allowUpscale: false);
+            else
+                FitToWindow(allowUpscale: false);
         }
     }
 
@@ -829,10 +859,47 @@ public class ImageViewerForm : Form
             ShowImageMargin = false,
             BackColor = Color.FromArgb(30, 30, 30)
         };
+        menu.Items.Add(Localization.T("rotate_clockwise"), null, (s, e) => RotateImageClockwise());
+        menu.Items.Add(Localization.T("edit_tags"), null, (s, e) => EditCurrentImageTags());
+        menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Copy Image File", null, (s, e) => CopyCurrentImageFileToClipboard());
         menu.Items.Add("Open File Location", null, (s, e) => OpenCurrentImageLocation());
-        menu.Items.Add("Properties", null, (s, e) => ShowCurrentImageProperties());
+        menu.Items.Add(Localization.T("properties"), null, (s, e) => ShowCurrentImageProperties());
         return menu;
+    }
+
+    private void EditCurrentImageTags()
+    {
+        string? imagePath = GetCurrentImagePath();
+        if (string.IsNullOrWhiteSpace(imagePath) || !File.Exists(imagePath))
+            return;
+
+        var currentTags = TagManager.Instance.GetTags(imagePath)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        using var dlg = new EditTagsForm(string.Join(", ", currentTags));
+        dlg.Text = Localization.T("edit_tags_title");
+
+        if (dlg.ShowDialog(this) != DialogResult.OK)
+            return;
+
+        var finalTags = dlg.TagsResult
+            .Split(',', StringSplitOptions.RemoveEmptyEntries)
+            .Select(t => t.Trim())
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        if (dlg.ClearAllRequested)
+        {
+            TagManager.Instance.SetTagsBatch(new[] { imagePath }, finalTags);
+        }
+        else
+        {
+            var toAdd = finalTags.Where(t => !currentTags.Contains(t)).ToList();
+            var toRemove = currentTags.Where(t => !finalTags.Contains(t)).ToList();
+            TagManager.Instance.UpdateTagsBatch(new[] { imagePath }, toAdd, toRemove);
+        }
+
+        UpdateTags(imagePath);
     }
 
     private void CopyCurrentImageFileToClipboard()
@@ -1211,6 +1278,27 @@ public class ImageViewerForm : Form
             return false;
 
         return TryBuildSavedTranslation(envelope, out translation);
+    }
+
+    private static string NormalizeLanguageKey(string? language)
+        => string.IsNullOrWhiteSpace(language) ? "" : language.Trim().ToLowerInvariant();
+
+    private void ApplyLoadedOcrToViewer(string imagePath, LlmImageTextResult ocr, bool fromSavedCache)
+    {
+        _ocrImagePath = imagePath;
+        _lastOcrResult = ocr;
+        _lastTranslations = new List<string>();
+        SetOverlayFromOcrResult(ocr, null);
+        _aiOutputBox.Text = RenderOcrResult(ocr);
+        _currentOverlayFromSavedCache = fromSavedCache;
+
+        if (!fromSavedCache)
+            return;
+
+        string cacheLabel = TryGetExistingOcrCachePath(imagePath, out string existingCachePath)
+            ? Path.GetFileName(existingCachePath)
+            : Path.GetFileName(GetOcrCachePath(imagePath));
+        _aiOutputBox.AppendText(Environment.NewLine + Environment.NewLine + $"[Loaded from OCR_output cache: {cacheLabel}]");
     }
 
     private static void SaveOcrResultToCache(string imagePath, string? modelId, LlmImageTextResult ocr)
@@ -1645,45 +1733,79 @@ public class ImageViewerForm : Form
 
         try
         {
+            string targetLanguage = string.IsNullOrWhiteSpace(_targetLanguageBox.Text) ? "English" : _targetLanguageBox.Text.Trim();
+            LlmImageTextResult? ocr = null;
+            string? model = null;
+            bool usingSavedOcr = false;
+
+            if (withTranslation && TryLoadSavedOcrEnvelope(imagePath, out var savedEnvelope) && savedEnvelope?.Result != null)
+            {
+                ocr = savedEnvelope.Result;
+                _savedTranslationForCurrentImage = TryBuildSavedTranslation(savedEnvelope, out var savedTranslation) ? savedTranslation : null;
+                ApplyLoadedOcrToViewer(imagePath, ocr, fromSavedCache: true);
+
+                if (_savedTranslationForCurrentImage != null
+                    && string.Equals(
+                        NormalizeLanguageKey(_savedTranslationForCurrentImage.TargetLanguage),
+                        NormalizeLanguageKey(targetLanguage),
+                        StringComparison.Ordinal))
+                {
+                    _lastTranslations = _savedTranslationForCurrentImage.Translations?.ToList() ?? new List<string>();
+                    ApplyTranslationsToOverlay(_lastTranslations);
+                    _aiOutputBox.Text = RenderTranslatedResult(ocr, _savedTranslationForCurrentImage);
+                    _aiOutputBox.AppendText(Environment.NewLine + Environment.NewLine + "[Loaded from OCR_output cache]");
+                    SetShowSavedTranslationChecked(true, updatePreference: true);
+                    _currentOverlayFromSavedCache = true;
+                    _aiStatusLabel.Text = $"Loaded saved translation ({_savedTranslationForCurrentImage.TargetLanguage})";
+                    UpdateSavedCacheUiState();
+                    return;
+                }
+
+                usingSavedOcr = true;
+            }
+
             SetAiBusy(true, "Resolving model...");
-            string? model = await EnsureVisionModelAsync();
+            model = await EnsureVisionModelAsync();
             if (string.IsNullOrWhiteSpace(model))
             {
                 SetAiBusy(false, "Model selection cancelled");
                 return;
             }
 
-            SetAiBusy(true, "Extracting text...");
             _aiCts = new CancellationTokenSource();
-            var ocr = await _llmService.ExtractImageTextAsync(imagePath, model, _aiCts.Token);
+            if (!usingSavedOcr)
+            {
+                SetAiBusy(true, "Extracting text...");
+                ocr = await _llmService.ExtractImageTextAsync(imagePath, model, _aiCts.Token);
+
+                if (ocr == null)
+                {
+                    SetAiBusy(false, "OCR failed");
+                    _aiOutputBox.Text = "Failed to extract text from the image.";
+                    return;
+                }
+
+                _savedTranslationForCurrentImage = null;
+                ApplyLoadedOcrToViewer(imagePath, ocr, fromSavedCache: false);
+
+                if (!string.IsNullOrWhiteSpace(model))
+                    SaveOcrResultToCache(imagePath, model, ocr);
+
+                if (!withTranslation)
+                {
+                    SetAiBusy(false, $"OCR regenerated ({ocr.Blocks.Count} blocks)");
+                    UpdateSavedCacheUiState();
+                    return;
+                }
+            }
 
             if (ocr == null)
             {
                 SetAiBusy(false, "OCR failed");
-                _aiOutputBox.Text = "Failed to extract text from the image.";
                 return;
             }
 
-            _ocrImagePath = imagePath;
-            _lastOcrResult = ocr;
-            _currentOverlayFromSavedCache = false;
-            _savedTranslationForCurrentImage = null;
-            _lastTranslations = new List<string>();
-            SetOverlayFromOcrResult(ocr, null);
-            _aiOutputBox.Text = RenderOcrResult(ocr);
-
-            if (!string.IsNullOrWhiteSpace(model))
-                SaveOcrResultToCache(imagePath, model, ocr);
-
-            if (!withTranslation)
-            {
-                SetAiBusy(false, $"OCR regenerated ({ocr.Blocks.Count} blocks)");
-                UpdateSavedCacheUiState();
-                return;
-            }
-
-            SetAiBusy(true, "Translating...");
-            string targetLanguage = string.IsNullOrWhiteSpace(_targetLanguageBox.Text) ? "English" : _targetLanguageBox.Text.Trim();
+            SetAiBusy(true, usingSavedOcr ? "Translating saved OCR..." : "Translating...");
             var sourceBlocks = ocr.Blocks.Select(b => b.Text).Where(t => !string.IsNullOrWhiteSpace(t)).ToList();
             if (sourceBlocks.Count == 0 && !string.IsNullOrWhiteSpace(ocr.FullText))
                 sourceBlocks.Add(ocr.FullText);
@@ -1814,6 +1936,56 @@ public class ImageViewerForm : Form
         return new RectangleF(nx, ny, nw, nh);
     }
 
+    private static RectangleF RotateNormalizedRectClockwise(RectangleF rect)
+        => ClampNormalizedRect(1f - (rect.Y + rect.Height), rect.X, rect.Height, rect.Width);
+
+    private void ApplyCurrentRotationToOverlayBlocks()
+    {
+        if (_rotationQuarterTurns == 0 || _overlayBlocks.Count == 0)
+            return;
+
+        for (int turn = 0; turn < _rotationQuarterTurns; turn++)
+        {
+            for (int i = 0; i < _overlayBlocks.Count; i++)
+                _overlayBlocks[i].NormalizedRect = RotateNormalizedRectClockwise(_overlayBlocks[i].NormalizedRect);
+        }
+    }
+
+    private void RotateImageClockwise()
+    {
+        if (_currentImage == null)
+            return;
+
+        if (_currentAnimation != null)
+        {
+            _currentAnimation.RotateClockwise();
+            _currentImage = _currentAnimation.GetFrame(_animationFrameIndex);
+        }
+        else
+        {
+            _currentImage.RotateFlip(RotateFlipType.Rotate90FlipNone);
+        }
+
+        _rotationQuarterTurns = (_rotationQuarterTurns + 1) % 4;
+        for (int i = 0; i < _overlayBlocks.Count; i++)
+            _overlayBlocks[i].NormalizedRect = RotateNormalizedRectClockwise(_overlayBlocks[i].NormalizedRect);
+
+        if (_autoFitEnabled)
+        {
+            if (_autoFitBySmallerDimension)
+                FitToWindowBySmallerDimension(allowUpscale: false);
+            else
+                FitToWindow(allowUpscale: false);
+        }
+        else
+        {
+            _pictureBox.Invalidate();
+        }
+
+        if (!_aiBusy)
+            _aiStatusLabel.Text = "Rotated clockwise";
+    }
+
     private void SetOverlayFromOcrResult(LlmImageTextResult ocr, IReadOnlyList<string>? translatedLines)
     {
         _overlayBlocks.Clear();
@@ -1908,6 +2080,8 @@ public class ImageViewerForm : Form
             _overlayBlocks.Clear();
             _overlayBlocks.AddRange(reduced);
         }
+
+        ApplyCurrentRotationToOverlayBlocks();
 
         _pictureBox.Invalidate();
     }
@@ -2199,6 +2373,7 @@ public class ImageViewerForm : Form
         if (_currentIndex < 0 || _currentIndex >= _imagePaths.Count) return;
 
         var path = _imagePaths[_currentIndex];
+        _rotationQuarterTurns = 0;
         if (!string.Equals(_ocrImagePath, path, StringComparison.OrdinalIgnoreCase))
         {
             _ocrImagePath = null;
@@ -2215,10 +2390,18 @@ public class ImageViewerForm : Form
         ClearAnimationState();
         try
         {
-            _currentAnimation = ImageSharpViewerService.LoadAnimation(path);
-            _animationFrameIndex = 0;
-            _currentImage = _currentAnimation.GetFrame(_animationFrameIndex);
-            StartAnimationIfNeeded();
+            bool isAnimated = ImageSharpViewerService.IsAnimatedImage(path);
+            if (isAnimated)
+            {
+                _currentAnimation = ImageSharpViewerService.LoadAnimation(path);
+                _animationFrameIndex = 0;
+                _currentImage = _currentAnimation.GetFrame(_animationFrameIndex);
+                StartAnimationIfNeeded();
+            }
+            else
+            {
+                _currentImage = ImageSharpViewerService.LoadBitmap(path);
+            }
             
             _fileNameLabel.Text = Path.GetFileName(path);
             _indexLabel.Text = $"{_currentIndex + 1} / {_imagePaths.Count}";
@@ -2732,10 +2915,22 @@ public class ImageViewerForm : Form
 
     private void FitToWindow(bool allowUpscale = true)
     {
-        if (_currentImage == null) return;
+        ApplyFitToWindow(useSmallerDimension: false, allowUpscale);
+    }
+
+    private void FitToWindowBySmallerDimension(bool allowUpscale = true)
+    {
+        ApplyFitToWindow(useSmallerDimension: true, allowUpscale);
+    }
+
+    private void ApplyFitToWindow(bool useSmallerDimension, bool allowUpscale)
+    {
+        if (_currentImage == null)
+            return;
+
         var scaleX = (float)_pictureBox.Width / _currentImage.Width;
         var scaleY = (float)_pictureBox.Height / _currentImage.Height;
-        float fitScale = Math.Min(scaleX, scaleY);
+        float fitScale = useSmallerDimension ? Math.Max(scaleX, scaleY) : Math.Min(scaleX, scaleY);
         if (!allowUpscale)
             fitScale = Math.Min(1.0f, fitScale);
         _zoomLevel = Math.Clamp(fitScale, 0.1f, 5.0f);
@@ -2743,11 +2938,13 @@ public class ImageViewerForm : Form
         _panOffset = Point.Empty;
         _pictureBox.Invalidate();
         _autoFitEnabled = true;
+        _autoFitBySmallerDimension = useSmallerDimension;
     }
 
     private void ActualSize()
     {
         _autoFitEnabled = false;
+        _autoFitBySmallerDimension = false;
         _zoomLevel = 1.0f;
         SetZoomSliderValue(100);
         _panOffset = Point.Empty;
@@ -2868,7 +3065,10 @@ public class ImageViewerForm : Form
         }
 
         ApplyChromeVisibility();
-        FitToWindow();
+        if (_autoFitBySmallerDimension)
+            FitToWindowBySmallerDimension();
+        else
+            FitToWindow();
     }
 
     private void ApplyChromeVisibility()

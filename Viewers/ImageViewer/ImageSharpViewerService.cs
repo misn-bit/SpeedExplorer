@@ -40,6 +40,12 @@ internal sealed class AnimatedImageSequence : IDisposable
     public Bitmap GetFrame(int index) => _frames[index];
     public int GetFrameDelayMs(int index) => _frameDelaysMs[index];
 
+    public void RotateClockwise()
+    {
+        foreach (Bitmap frame in _frames)
+            frame.RotateFlip(RotateFlipType.Rotate90FlipNone);
+    }
+
     public void Dispose()
     {
         foreach (Bitmap frame in _frames)
@@ -98,6 +104,12 @@ internal static class ImageSharpViewerService
         if (maxHeight <= 0) throw new ArgumentOutOfRangeException(nameof(maxHeight));
 
         return LoadAnimationInternal(path, maxWidth, maxHeight);
+    }
+    public static bool IsAnimatedImage(string path)
+    {
+        using var stream = OpenSharedRead(path);
+        var info = ImageSharpImage.Identify(stream);
+        return info != null && info.FrameMetadataCollection.Count > 1;
     }
 
     private static FileStream OpenSharedRead(string path)
