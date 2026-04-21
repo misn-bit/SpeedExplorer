@@ -17,7 +17,7 @@ public partial class MainForm
         public void UpdateScale()
         {
             // 1. Scale ImageLists
-            int iconSize = Math.Clamp(AppSettings.Current.IconSize, 16, 192);
+            int iconSize = _owner.GetEffectiveIconSize();
             int largeSize = Math.Min(iconSize * 2, 256);
             _owner._smallIcons.ImageSize = new Size(iconSize, iconSize);
             _owner._largeIcons.ImageSize = new Size(largeSize, largeSize);
@@ -53,7 +53,7 @@ public partial class MainForm
             _owner.RefreshFrame();
         }
 
-        public void ApplySettings()
+        public void ApplySettings(bool refreshCurrent = true)
         {
             var s = AppSettings.Current;
             if (_owner._listView == null || _owner._listView.IsDisposed)
@@ -83,17 +83,18 @@ public partial class MainForm
                 _owner._largeIcons.Images.Clear();
                 _owner._iconLoadService?.CancelPending(); // Clear pending async loads
 
-                int largeSize = Math.Min(s.IconSize * 2, 256);
-                _owner._smallIcons.ImageSize = new Size(s.IconSize, s.IconSize);
+                int iconSize = _owner.GetEffectiveIconSize();
+                int largeSize = Math.Min(iconSize * 2, 256);
+                _owner._smallIcons.ImageSize = new Size(iconSize, iconSize);
                 _owner._largeIcons.ImageSize = new Size(largeSize, largeSize); // Cap at 256 (ImageList limit)
 
                 // Reload defaults (Internal)
-                _owner._smallIcons.Images.Add("folder", _owner.CreateFolderIcon(s.IconSize));
-                _owner._smallIcons.Images.Add("file", _owner.CreateFileIcon(s.IconSize));
-                _owner._smallIcons.Images.Add("image", _owner.CreateImageIcon(s.IconSize));
-                _owner._smallIcons.Images.Add("drive", _owner.CreateDriveIcon(s.IconSize));
-                _owner._smallIcons.Images.Add("usb", _owner.CreateUsbIcon(s.IconSize));
-                _owner._smallIcons.Images.Add("computer", _owner.CreateComputerIcon(s.IconSize));
+                _owner._smallIcons.Images.Add("folder", _owner.CreateFolderIcon(iconSize));
+                _owner._smallIcons.Images.Add("file", _owner.CreateFileIcon(iconSize));
+                _owner._smallIcons.Images.Add("image", _owner.CreateImageIcon(iconSize));
+                _owner._smallIcons.Images.Add("drive", _owner.CreateDriveIcon(iconSize));
+                _owner._smallIcons.Images.Add("usb", _owner.CreateUsbIcon(iconSize));
+                _owner._smallIcons.Images.Add("computer", _owner.CreateComputerIcon(iconSize));
 
                 _owner._largeIcons.Images.Add("folder", _owner.CreateFolderIcon(largeSize));
                 _owner._largeIcons.Images.Add("file", _owner.CreateFileIcon(largeSize));
@@ -157,6 +158,9 @@ public partial class MainForm
             _owner._llmChatPanel?.UpdateFromSettings(); // Update LLM panel visibility and settings
             _owner.RefreshSearchOverlayVisibility();
             _owner.EnsureListViewportAndPaint("SETTINGS-apply");
+            if (!refreshCurrent)
+                return;
+
             var refreshTask = _owner.RefreshCurrentAsync();
             _owner.ObserveTask(refreshTask, "UiSettingsController.ApplySettings/refresh");
             refreshTask.ContinueWith(_ =>

@@ -151,7 +151,7 @@ public static class LlmParsers
         };
 
         if (root.TryGetProperty("translated_full_text", out var fullText))
-            result.TranslatedFullText = NormalizeTranslationFullText(fullText.GetString() ?? "");
+            result.TranslatedFullText = NormalizeTranslationText(fullText.GetString() ?? "");
 
         if (root.TryGetProperty("translations", out var translations) && translations.ValueKind == JsonValueKind.Array)
         {
@@ -161,7 +161,7 @@ public static class LlmParsers
                     continue;
                 var value = item.GetString();
                 if (!string.IsNullOrWhiteSpace(value))
-                    result.Translations.Add(StripOrderedPrefix(value));
+                    result.Translations.Add(NormalizeTranslationText(value));
             }
         }
 
@@ -171,46 +171,12 @@ public static class LlmParsers
         return result;
     }
 
-    private static string NormalizeTranslationFullText(string text)
+    private static string NormalizeTranslationText(string text)
     {
         if (string.IsNullOrWhiteSpace(text))
             return "";
 
-        string normalized = text.Replace("\r\n", "\n").Replace('\r', '\n').Trim();
-        var lines = normalized
-            .Split('\n')
-            .Select(StripOrderedPrefix)
-            .Where(line => !string.IsNullOrWhiteSpace(line))
-            .ToList();
-        if (lines.Count == 0)
-            return "";
-        return string.Join(Environment.NewLine, lines);
-    }
-
-    private static string StripOrderedPrefix(string text)
-    {
-        if (string.IsNullOrWhiteSpace(text))
-            return "";
-
-        string trimmed = text.Trim();
-        int i = 0;
-        while (i < trimmed.Length && char.IsDigit(trimmed[i]))
-            i++;
-
-        if (i > 0 && i < trimmed.Length)
-        {
-            char marker = trimmed[i];
-            if (marker == '.' || marker == ')' || marker == ':' || marker == '-')
-            {
-                i++;
-                while (i < trimmed.Length && char.IsWhiteSpace(trimmed[i]))
-                    i++;
-                if (i < trimmed.Length)
-                    return trimmed.Substring(i).Trim();
-            }
-        }
-
-        return trimmed;
+        return text.Replace("\r\n", "\n").Replace('\r', '\n').Trim();
     }
 
     public static LlmAgentChatDecision ParseAgentChatDecision(string json)

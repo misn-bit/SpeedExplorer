@@ -151,6 +151,55 @@ public partial class MainForm : Form
 
     private int Scale(int pixels) => (int)(pixels * (this.DeviceDpi / 96.0));
     private int Unscale(int pixels) => (int)Math.Round(pixels * (96.0 / this.DeviceDpi));
+    private static bool CanPersistFolderIconSizeForPath(string? path)
+        => !string.IsNullOrWhiteSpace(path) &&
+           !string.Equals(path, ThisPcPath, StringComparison.OrdinalIgnoreCase) &&
+           !IsShellPath(path);
+
+    private bool TryGetFolderIconSizeOverride(string? path, out int iconSize)
+    {
+        iconSize = 0;
+        if (!CanPersistFolderIconSizeForPath(path))
+            return false;
+        if (!_nav.FolderIconSizeOverrides.TryGetValue(path!, out var stored))
+            return false;
+
+        iconSize = Math.Clamp(stored, 16, 192);
+        return true;
+    }
+
+    private int GetEffectiveIconSize(string? path = null)
+    {
+        if (TryGetFolderIconSizeOverride(path ?? _currentPath, out var iconSize))
+            return iconSize;
+        return Math.Clamp(AppSettings.Current.IconSize, 16, 192);
+    }
+
+    private void SaveIconSizeForCurrentPath(int iconSize)
+    {
+        int clamped = Math.Clamp(iconSize, 16, 192);
+        if (CanPersistFolderIconSizeForPath(_currentPath))
+        {
+            _nav.FolderIconSizeOverrides[_currentPath] = clamped;
+            SaveFolderSettings();
+            return;
+        }
+
+        if (AppSettings.Current.IconSize == clamped)
+            return;
+
+        AppSettings.Current.IconSize = clamped;
+        AppSettings.Current.Save();
+    }
+
+    private void ApplyEffectiveIconSizeIfNeeded(string? path = null)
+    {
+        int target = GetEffectiveIconSize(path);
+        if (_smallIcons.ImageSize.Width == target)
+            return;
+        ApplySettings(refreshCurrent: false);
+    }
+
     private void BeginNavigationFreezeVisual()
     {
         // Avoid freeze-overlay on initial window load/open. It can leave stale first-frame paints
@@ -522,8 +571,8 @@ public partial class MainForm : Form
     private ImageList CreateIconList(int size)
         => _startupIconController.CreateIconList(size);
 
-    private void ApplySettings()
-        => _uiSettingsController.ApplySettings();
+    private void ApplySettings(bool refreshCurrent = true)
+        => _uiSettingsController.ApplySettings(refreshCurrent);
 
     private bool IsDriveItemsOnly()
         => _startupNavigationController.IsDriveItemsOnly();

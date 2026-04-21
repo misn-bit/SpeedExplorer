@@ -1441,6 +1441,11 @@ public class LlmService
         return await _visionService.ExtractImageTextAsync(imagePath, ApiUrl, modelOverride, cancellationToken);
     }
 
+    public async Task<string?> ExtractSnippetTextAsync(string imagePath, string? modelOverride = null, CancellationToken cancellationToken = default)
+    {
+        return await _visionService.ExtractSnippetTextAsync(imagePath, ApiUrl, modelOverride, cancellationToken);
+    }
+
     /// <summary>
     /// Translates OCR block text preserving input order.
     /// </summary>
@@ -1452,6 +1457,15 @@ public class LlmService
         CancellationToken cancellationToken = default)
     {
         return await _visionService.TranslateTextBlocksAsync(sourceBlocks, targetLanguage, ApiUrl, sourceLanguage, modelOverride, cancellationToken);
+    }
+
+    public async Task<string?> TranslateSimpleTextAsync(
+        string sourceText,
+        string targetLanguage,
+        string? modelOverride = null,
+        CancellationToken cancellationToken = default)
+    {
+        return await _visionService.TranslateSimpleTextAsync(sourceText, targetLanguage, ApiUrl, modelOverride, cancellationToken);
     }
 
 

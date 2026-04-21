@@ -124,6 +124,9 @@ public partial class MainForm
                 return true;
             }
 
+            if (!inInput && _owner._iconZoomController.HandleZoomHotkey(effective))
+                return true;
+
             if (inInput)
                 return false;
 

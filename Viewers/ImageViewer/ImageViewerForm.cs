@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
 using System.Drawing.Text;
 using System.IO;
 using System.Linq;
@@ -84,6 +85,8 @@ public class ImageViewerForm : Form
     private readonly Button _aiToggleBtn;
     private readonly Button _ocrBtn;
     private readonly Button _translateBtn;
+    private readonly Button _drawOcrBoxBtn;
+    private readonly Button _clearManualOcrBoxesBtn;
     private readonly Button _tagBtn;
     private readonly Button _clearOverlayBtn;
     private readonly Button _copyResultBtn;
@@ -112,6 +115,11 @@ public class ImageViewerForm : Form
     private bool _currentOverlayFromSavedCache;
     private bool _suppressSavedTranslationToggleEvent;
     private bool _showSavedTranslationPreferred;
+    private bool _manualOcrDrawMode;
+    private bool _isDrawingManualOcrRegion;
+    private Point _manualOcrDragStart;
+    private Point _manualOcrDragCurrent;
+    private readonly List<ManualOcrRegion> _pendingManualOcrRegions = new();
 
     private sealed class OverlayTextBlock
     {
@@ -120,6 +128,13 @@ public class ImageViewerForm : Form
         public string DisplayText { get; set; } = "";
         public RectangleF NormalizedRect { get; set; }
         public float NormalizedFontSize { get; set; }
+        public bool IsManualBox { get; set; }
+        public bool IsPendingManualBox { get; set; }
+    }
+
+    private sealed class ManualOcrRegion
+    {
+        public RectangleF NormalizedRect { get; set; }
     }
 
     private sealed class OcrCacheEnvelope
@@ -303,9 +318,13 @@ public class ImageViewerForm : Form
         };
         _ocrBtn = CreateButton("OCR", Scale(58));
         _translateBtn = CreateButton("Translate", Scale(82));
+        _drawOcrBoxBtn = CreateButton("Draw OCR Box", Scale(102));
+        _clearManualOcrBoxesBtn = CreateButton("Clear Boxes", Scale(82));
         _tagBtn = CreateButton("Tag", Scale(58));
         aiActionRow.Controls.Add(_ocrBtn);
         aiActionRow.Controls.Add(_translateBtn);
+        aiActionRow.Controls.Add(_drawOcrBoxBtn);
+        aiActionRow.Controls.Add(_clearManualOcrBoxesBtn);
         aiActionRow.Controls.Add(_tagBtn);
 
         var langRow = new Panel
@@ -447,6 +466,8 @@ public class ImageViewerForm : Form
 
         _ocrBtn.Click += async (s, e) => await RunViewerOcrAsync(false);
         _translateBtn.Click += async (s, e) => await RunViewerOcrAsync(true);
+        _drawOcrBoxBtn.Click += (s, e) => ToggleManualOcrDrawMode();
+        _clearManualOcrBoxesBtn.Click += (s, e) => ClearPendingManualOcrRegions();
         _tagBtn.Click += async (s, e) => await RunViewerTaggingAsync();
         _overlayToggle.CheckedChanged += (s, e) => _pictureBox.Invalidate();
         _showSavedOcrCheck.CheckedChanged += (s, e) => OnShowSavedOcrToggled();
@@ -859,6 +880,9 @@ public class ImageViewerForm : Form
             ShowImageMargin = false,
             BackColor = Color.FromArgb(30, 30, 30)
         };
+        menu.Items.Add("Draw OCR Box", null, (s, e) => ToggleManualOcrDrawMode());
+        menu.Items.Add("Clear Pending OCR Boxes", null, (s, e) => ClearPendingManualOcrRegions());
+        menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(Localization.T("rotate_clockwise"), null, (s, e) => RotateImageClockwise());
         menu.Items.Add(Localization.T("edit_tags"), null, (s, e) => EditCurrentImageTags());
         menu.Items.Add(new ToolStripSeparator());
@@ -1004,11 +1028,50 @@ public class ImageViewerForm : Form
         _pictureBox.Invalidate();
     }
 
+    private void ToggleManualOcrDrawMode()
+    {
+        if (_aiBusy)
+            return;
+
+        _manualOcrDrawMode = !_manualOcrDrawMode;
+        _isDrawingManualOcrRegion = false;
+        UpdateManualOcrUiState();
+        _pictureBox.Invalidate();
+
+        if (_manualOcrDrawMode)
+            _aiStatusLabel.Text = "Draw OCR boxes with the mouse";
+        else if (_pendingManualOcrRegions.Count > 0)
+            _aiStatusLabel.Text = $"{_pendingManualOcrRegions.Count} manual OCR box(es) queued";
+    }
+
+    private void ClearPendingManualOcrRegions(bool updateStatus = true)
+    {
+        _pendingManualOcrRegions.Clear();
+        _isDrawingManualOcrRegion = false;
+        UpdateManualOcrUiState();
+        _pictureBox.Invalidate();
+
+        if (updateStatus && !_aiBusy)
+            _aiStatusLabel.Text = "Cleared pending manual OCR boxes";
+    }
+
+    private void UpdateManualOcrUiState()
+    {
+        bool canEdit = !_aiBusy && _currentImage != null;
+        _drawOcrBoxBtn.Enabled = canEdit;
+        _clearManualOcrBoxesBtn.Enabled = canEdit && _pendingManualOcrRegions.Count > 0;
+        _drawOcrBoxBtn.BackColor = _manualOcrDrawMode ? Color.FromArgb(78, 78, 78) : Color.FromArgb(60, 60, 60);
+        _drawOcrBoxBtn.ForeColor = _manualOcrDrawMode ? Color.White : ForeColor_Dark;
+        _pictureBox.Cursor = _manualOcrDrawMode ? Cursors.Cross : Cursors.Default;
+    }
+
     private void SetAiBusy(bool busy, string statusText)
     {
         _aiBusy = busy;
         _ocrBtn.Enabled = !busy;
         _translateBtn.Enabled = !busy;
+        _drawOcrBoxBtn.Enabled = !busy && _currentImage != null;
+        _clearManualOcrBoxesBtn.Enabled = !busy && _pendingManualOcrRegions.Count > 0;
         _tagBtn.Enabled = !busy;
         _targetLanguageBox.Enabled = !busy;
         _abortBtn.Visible = busy;
@@ -1023,6 +1086,7 @@ public class ImageViewerForm : Form
             _aiOutputBox.Cursor = Cursors.WaitCursor;
         else
             _aiOutputBox.Cursor = Cursors.Default;
+        UpdateManualOcrUiState();
         UpdateSavedCacheUiState();
     }
 
@@ -1322,7 +1386,12 @@ public class ImageViewerForm : Form
             if (!string.IsNullOrWhiteSpace(modelId))
                 envelope.ModelId = modelId!;
             envelope.Result = ocr;
-            envelope.TranslationLines ??= new List<string>();
+            envelope.TranslationTargetLanguage = "";
+            envelope.TranslationSourceLanguage = "";
+            envelope.TranslationModelId = "";
+            envelope.TranslationFullText = "";
+            envelope.TranslationLines = new List<string>();
+            envelope.TranslationSavedUtcTicks = 0;
 
             File.WriteAllText(cachePath, SerializeOcrCacheEnvelopeForDisk(envelope));
         }
@@ -1722,6 +1791,238 @@ public class ImageViewerForm : Form
         UpdateSavedCacheUiState();
     }
 
+    private static LlmImageTextResult CloneOcrResult(LlmImageTextResult? source)
+    {
+        if (source == null)
+            return new LlmImageTextResult();
+
+        return new LlmImageTextResult
+        {
+            FullText = source.FullText ?? "",
+            DetectedLanguage = source.DetectedLanguage ?? "",
+            Blocks = source.Blocks?
+                .Select(b => new LlmImageTextBlock
+                {
+                    Text = b.Text ?? "",
+                    X = b.X,
+                    Y = b.Y,
+                    W = b.W,
+                    H = b.H,
+                    FontSize = b.FontSize
+                })
+                .ToList() ?? new List<LlmImageTextBlock>()
+        };
+    }
+
+    private static LlmTextTranslationResult? CloneTranslationResult(LlmTextTranslationResult? source)
+    {
+        if (source == null)
+            return null;
+
+        return new LlmTextTranslationResult
+        {
+            TargetLanguage = source.TargetLanguage ?? "",
+            TranslatedFullText = source.TranslatedFullText ?? "",
+            Translations = source.Translations?.ToList() ?? new List<string>()
+        };
+    }
+
+    private LlmImageTextResult GetBestBaseOcrForCurrentImage(string imagePath)
+    {
+        if (TryLoadSavedOcrEnvelope(imagePath, out var savedEnvelope) && savedEnvelope?.Result != null)
+            return CloneOcrResult(savedEnvelope.Result);
+        if (string.Equals(_ocrImagePath, imagePath, StringComparison.OrdinalIgnoreCase) && _lastOcrResult != null)
+            return CloneOcrResult(_lastOcrResult);
+        return new LlmImageTextResult();
+    }
+
+    private LlmTextTranslationResult? GetBestSavedTranslationForCurrentImage(string imagePath)
+    {
+        if (TryLoadSavedOcrEnvelope(imagePath, out var savedEnvelope) &&
+            savedEnvelope != null &&
+            TryBuildSavedTranslation(savedEnvelope, out var savedTranslation))
+        {
+            return CloneTranslationResult(savedTranslation);
+        }
+
+        if (string.Equals(_ocrImagePath, imagePath, StringComparison.OrdinalIgnoreCase))
+            return CloneTranslationResult(_savedTranslationForCurrentImage);
+
+        return null;
+    }
+
+    private static string ComposeFullTextFromBlocks(IEnumerable<LlmImageTextBlock> blocks)
+        => string.Join(
+            Environment.NewLine,
+            blocks.Select(b => b.Text?.Trim())
+                .Where(t => !string.IsNullOrWhiteSpace(t))
+                .Cast<string>());
+
+    private Bitmap? CreateManualOcrSnippetBitmap(RectangleF normalizedRect)
+    {
+        if (_currentImage == null)
+            return null;
+
+        var pixelRect = NormalizeRectToPixels(normalizedRect, _currentImage.Size);
+        if (pixelRect.Width < 1 || pixelRect.Height < 1)
+            return null;
+
+        var snippet = new Bitmap(pixelRect.Width, pixelRect.Height, PixelFormat.Format32bppArgb);
+        using var g = Graphics.FromImage(snippet);
+        g.Clear(Color.Transparent);
+        g.DrawImage(_currentImage, new Rectangle(0, 0, snippet.Width, snippet.Height), pixelRect, GraphicsUnit.Pixel);
+        return snippet;
+    }
+
+    private async Task<(List<LlmImageTextBlock> Blocks, string DetectedLanguage)> ExtractManualOcrBlocksAsync(
+        IReadOnlyList<ManualOcrRegion> regions,
+        string model,
+        CancellationToken cancellationToken)
+    {
+        var blocks = new List<LlmImageTextBlock>(regions.Count);
+        string detectedLanguage = "";
+
+        for (int i = 0; i < regions.Count; i++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            using var snippet = CreateManualOcrSnippetBitmap(regions[i].NormalizedRect);
+            if (snippet == null)
+                continue;
+
+            string tempPath = Path.Combine(Path.GetTempPath(), $"speedexplorer-ocr-{Guid.NewGuid():N}.png");
+            try
+            {
+                snippet.Save(tempPath, ImageFormat.Png);
+                string text = (await _llmService.ExtractSnippetTextAsync(tempPath, model, cancellationToken))?.Trim() ?? "";
+                if (string.IsNullOrWhiteSpace(text))
+                    continue;
+
+                var originalRect = UnrotateNormalizedRect(regions[i].NormalizedRect, _rotationQuarterTurns);
+                blocks.Add(new LlmImageTextBlock
+                {
+                    Text = text,
+                    X = originalRect.X,
+                    Y = originalRect.Y,
+                    W = originalRect.Width,
+                    H = originalRect.Height,
+                    FontSize = 0f
+                });
+            }
+            finally
+            {
+                try
+                {
+                    if (File.Exists(tempPath))
+                        File.Delete(tempPath);
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"Failed to delete manual OCR temp snippet '{tempPath}': {ex.Message}");
+                }
+            }
+        }
+
+        return (blocks, detectedLanguage);
+    }
+
+    private static LlmImageTextResult MergeManualBlocksIntoOcr(
+        LlmImageTextResult baseOcr,
+        IReadOnlyList<LlmImageTextBlock> manualBlocks,
+        string detectedLanguage)
+    {
+        var merged = CloneOcrResult(baseOcr);
+        merged.Blocks ??= new List<LlmImageTextBlock>();
+        merged.Blocks.AddRange(manualBlocks);
+        merged.FullText = ComposeFullTextFromBlocks(merged.Blocks);
+        if (string.IsNullOrWhiteSpace(merged.DetectedLanguage) && !string.IsNullOrWhiteSpace(detectedLanguage))
+            merged.DetectedLanguage = detectedLanguage;
+        return merged;
+    }
+
+    private async Task<LlmTextTranslationResult?> BuildMergedManualTranslationAsync(
+        LlmImageTextResult mergedOcr,
+        LlmTextTranslationResult? existingTranslation,
+        IReadOnlyList<LlmImageTextBlock> manualBlocks,
+        string targetLanguage,
+        string? model,
+        CancellationToken cancellationToken)
+    {
+        var manualTexts = manualBlocks
+            .Select(b => b.Text?.Trim())
+            .Where(t => !string.IsNullOrWhiteSpace(t))
+            .Cast<string>()
+            .ToList();
+
+        bool canAppendToSavedTranslation =
+            existingTranslation != null &&
+            string.Equals(NormalizeLanguageKey(existingTranslation.TargetLanguage), NormalizeLanguageKey(targetLanguage), StringComparison.Ordinal) &&
+            existingTranslation.Translations != null &&
+            existingTranslation.Translations.Count == Math.Max(0, mergedOcr.Blocks.Count - manualTexts.Count);
+
+        if (canAppendToSavedTranslation && manualTexts.Count > 0)
+        {
+            var translatedManual = await TranslateManualBlocksAsync(manualTexts, targetLanguage, model, cancellationToken);
+            if (translatedManual == null)
+                return null;
+
+            var mergedLines = existingTranslation!.Translations!.ToList();
+            mergedLines.AddRange(translatedManual);
+            return new LlmTextTranslationResult
+            {
+                TargetLanguage = existingTranslation.TargetLanguage,
+                Translations = mergedLines,
+                TranslatedFullText = string.Join(Environment.NewLine, mergedLines.Where(t => !string.IsNullOrWhiteSpace(t)))
+            };
+        }
+
+        var allTexts = mergedOcr.Blocks
+            .Select(b => b.Text?.Trim())
+            .Where(t => !string.IsNullOrWhiteSpace(t))
+            .Cast<string>()
+            .ToList();
+        if (allTexts.Count == 0 && !string.IsNullOrWhiteSpace(mergedOcr.FullText))
+            allTexts.Add(mergedOcr.FullText.Trim());
+
+        var translatedAll = await TranslateManualBlocksAsync(allTexts, targetLanguage, model, cancellationToken);
+        if (translatedAll == null)
+            return null;
+
+        return new LlmTextTranslationResult
+        {
+            TargetLanguage = targetLanguage,
+            Translations = translatedAll,
+            TranslatedFullText = string.Join(Environment.NewLine, translatedAll.Where(t => !string.IsNullOrWhiteSpace(t)))
+        };
+    }
+
+    private async Task<List<string>?> TranslateManualBlocksAsync(
+        IReadOnlyList<string> sourceBlocks,
+        string targetLanguage,
+        string? model,
+        CancellationToken cancellationToken)
+    {
+        var translations = new List<string>(sourceBlocks.Count);
+        for (int i = 0; i < sourceBlocks.Count; i++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            string source = sourceBlocks[i]?.Trim() ?? "";
+            if (string.IsNullOrWhiteSpace(source))
+            {
+                translations.Add(string.Empty);
+                continue;
+            }
+
+            string? translated = await _llmService.TranslateSimpleTextAsync(source, targetLanguage, model, cancellationToken);
+            if (translated == null)
+                return null;
+
+            translations.Add(translated.Trim());
+        }
+
+        return translations;
+    }
+
     private async Task RunViewerOcrAsync(bool withTranslation)
     {
         if (_aiBusy)
@@ -1734,6 +2035,72 @@ public class ImageViewerForm : Form
         try
         {
             string targetLanguage = string.IsNullOrWhiteSpace(_targetLanguageBox.Text) ? "English" : _targetLanguageBox.Text.Trim();
+
+            if (_pendingManualOcrRegions.Count > 0)
+            {
+                var pendingRegions = _pendingManualOcrRegions.ToList();
+                var baseOcr = GetBestBaseOcrForCurrentImage(imagePath);
+                var existingTranslation = GetBestSavedTranslationForCurrentImage(imagePath);
+
+                SetAiBusy(true, "Resolving model...");
+                string? manualModel = await EnsureVisionModelAsync();
+                if (string.IsNullOrWhiteSpace(manualModel))
+                {
+                    SetAiBusy(false, "Model selection cancelled");
+                    return;
+                }
+
+                _aiCts = new CancellationTokenSource();
+                SetAiBusy(true, $"Extracting text from {pendingRegions.Count} manual box(es)...");
+                var (manualBlocks, detectedLanguage) = await ExtractManualOcrBlocksAsync(pendingRegions, manualModel, _aiCts.Token);
+                if (manualBlocks.Count == 0)
+                {
+                    SetAiBusy(false, "Manual OCR found no text");
+                    _aiOutputBox.Text = "No text was found inside the selected manual OCR boxes.";
+                    return;
+                }
+
+                var mergedOcr = MergeManualBlocksIntoOcr(baseOcr, manualBlocks, detectedLanguage);
+                _savedTranslationForCurrentImage = null;
+                _lastTranslations = new List<string>();
+                SetShowSavedTranslationChecked(false);
+                ApplyLoadedOcrToViewer(imagePath, mergedOcr, fromSavedCache: false);
+                SaveOcrResultToCache(imagePath, manualModel, mergedOcr);
+                ClearPendingManualOcrRegions(updateStatus: false);
+
+                if (!withTranslation)
+                {
+                    SetAiBusy(false, $"Added {manualBlocks.Count} manual OCR box(es)");
+                    UpdateSavedCacheUiState();
+                    return;
+                }
+
+                SetAiBusy(true, "Translating manual OCR...");
+                var mergedTranslation = await BuildMergedManualTranslationAsync(
+                    mergedOcr,
+                    existingTranslation,
+                    manualBlocks,
+                    targetLanguage,
+                    manualModel,
+                    _aiCts.Token);
+                if (mergedTranslation == null)
+                {
+                    SetAiBusy(false, "Translation failed");
+                    return;
+                }
+
+                _savedTranslationForCurrentImage = mergedTranslation;
+                _lastTranslations = mergedTranslation.Translations?.ToList() ?? new List<string>();
+                ApplyTranslationsToOverlay(_lastTranslations);
+                _aiOutputBox.Text = RenderTranslatedResult(mergedOcr, mergedTranslation);
+                SaveTranslationToCache(imagePath, manualModel, mergedOcr, mergedTranslation);
+                SetShowSavedTranslationChecked(true, updatePreference: true);
+                _currentOverlayFromSavedCache = false;
+                SetAiBusy(false, $"Added and translated {manualBlocks.Count} manual OCR box(es)");
+                UpdateSavedCacheUiState();
+                return;
+            }
+
             LlmImageTextResult? ocr = null;
             string? model = null;
             bool usingSavedOcr = false;
@@ -2118,7 +2485,7 @@ public class ImageViewerForm : Form
             if (area < 0.000001f)
                 continue;
 
-            string candidateNorm = NormalizeOverlayText(candidate.DisplayText);
+            string candidateNorm = NormalizeOverlayText(string.IsNullOrWhiteSpace(candidate.SourceText) ? candidate.DisplayText : candidate.SourceText);
             bool duplicate = false;
             int start = Math.Max(0, output.Count - 120);
             for (int j = output.Count - 1; j >= start; j--)
@@ -2128,10 +2495,13 @@ public class ImageViewerForm : Form
                 if (overlap < 0.50f)
                     continue;
 
-                string priorNorm = NormalizeOverlayText(prior.DisplayText);
+                string priorNorm = NormalizeOverlayText(string.IsNullOrWhiteSpace(prior.SourceText) ? prior.DisplayText : prior.SourceText);
                 bool sameText = candidateNorm.Length > 0 && candidateNorm == priorNorm;
+                float candidateArea = Math.Max(0.0000001f, candidate.NormalizedRect.Width * candidate.NormalizedRect.Height);
+                float priorArea = Math.Max(0.0000001f, prior.NormalizedRect.Width * prior.NormalizedRect.Height);
+                float areaRatio = Math.Min(candidateArea, priorArea) / Math.Max(candidateArea, priorArea);
 
-                if (overlap >= 0.95f || (sameText && overlap >= 0.55f) || (overlap >= 0.80f && sameText))
+                if ((sameText && overlap >= 0.55f) || (sameText && overlap >= 0.80f) || (overlap >= 0.985f && areaRatio >= 0.92f))
                 {
                     duplicate = true;
                     break;
@@ -2212,7 +2582,10 @@ public class ImageViewerForm : Form
         if (string.IsNullOrWhiteSpace(text))
             return "";
 
-        string normalized = text.Replace("\r\n", "\n").Replace('\r', '\n').Trim();
+        string normalized = DecodeEscapedLineBreaks(text)
+            .Replace("\r\n", "\n")
+            .Replace('\r', '\n')
+            .Trim();
         if (normalized.IndexOf('\n') < 0)
             return normalized;
 
@@ -2253,6 +2626,17 @@ public class ImageViewerForm : Form
         }
 
         return sb.ToString().Trim();
+    }
+
+    private static string DecodeEscapedLineBreaks(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+            return text;
+
+        return text
+            .Replace("\\r\\n", "\n", StringComparison.Ordinal)
+            .Replace("\\n", "\n", StringComparison.Ordinal)
+            .Replace("\\r", "\n", StringComparison.Ordinal);
     }
 
     private static bool IsLikelyVerticalText(List<string> lines)
@@ -2381,6 +2765,9 @@ public class ImageViewerForm : Form
             _savedTranslationForCurrentImage = null;
             _lastTranslations = new List<string>();
             _overlayBlocks.Clear();
+            _pendingManualOcrRegions.Clear();
+            _manualOcrDrawMode = false;
+            _isDrawingManualOcrRegion = false;
             _aiOutputBox.Clear();
             _currentOverlayFromSavedCache = false;
             if (!_aiBusy)
@@ -2411,6 +2798,7 @@ public class ImageViewerForm : Form
             FitToWindow(allowUpscale: false);
             TryApplySavedOcrForCurrentImage(allowStatusUpdate: true);
             UpdateSavedCacheUiState();
+            UpdateManualOcrUiState();
         }
         catch (SixLabors.ImageSharp.UnknownImageFormatException)
         {
@@ -2423,6 +2811,85 @@ public class ImageViewerForm : Form
             _fileNameLabel.Text = $"Error: {ex.Message}";
         }
         _pictureBox.Invalidate();
+        UpdateManualOcrUiState();
+    }
+
+    private bool TryGetCurrentImageDisplayRect(out RectangleF imageRect)
+    {
+        imageRect = RectangleF.Empty;
+        if (_currentImage == null)
+            return false;
+
+        float imgWidth = _currentImage.Width * _zoomLevel;
+        float imgHeight = _currentImage.Height * _zoomLevel;
+        float x = (_pictureBox.Width - imgWidth) / 2f + _panOffset.X;
+        float y = (_pictureBox.Height - imgHeight) / 2f + _panOffset.Y;
+        imageRect = new RectangleF(x, y, imgWidth, imgHeight);
+        return imageRect.Width > 0f && imageRect.Height > 0f;
+    }
+
+    private bool TryGetNormalizedManualSelectionRect(Point start, Point end, out RectangleF normalizedRect)
+    {
+        normalizedRect = RectangleF.Empty;
+        if (!TryGetCurrentImageDisplayRect(out var imageRect))
+            return false;
+
+        float left = Math.Min(start.X, end.X);
+        float top = Math.Min(start.Y, end.Y);
+        float right = Math.Max(start.X, end.X);
+        float bottom = Math.Max(start.Y, end.Y);
+        var selection = RectangleF.FromLTRB(left, top, right, bottom);
+        var clipped = RectangleF.Intersect(selection, imageRect);
+        if (clipped.Width < 4f || clipped.Height < 4f)
+            return false;
+
+        normalizedRect = ClampNormalizedRect(
+            (clipped.X - imageRect.X) / imageRect.Width,
+            (clipped.Y - imageRect.Y) / imageRect.Height,
+            clipped.Width / imageRect.Width,
+            clipped.Height / imageRect.Height);
+        return normalizedRect.Width > 0.0025f && normalizedRect.Height > 0.0025f;
+    }
+
+    private static RectangleF RotateNormalizedRectCounterClockwise(RectangleF rect)
+        => ClampNormalizedRect(rect.Y, 1f - (rect.X + rect.Width), rect.Height, rect.Width);
+
+    private static RectangleF UnrotateNormalizedRect(RectangleF rect, int clockwiseQuarterTurns)
+    {
+        var result = rect;
+        int turns = ((clockwiseQuarterTurns % 4) + 4) % 4;
+        for (int i = 0; i < turns; i++)
+            result = RotateNormalizedRectCounterClockwise(result);
+        return result;
+    }
+
+    private static Rectangle NormalizeRectToPixels(RectangleF normalizedRect, Size imageSize)
+    {
+        int left = Math.Clamp((int)Math.Floor(normalizedRect.X * imageSize.Width), 0, Math.Max(0, imageSize.Width - 1));
+        int top = Math.Clamp((int)Math.Floor(normalizedRect.Y * imageSize.Height), 0, Math.Max(0, imageSize.Height - 1));
+        int right = Math.Clamp((int)Math.Ceiling((normalizedRect.X + normalizedRect.Width) * imageSize.Width), left + 1, imageSize.Width);
+        int bottom = Math.Clamp((int)Math.Ceiling((normalizedRect.Y + normalizedRect.Height) * imageSize.Height), top + 1, imageSize.Height);
+        return Rectangle.FromLTRB(left, top, right, bottom);
+    }
+
+    private List<OverlayTextBlock> BuildPendingManualOverlayBlocks()
+    {
+        var blocks = new List<OverlayTextBlock>(_pendingManualOcrRegions.Count);
+        int sourceIndexBase = _overlayBlocks.Count;
+        for (int i = 0; i < _pendingManualOcrRegions.Count; i++)
+        {
+            blocks.Add(new OverlayTextBlock
+            {
+                SourceIndex = sourceIndexBase + i,
+                SourceText = "",
+                DisplayText = "Manual OCR",
+                NormalizedRect = _pendingManualOcrRegions[i].NormalizedRect,
+                NormalizedFontSize = 0f,
+                IsManualBox = true,
+                IsPendingManualBox = true
+            });
+        }
+        return blocks;
     }
 
     private void UpdateTags(string path)
@@ -2473,6 +2940,7 @@ public class ImageViewerForm : Form
         var imageRect = new RectangleF(x, y, imgWidth, imgHeight);
         e.Graphics.DrawImage(_currentImage, imageRect);
         DrawOverlayBlocks(e.Graphics, imageRect);
+        DrawPendingManualOcrRegions(e.Graphics, imageRect);
     }
 
     private void DrawOverlayBlocks(Graphics g, RectangleF imageRect)
@@ -2496,20 +2964,19 @@ public class ImageViewerForm : Form
             {
                 Alignment = StringAlignment.Near,
                 LineAlignment = StringAlignment.Near,
-                Trimming = StringTrimming.Word,
-                FormatFlags = StringFormatFlags.LineLimit
+                Trimming = StringTrimming.Word
             };
 
             const float textInsetX = 4f;
             const float textInsetY = 3f;
-            const float minTextFontPx = 10f;
+            const float minTextFontPx = 8f;
             const float maxTextFontPx = 34f;
             const float modelFontScale = 1.25f;
-            const float maxGrowWidthFactor = 1.60f;
-            const float maxGrowHeightFactor = 2.00f;
-            int maxShrinkSteps = _overlayBlocks.Count > 120 ? 12 : 40;
-            int maxWidenSteps = _overlayBlocks.Count > 120 ? 3 : 8;
-            int maxFinalShrinkSteps = _overlayBlocks.Count > 120 ? 8 : 24;
+            const float maxGrowWidthFactor = 2.40f;
+            const float maxGrowHeightFactor = 5.00f;
+            int maxShrinkSteps = _overlayBlocks.Count > 120 ? 16 : 52;
+            int maxWidenSteps = _overlayBlocks.Count > 120 ? 5 : 12;
+            int maxFinalShrinkSteps = _overlayBlocks.Count > 120 ? 12 : 36;
             var placedRects = new List<RectangleF>(_overlayBlocks.Count);
 
             for (int i = 0; i < _overlayBlocks.Count; i++)
@@ -2604,6 +3071,15 @@ public class ImageViewerForm : Form
                             measured = MeasureTextForOverlay(g, text, textFontPx, Math.Max(1f, textRect.Width), textFormat);
                             finalShrinkSteps++;
                         }
+
+                        if (measured.Height > textRect.Height)
+                        {
+                            float availableTextHeight = Math.Max(8f, imageRect.Bottom - textRect.Y - 1f);
+                            textRect.Height = Math.Min(availableTextHeight, measured.Height + 2f);
+                            var expandedRect = RectangleF.Inflate(textRect, textInsetX, textInsetY);
+                            drawRect = ShiftRectIntoBounds(expandedRect, imageRect);
+                            textRect = RectangleF.Inflate(drawRect, -textInsetX, -textInsetY);
+                        }
                     }
                     else
                     {
@@ -2645,6 +3121,60 @@ public class ImageViewerForm : Form
         finally
         {
             g.TextRenderingHint = priorHint;
+        }
+    }
+
+    private void DrawPendingManualOcrRegions(Graphics g, RectangleF imageRect)
+    {
+        if (_pendingManualOcrRegions.Count == 0 && !_isDrawingManualOcrRegion)
+            return;
+
+        using var pendingFill = new SolidBrush(Color.FromArgb(90, 76, 29, 149));
+        using var pendingBorder = new Pen(Color.FromArgb(240, 193, 155, 255), 1.4f)
+        {
+            DashStyle = DashStyle.Dash
+        };
+        using var previewFill = new SolidBrush(Color.FromArgb(75, 255, 255, 255));
+        using var labelBrush = new SolidBrush(Color.FromArgb(230, 20, 20, 20));
+        using var labelTextBrush = new SolidBrush(Color.White);
+        using var labelFont = new Font("Segoe UI", Math.Clamp(9f * _zoomLevel, 8f, 16f), FontStyle.Bold, GraphicsUnit.Pixel);
+
+        for (int i = 0; i < _pendingManualOcrRegions.Count; i++)
+        {
+            var region = _pendingManualOcrRegions[i];
+            var rect = new RectangleF(
+                imageRect.X + (region.NormalizedRect.X * imageRect.Width),
+                imageRect.Y + (region.NormalizedRect.Y * imageRect.Height),
+                region.NormalizedRect.Width * imageRect.Width,
+                region.NormalizedRect.Height * imageRect.Height);
+
+            if (rect.Width < 2f || rect.Height < 2f)
+                continue;
+
+            g.FillRectangle(pendingFill, rect);
+            g.DrawRectangle(pendingBorder, rect.X, rect.Y, rect.Width, rect.Height);
+
+            string label = $"Manual {i + 1}";
+            var labelSize = g.MeasureString(label, labelFont);
+            var labelRect = new RectangleF(
+                rect.X,
+                Math.Max(imageRect.Y, rect.Y - labelSize.Height - 4f),
+                labelSize.Width + 8f,
+                labelSize.Height + 2f);
+            g.FillRectangle(labelBrush, labelRect);
+            g.DrawString(label, labelFont, labelTextBrush, labelRect.X + 4f, labelRect.Y + 1f);
+        }
+
+        if (_isDrawingManualOcrRegion &&
+            TryGetNormalizedManualSelectionRect(_manualOcrDragStart, _manualOcrDragCurrent, out var dragRect))
+        {
+            var rect = new RectangleF(
+                imageRect.X + (dragRect.X * imageRect.Width),
+                imageRect.Y + (dragRect.Y * imageRect.Height),
+                dragRect.Width * imageRect.Width,
+                dragRect.Height * imageRect.Height);
+            g.FillRectangle(previewFill, rect);
+            g.DrawRectangle(pendingBorder, rect.X, rect.Y, rect.Width, rect.Height);
         }
     }
 
@@ -2805,6 +3335,19 @@ public class ImageViewerForm : Form
 
     private void PictureBox_MouseDown(object? sender, MouseEventArgs e)
     {
+        if (_manualOcrDrawMode && e.Button == MouseButtons.Left)
+        {
+            if (TryGetCurrentImageDisplayRect(out var imageRect) && imageRect.Contains(e.Location))
+            {
+                _isDrawingManualOcrRegion = true;
+                _manualOcrDragStart = e.Location;
+                _manualOcrDragCurrent = e.Location;
+                _pictureBox.Cursor = Cursors.Cross;
+                _pictureBox.Invalidate();
+            }
+            return;
+        }
+
         if (e.Button == MouseButtons.Left)
         {
             _isPanning = true;
@@ -2815,6 +3358,13 @@ public class ImageViewerForm : Form
 
     private void PictureBox_MouseMove(object? sender, MouseEventArgs e)
     {
+        if (_isDrawingManualOcrRegion)
+        {
+            _manualOcrDragCurrent = e.Location;
+            _pictureBox.Invalidate();
+            return;
+        }
+
         if (_isPanning)
         {
             _panOffset.X += e.X - _lastMousePos.X;
@@ -2822,12 +3372,31 @@ public class ImageViewerForm : Form
             _lastMousePos = e.Location;
             _pictureBox.Invalidate();
         }
+        else if (_manualOcrDrawMode)
+        {
+            _pictureBox.Cursor = Cursors.Cross;
+        }
     }
 
     private void PictureBox_MouseUp(object? sender, MouseEventArgs e)
     {
+        if (_isDrawingManualOcrRegion && e.Button == MouseButtons.Left)
+        {
+            _isDrawingManualOcrRegion = false;
+            if (TryGetNormalizedManualSelectionRect(_manualOcrDragStart, e.Location, out var normalizedRect))
+            {
+                _pendingManualOcrRegions.Add(new ManualOcrRegion { NormalizedRect = normalizedRect });
+                if (!_aiBusy)
+                    _aiStatusLabel.Text = $"{_pendingManualOcrRegions.Count} manual OCR box(es) queued";
+            }
+
+            UpdateManualOcrUiState();
+            _pictureBox.Invalidate();
+            return;
+        }
+
         _isPanning = false;
-        _pictureBox.Cursor = Cursors.Default;
+        UpdateManualOcrUiState();
     }
 
     private void PictureBox_MouseWheel(object? sender, MouseEventArgs e)

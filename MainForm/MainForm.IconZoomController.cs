@@ -55,13 +55,36 @@ public partial class MainForm
             if (notches == 0)
                 notches = e.Delta > 0 ? 1 : -1;
 
-            var s = AppSettings.Current;
+            if (_baseSize == 0)
+                _baseSize = _owner.GetEffectiveIconSize();
+
+            QueueZoomDelta(Math.Sign(notches), Math.Abs(notches));
+        }
+
+        public bool HandleZoomHotkey(Keys effective)
+        {
+            if ((effective & Keys.Control) != Keys.Control || (effective & Keys.Alt) == Keys.Alt)
+                return false;
+
+            Keys code = effective & Keys.KeyCode;
+            int direction = code switch
+            {
+                Keys.Oemplus or Keys.Add => 1,
+                Keys.OemMinus or Keys.Subtract => -1,
+                _ => 0
+            };
+            if (direction == 0)
+                return false;
 
             if (_baseSize == 0)
-                _baseSize = Math.Clamp(s.IconSize, MinIconSize, MaxIconSize);
+                _baseSize = _owner.GetEffectiveIconSize();
 
-            int direction = Math.Sign(notches);
-            int count = Math.Abs(notches);
+            QueueZoomDelta(direction, 1);
+            return true;
+        }
+
+        private void QueueZoomDelta(int direction, int count)
+        {
             int nextSteps = _steps;
 
             for (int i = 0; i < count; i++)
@@ -137,20 +160,15 @@ public partial class MainForm
         {
             try { HideZoomPreview(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
 
-            var s = AppSettings.Current;
-            int target = _pendingSize > 0 ? _pendingSize : Math.Clamp(s.IconSize, MinIconSize, MaxIconSize);
+            int target = _pendingSize > 0 ? _pendingSize : _owner.GetEffectiveIconSize();
 
-            if (target != s.IconSize)
+            _owner.SaveIconSizeForCurrentPath(target);
+
+            if (applyUi && _owner != null && !_owner.IsDisposed && !_owner.Disposing)
             {
-                s.IconSize = target;
-                s.Save();
-
-                if (applyUi && _owner != null && !_owner.IsDisposed && !_owner.Disposing)
-                {
-                    _owner.ApplySettings();
-                    if (_owner.IsTileView)
-                        _owner.UpdateTileViewMetrics();
-                }
+                _owner.ApplySettings();
+                if (_owner.IsTileView)
+                    _owner.UpdateTileViewMetrics();
             }
 
             _baseSize = 0;

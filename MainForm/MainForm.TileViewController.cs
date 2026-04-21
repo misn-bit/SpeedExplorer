@@ -217,7 +217,7 @@ public partial class MainForm
         {
             if (_owner._listView == null || !_isTileView) return;
 
-            int icon = AppSettings.Current.IconSize;
+            int icon = _owner.GetEffectiveIconSize();
             _owner._listView.TileSize = new Size(
                 Math.Max(_owner.Scale(200), icon * 4),
                 Math.Max(_owner.Scale(60), icon + _owner.Scale(24)));

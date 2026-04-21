@@ -15,6 +15,7 @@ internal sealed class NavigationController
     public Stack<string> ForwardHistory { get; set; } = new();
     public Dictionary<string, string> LastSelection { get; set; } = new();
     public Dictionary<string, (SortColumn Column, SortDirection Direction)> FolderSortSettings { get; set; } = new();
+    public Dictionary<string, int> FolderIconSizeOverrides { get; set; } = new();
 
     public bool IsNavigating { get; set; }
     public string? PendingPath { get; private set; }

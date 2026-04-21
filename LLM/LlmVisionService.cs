@@ -7,6 +7,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using SixLabors.ImageSharp.Processing;
 
 namespace SpeedExplorer;
 
@@ -276,8 +277,6 @@ public class LlmVisionService
                 model = model,
                 messages = messages,
                 response_format = schema,
-                temperature = Math.Min(settings.LlmTemperature, 0.2),
-                max_tokens = ocrMaxTokens,
                 stream = false
             };
 
@@ -333,8 +332,6 @@ public class LlmVisionService
                     {
                         model = model,
                         messages = messages,
-                        temperature = Math.Min(settings.LlmTemperature, 0.2),
-                        max_tokens = ocrMaxTokens,
                         stream = false
                     };
 
@@ -542,6 +539,142 @@ public class LlmVisionService
         }
     }
 
+    public async Task<string?> ExtractSnippetTextAsync(string imagePath, string apiUrl, string? modelOverride = null, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        string model = string.IsNullOrWhiteSpace(modelOverride) ? AppSettings.Current.LlmModelName : modelOverride;
+        string requestUrl = LlmModelManager.GetCompletionsApiUrl(string.IsNullOrWhiteSpace(apiUrl) ? AppSettings.Current.LlmApiUrl : apiUrl, null);
+        int timeoutSeconds = LlmModelManager.ComputeOcrTimeoutSeconds(Math.Max(AppSettings.Current.LlmMaxTokens, 2048));
+
+        async Task<bool> TryReloadModelAsync(string stage)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return await _modelManager.TryRecoverVisionModelAsync(requestUrl, model, $"ExtractSnippetText {stage}", cancellationToken);
+        }
+
+        string systemPrompt = "You are to OCR the image snippet.";
+        string userPrompt =
+            "Return only the extracted text from this image snippet.\n" +
+            "Preserve meaningful line breaks.\n" +
+            "If no readable text is present, return an empty response.";
+
+        (string Json, List<LlmImageStats> Stats) BuildRequest(bool usePreparedJpeg)
+        {
+            byte[] imageBytes;
+            string mime;
+            var stats = new LlmImageStats { Path = imagePath };
+
+            if (usePreparedJpeg)
+            {
+                (imageBytes, stats) = LlmImageProcessor.PrepareImageForVision(imagePath, Math.Min(LlmImageProcessor.GetConfiguredVisionMaxPixels(), 1024L * 1024L), 95);
+                mime = "image/jpeg";
+            }
+            else
+            {
+                imageBytes = File.ReadAllBytes(imagePath);
+                stats.Bytes = imageBytes.Length;
+                try
+                {
+                    using var infoImage = SixLabors.ImageSharp.Image.Load<SixLabors.ImageSharp.PixelFormats.Rgba32>(imagePath);
+                    infoImage.Mutate(static ctx => ctx.AutoOrient());
+                    stats.OrigW = infoImage.Width;
+                    stats.OrigH = infoImage.Height;
+                    stats.NewW = infoImage.Width;
+                    stats.NewH = infoImage.Height;
+                }
+                catch
+                {
+                    // Best-effort stats only; raw bytes are enough to send the request.
+                }
+                mime = "image/png";
+            }
+
+            string base64 = Convert.ToBase64String(imageBytes);
+            var contentList = new List<object>
+            {
+                new { type = "text", text = userPrompt },
+                new { type = "image_url", image_url = new { url = $"data:{mime};base64,{base64}" } }
+            };
+
+            var messages = new[]
+            {
+                new { role = "system", content = (object)systemPrompt },
+                new { role = "user", content = (object)contentList }
+            };
+
+            var requestBody = new
+            {
+                model = model,
+                messages = messages,
+                stream = false
+            };
+
+            return (JsonSerializer.Serialize(requestBody, new JsonSerializerOptions { WriteIndented = true }), new List<LlmImageStats> { stats });
+        }
+
+        async Task<string?> SendAsync(string requestJson, List<LlmImageStats> stats, string stage)
+        {
+            LlmDebugLogger.LogRequest(Path.GetDirectoryName(imagePath) ?? "", userPrompt, systemPrompt, requestJson, new[] { imagePath }, stats);
+            using var content = new StringContent(requestJson, Encoding.UTF8, "application/json");
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            cts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
+
+            var response = await LlmModelManager.HttpClient.PostAsync(requestUrl, content, cts.Token);
+            string responseText = await response.Content.ReadAsStringAsync();
+
+            if (!response.IsSuccessStatusCode && LlmModelManager.IsModelUnloadedError(responseText))
+            {
+                if (await TryReloadModelAsync(stage))
+                {
+                    using var retryContent = new StringContent(requestJson, Encoding.UTF8, "application/json");
+                    using var retryCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                    retryCts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
+                    response = await LlmModelManager.HttpClient.PostAsync(requestUrl, retryContent, retryCts.Token);
+                    responseText = await response.Content.ReadAsStringAsync();
+                }
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                LlmDebugLogger.LogError($"ExtractSnippetText API Error {response.StatusCode}: {responseText}");
+                return null;
+            }
+
+            using var doc = JsonDocument.Parse(responseText);
+            if (!doc.RootElement.TryGetProperty("choices", out var choices) || choices.GetArrayLength() == 0)
+                return "";
+
+            string messageContent = LlmParsers.ExtractAssistantMessageText(
+                choices[0].GetProperty("message"),
+                allowReasoningFallback: true);
+            LlmDebugLogger.LogResponse(messageContent);
+            return NormalizePlainTextResponse(messageContent);
+        }
+
+        try
+        {
+            LlmDebugLogger.LogExecution($"ExtractSnippetText endpoint: {requestUrl} | model: {model} | vision: true | timeout: {timeoutSeconds}s");
+
+            var (requestJson, stats) = BuildRequest(usePreparedJpeg: false);
+            string? result = await SendAsync(requestJson, stats, "primary");
+            if (result != null)
+                return result;
+
+            LlmDebugLogger.LogExecution("ExtractSnippetText retry with prepared JPEG payload", success: false);
+            var (fallbackJson, fallbackStats) = BuildRequest(usePreparedJpeg: true);
+            return await SendAsync(fallbackJson, fallbackStats, "retry-jpeg");
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            LlmDebugLogger.LogError($"ExtractSnippetText failed: {ex.Message}");
+            return null;
+        }
+    }
+
     /// <summary>
     /// Translates OCR block text preserving input order.
     /// </summary>
@@ -580,7 +713,9 @@ public class LlmVisionService
         string systemPrompt =
             "You are a translation engine. Return strict JSON only. " +
             "Translate each input text block into the requested target language. " +
-            "Do not omit blocks. Preserve order exactly.";
+            "Do not omit blocks. Preserve order exactly. " +
+            "Return exactly one string in the translations array for each input block. " +
+            "If a single block needs multiple translated lines, keep them inside that one string using line breaks, not separate array entries.";
 
         var numbered = new StringBuilder();
         for (int i = 0; i < cleanedBlocks.Count; i++)
@@ -591,7 +726,10 @@ public class LlmVisionService
         string userPrompt =
             $"Target language: {target}\n" +
             $"Source language hint: {(string.IsNullOrWhiteSpace(sourceLanguage) ? "unknown" : sourceLanguage)}\n" +
-            "Translate each numbered block. Keep line breaks where meaningful.\n" +
+            $"There are {cleanedBlocks.Count} input blocks.\n" +
+            "Translate each numbered block.\n" +
+            "The translations array must contain exactly one item per input block, in the same order.\n" +
+            "If one block translates to multiple lines, keep those lines inside the same array string using \\n.\n" +
             "Input blocks:\n" +
             numbered.ToString();
 
@@ -611,6 +749,8 @@ public class LlmVisionService
                         translations = new
                         {
                             type = "array",
+                            minItems = cleanedBlocks.Count,
+                            maxItems = cleanedBlocks.Count,
                             items = new { type = "string" }
                         }
                     },
@@ -631,8 +771,6 @@ public class LlmVisionService
             model = model,
             messages = messages,
             response_format = schema,
-            temperature = Math.Min(settings.LlmTemperature, 0.2),
-            max_tokens = translationMaxTokens,
             stream = false
         };
 
@@ -666,8 +804,7 @@ public class LlmVisionService
                 return null;
 
             parsed.Translations = NormalizeTranslationLines(parsed.Translations, parsed.TranslatedFullText, cleanedBlocks.Count);
-            if (string.IsNullOrWhiteSpace(parsed.TranslatedFullText) && parsed.Translations.Count > 0)
-                parsed.TranslatedFullText = string.Join(Environment.NewLine, parsed.Translations);
+            parsed.TranslatedFullText = BuildNormalizedTranslationFullText(parsed.Translations, parsed.TranslatedFullText);
 
             return parsed;
         }
@@ -682,37 +819,244 @@ public class LlmVisionService
         }
     }
 
+    public async Task<string?> TranslateSimpleTextAsync(
+        string sourceText,
+        string targetLanguage,
+        string apiUrl,
+        string? modelOverride = null,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (string.IsNullOrWhiteSpace(sourceText))
+            return "";
+
+        string model = string.IsNullOrWhiteSpace(modelOverride) ? AppSettings.Current.LlmModelName : modelOverride;
+        string requestUrl = LlmModelManager.GetCompletionsApiUrl(string.IsNullOrWhiteSpace(apiUrl) ? AppSettings.Current.LlmApiUrl : apiUrl, null);
+        string target = string.IsNullOrWhiteSpace(targetLanguage) ? "English" : targetLanguage.Trim();
+        int timeoutSeconds = LlmModelManager.ComputeTranslationTimeoutSeconds(Math.Max(AppSettings.Current.LlmMaxTokens, 2048));
+
+        async Task<bool> TryReloadModelAsync(string stage)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return await _modelManager.TryRecoverVisionModelAsync(requestUrl, model, $"TranslateSimpleText {stage}", cancellationToken);
+        }
+
+        string systemPrompt = "You translate text accurately and naturally. Return only the translation.";
+        string userPrompt = $"Translate this text to {target}:{Environment.NewLine}{Environment.NewLine}{sourceText}";
+
+        var messages = new[]
+        {
+            new { role = "system", content = systemPrompt },
+            new { role = "user", content = userPrompt }
+        };
+
+        var requestBody = new
+        {
+            model = model,
+            messages = messages,
+            stream = false
+        };
+
+        string requestJson = JsonSerializer.Serialize(requestBody, new JsonSerializerOptions { WriteIndented = true });
+        LlmDebugLogger.LogRequest("", userPrompt, systemPrompt, requestJson);
+
+        try
+        {
+            LlmDebugLogger.LogExecution($"TranslateSimpleText endpoint: {requestUrl} | model: {model} | vision: false | timeout: {timeoutSeconds}s");
+            using var content = new StringContent(requestJson, Encoding.UTF8, "application/json");
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            cts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
+            var response = await LlmModelManager.HttpClient.PostAsync(requestUrl, content, cts.Token);
+            string responseText = await response.Content.ReadAsStringAsync();
+
+            if (!response.IsSuccessStatusCode && LlmModelManager.IsModelUnloadedError(responseText))
+            {
+                if (await TryReloadModelAsync("primary"))
+                {
+                    using var retryContent = new StringContent(requestJson, Encoding.UTF8, "application/json");
+                    using var retryCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                    retryCts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
+                    response = await LlmModelManager.HttpClient.PostAsync(requestUrl, retryContent, retryCts.Token);
+                    responseText = await response.Content.ReadAsStringAsync();
+                }
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                LlmDebugLogger.LogError($"TranslateSimpleText API Error {response.StatusCode}: {responseText}");
+                return null;
+            }
+
+            using var doc = JsonDocument.Parse(responseText);
+            if (!doc.RootElement.TryGetProperty("choices", out var choices) || choices.GetArrayLength() == 0)
+                return "";
+
+            string messageContent = LlmParsers.ExtractAssistantMessageText(
+                choices[0].GetProperty("message"),
+                allowReasoningFallback: true);
+            LlmDebugLogger.LogResponse(messageContent);
+            return NormalizePlainTextResponse(messageContent);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            LlmDebugLogger.LogError($"TranslateSimpleText failed: {ex.Message}");
+            return null;
+        }
+    }
+
     private static List<string> NormalizeTranslationLines(IReadOnlyList<string>? rawLines, string? fullText, int expectedCount)
     {
-        var normalized = new List<string>();
-        if (rawLines != null)
+        var directSegments = NormalizeDirectTranslationSegments(rawLines);
+        var groupedFromArray = ExtractOrderedBlocks(rawLines);
+        if (groupedFromArray.Count > 0)
+            return FitTranslationBlockCount(groupedFromArray, expectedCount);
+
+        var groupedFromFullText = ExtractOrderedBlocks(fullText);
+        if (groupedFromFullText.Count > 0)
+            return FitTranslationBlockCount(groupedFromFullText, expectedCount);
+
+        if (directSegments.Count == 0 && !string.IsNullOrWhiteSpace(fullText))
         {
-            for (int i = 0; i < rawLines.Count; i++)
+            string single = StripOrderedPrefix(NormalizeTranslationSegment(fullText));
+            if (!string.IsNullOrWhiteSpace(single))
+                directSegments.Add(single);
+        }
+
+        return FitTranslationBlockCount(directSegments, expectedCount);
+    }
+
+    private static string BuildNormalizedTranslationFullText(IReadOnlyList<string> translations, string? fallbackFullText)
+    {
+        var lines = translations?
+            .Select(NormalizeTranslationSegment)
+            .Where(line => !string.IsNullOrWhiteSpace(line))
+            .ToList() ?? new List<string>();
+
+        if (lines.Count > 0)
+            return string.Join(Environment.NewLine, lines);
+
+        return StripOrderedPrefix(NormalizeTranslationSegment(fallbackFullText ?? ""));
+    }
+
+    private static List<string> NormalizeDirectTranslationSegments(IReadOnlyList<string>? rawLines)
+    {
+        var normalized = new List<string>();
+        if (rawLines == null)
+            return normalized;
+
+        for (int i = 0; i < rawLines.Count; i++)
+        {
+            string line = StripOrderedPrefix(NormalizeTranslationSegment(rawLines[i] ?? ""));
+            if (!string.IsNullOrWhiteSpace(line))
+                normalized.Add(line);
+        }
+
+        return normalized;
+    }
+
+    private static List<string> ExtractOrderedBlocks(IReadOnlyList<string>? rawLines)
+    {
+        if (rawLines == null || rawLines.Count == 0)
+            return new List<string>();
+
+        return ExtractOrderedBlocks(rawLines.Select(NormalizeTranslationSegment));
+    }
+
+    private static List<string> ExtractOrderedBlocks(string? text)
+    {
+        string normalized = NormalizeTranslationSegment(text ?? "");
+        if (string.IsNullOrWhiteSpace(normalized))
+            return new List<string>();
+
+        return ExtractOrderedBlocks(new[] { normalized });
+    }
+
+    private static List<string> ExtractOrderedBlocks(IEnumerable<string> segments)
+    {
+        var blocks = new List<string>();
+        StringBuilder? current = null;
+        bool sawOrderedMarker = false;
+
+        void FlushCurrent()
+        {
+            if (current == null)
+                return;
+
+            string value = NormalizeTranslationSegment(current.ToString());
+            if (!string.IsNullOrWhiteSpace(value))
+                blocks.Add(value);
+            current = null;
+        }
+
+        foreach (string segment in segments)
+        {
+            if (string.IsNullOrWhiteSpace(segment))
+                continue;
+
+            string normalizedSegment = NormalizeTranslationSegment(segment);
+            foreach (string rawLine in normalizedSegment.Split('\n'))
             {
-                string line = StripOrderedPrefix(rawLines[i] ?? "");
-                if (!string.IsNullOrWhiteSpace(line))
-                    normalized.Add(line);
+                string line = rawLine.Trim();
+                if (string.IsNullOrWhiteSpace(line))
+                    continue;
+
+                if (TryParseOrderedLine(line, out _, out string content))
+                {
+                    FlushCurrent();
+                    current = new StringBuilder();
+                    if (!string.IsNullOrWhiteSpace(content))
+                        current.Append(content);
+                    sawOrderedMarker = true;
+                    continue;
+                }
+
+                if (current == null)
+                {
+                    if (!sawOrderedMarker)
+                        continue;
+
+                    current = new StringBuilder();
+                }
+
+                if (current.Length > 0)
+                    current.AppendLine();
+                current.Append(line);
             }
         }
 
-        var extractedFromFull = ExtractOrderedLines(fullText ?? "");
-        if (normalized.Count == 0 && extractedFromFull.Count > 0)
-            normalized.AddRange(extractedFromFull);
+        FlushCurrent();
+        return sawOrderedMarker ? blocks : new List<string>();
+    }
 
-        if (normalized.Count == 1 && expectedCount > 1 && extractedFromFull.Count > 1)
-        {
-            normalized.Clear();
-            normalized.AddRange(extractedFromFull);
-        }
+    private static List<string> FitTranslationBlockCount(List<string> blocks, int expectedCount)
+    {
+        if (expectedCount <= 0)
+            return blocks;
+
+        var normalized = blocks
+            .Select(NormalizeTranslationSegment)
+            .ToList();
 
         if (normalized.Count > expectedCount)
-            return normalized.Take(expectedCount).ToList();
+        {
+            var merged = normalized.Take(expectedCount).ToList();
+            for (int i = expectedCount; i < normalized.Count; i++)
+            {
+                string extra = normalized[i];
+                if (string.IsNullOrWhiteSpace(extra))
+                    continue;
 
-        if (normalized.Count == expectedCount)
-            return normalized;
-
-        if (normalized.Count == 0 && !string.IsNullOrWhiteSpace(fullText))
-            normalized.Add(StripOrderedPrefix(fullText));
+                if (string.IsNullOrWhiteSpace(merged[expectedCount - 1]))
+                    merged[expectedCount - 1] = extra;
+                else
+                    merged[expectedCount - 1] += Environment.NewLine + extra;
+            }
+            return merged;
+        }
 
         while (normalized.Count < expectedCount)
             normalized.Add(string.Empty);
@@ -720,21 +1064,59 @@ public class LlmVisionService
         return normalized;
     }
 
-    private static List<string> ExtractOrderedLines(string text)
+    private static bool TryParseOrderedLine(string text, out int order, out string content)
     {
-        var lines = new List<string>();
+        order = 0;
+        content = "";
         if (string.IsNullOrWhiteSpace(text))
-            return lines;
+            return false;
 
-        string normalized = text.Replace("\r\n", "\n").Replace('\r', '\n');
-        foreach (string raw in normalized.Split('\n'))
+        string trimmed = text.Trim();
+        int i = 0;
+        while (i < trimmed.Length && char.IsDigit(trimmed[i]))
+            i++;
+
+        if (i == 0 || i >= trimmed.Length)
+            return false;
+
+        char marker = trimmed[i];
+        if (marker != '.' && marker != ')' && marker != ':' && marker != '-')
+            return false;
+
+        if (!int.TryParse(trimmed.Substring(0, i), out order))
+            return false;
+
+        i++;
+        while (i < trimmed.Length && char.IsWhiteSpace(trimmed[i]))
+            i++;
+
+        content = i < trimmed.Length ? trimmed.Substring(i).Trim() : "";
+        return true;
+    }
+
+    private static string NormalizeTranslationSegment(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return "";
+
+        return text.Replace("\r\n", "\n").Replace('\r', '\n').Trim();
+    }
+
+    private static string NormalizePlainTextResponse(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return "";
+
+        string normalized = text.Replace("\r\n", "\n").Replace('\r', '\n').Trim();
+        if (normalized.StartsWith("```", StringComparison.Ordinal))
         {
-            string line = StripOrderedPrefix(raw);
-            if (!string.IsNullOrWhiteSpace(line))
-                lines.Add(line);
+            int firstNewline = normalized.IndexOf('\n');
+            int lastFence = normalized.LastIndexOf("```", StringComparison.Ordinal);
+            if (firstNewline >= 0 && lastFence > firstNewline)
+                normalized = normalized.Substring(firstNewline + 1, lastFence - firstNewline - 1).Trim();
         }
 
-        return lines;
+        return normalized;
     }
 
     private static string StripOrderedPrefix(string text)

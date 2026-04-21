@@ -108,9 +108,12 @@ public partial class MainForm
                     if (folderSettings?.Settings != null)
                     {
                         _owner._nav.FolderSortSettings.Clear();
+                        _owner._nav.FolderIconSizeOverrides.Clear();
                         foreach (var kvp in folderSettings.Settings)
                         {
                             _owner._nav.FolderSortSettings[kvp.Key] = (kvp.Value.Column, kvp.Value.Direction);
+                            if (kvp.Value.IconSize is int iconSize)
+                                _owner._nav.FolderIconSizeOverrides[kvp.Key] = Math.Clamp(iconSize, 16, 192);
                         }
                     }
                 }
@@ -126,12 +129,19 @@ public partial class MainForm
             try
             {
                 var settings = new FolderSettings();
-                foreach (var kvp in _owner._nav.FolderSortSettings)
+                var paths = new HashSet<string>(_owner._nav.FolderSortSettings.Keys, StringComparer.OrdinalIgnoreCase);
+                paths.UnionWith(_owner._nav.FolderIconSizeOverrides.Keys);
+
+                foreach (var path in paths)
                 {
-                    settings.Settings[kvp.Key] = new FolderSortState
+                    _owner._nav.FolderSortSettings.TryGetValue(path, out var sort);
+                    _owner._nav.FolderIconSizeOverrides.TryGetValue(path, out var iconSize);
+
+                    settings.Settings[path] = new FolderSortState
                     {
-                        Column = kvp.Value.Column,
-                        Direction = kvp.Value.Direction
+                        Column = sort.Column,
+                        Direction = sort.Direction,
+                        IconSize = iconSize > 0 ? iconSize : null
                     };
                 }
 

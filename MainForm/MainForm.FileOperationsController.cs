@@ -55,7 +55,7 @@ public partial class MainForm
             // Adjust bounds for icons and padding
             // User wants it exactly 4px further left and 1px up from previous position.
             // Previous was (iconOffset - 14). New is (iconOffset - 18).
-            int iconOffset = AppSettings.Current.ShowIcons ? (AppSettings.Current.IconSize + 6) : 4;
+            int iconOffset = AppSettings.Current.ShowIcons ? (_owner.GetEffectiveIconSize() + 6) : 4;
             bounds.X += (iconOffset - 18);
             bounds.Y -= 1;
             bounds.Width -= (iconOffset - 18);

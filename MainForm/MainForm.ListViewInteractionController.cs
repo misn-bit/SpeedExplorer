@@ -327,7 +327,7 @@ public partial class MainForm
                                           item.Extension.Equals(".ico", StringComparison.OrdinalIgnoreCase);
                         // At large icon sizes prefer unique per-item extraction for all files
                         // so we can fetch higher-quality shell icons.
-                        bool preferHighQualityLarge = s.IconSize >= 64;
+                        bool preferHighQualityLarge = _owner.GetEffectiveIconSize() >= 64;
                         bool unique = (s.ResolveUniqueIcons && isExeOrLnk) || preferHighQualityLarge;
 
                         string prefix = colored ? "sys_" : "gray_";

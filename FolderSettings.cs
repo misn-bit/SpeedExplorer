@@ -11,4 +11,5 @@ public class FolderSortState
 {
     public SortColumn Column { get; set; }
     public SortDirection Direction { get; set; }
+    public int? IconSize { get; set; }
 }

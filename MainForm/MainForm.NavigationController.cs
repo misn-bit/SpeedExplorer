@@ -244,6 +244,7 @@ public partial class MainForm
             }
 
             _currentPath = path;
+            ApplyEffectiveIconSizeIfNeeded(path);
             UpdateWatcher(path);
             if (!isShellPath &&
                 path != ThisPcPath &&
