@@ -336,8 +336,8 @@ public partial class MainForm
             tab.CurrentShellId = ShellNavigationController.IsShellIdPath(_owner._currentPath) ? _owner._currentPath : "";
             tab.Title = GetTabTitleForPath(_owner._currentPath, tab.IsSearchMode);
             tab.CachedPath = _owner._currentPath;
-            tab.CachedItems = _owner._items;
-            tab.CachedAllItems = _owner._allItems;
+            tab.CachedItems = new List<FileItem>(_owner._items);
+            tab.CachedAllItems = new List<FileItem>(_owner._allItems);
             tab.HasCachedSnapshot = true;
             CaptureListState(tab);
         }
@@ -521,6 +521,8 @@ public partial class MainForm
                 _owner.UpdateWatcher(path);
                 _owner.UpdateBreadcrumbs(path);
                 _owner._addressTextBox.Text = path;
+                _owner.ApplyEffectiveIconSizeIfNeeded(path);
+                _owner._tileViewController.ApplyViewModeForNavigation();
 
                 _owner._suppressSearchTextChanged = true;
                 try

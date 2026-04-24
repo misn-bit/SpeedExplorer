@@ -94,6 +94,7 @@ public class ImageViewerForm : Form
     private readonly Button _openSavedOcrFileBtn;
     private readonly LlmService _llmService = new();
     private CancellationTokenSource? _aiCts;
+    private CancellationTokenSource? _tagCts;
 
     private float _zoomLevel = 1.0f;
     private Point _panOffset = Point.Empty;
@@ -120,6 +121,11 @@ public class ImageViewerForm : Form
     private Point _manualOcrDragStart;
     private Point _manualOcrDragCurrent;
     private readonly List<ManualOcrRegion> _pendingManualOcrRegions = new();
+    private readonly List<ImageAiJob> _queuedAiJobs = new();
+    private readonly Dictionary<string, int> _queuedAiJobCountsByImage = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, List<RectangleF>> _queuedManualRegionsByImage = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, List<RectangleF>> _restorableManualRegionsByImage = new(StringComparer.OrdinalIgnoreCase);
+    private ImageAiJob? _activeAiJob;
 
     private sealed class OverlayTextBlock
     {
@@ -135,6 +141,32 @@ public class ImageViewerForm : Form
     private sealed class ManualOcrRegion
     {
         public RectangleF NormalizedRect { get; set; }
+    }
+
+    private sealed class ManualOcrSnippet
+    {
+        public RectangleF NormalizedRect { get; set; }
+        public string TempPath { get; set; } = "";
+    }
+
+    private sealed class ImageAiJob
+    {
+        public string ImagePath { get; set; } = "";
+        public bool WithTranslation { get; set; }
+        public string TargetLanguage { get; set; } = "English";
+        public string? ModelId { get; set; }
+        public List<ManualOcrSnippet> ManualSnippets { get; set; } = new();
+    }
+
+    private sealed class ImageAiJobResult
+    {
+        public string ImagePath { get; set; } = "";
+        public string StatusText { get; set; } = "";
+        public string? ErrorText { get; set; }
+        public bool FromSavedCache { get; set; }
+        public bool ShowSavedTranslation { get; set; }
+        public LlmImageTextResult? Ocr { get; set; }
+        public LlmTextTranslationResult? Translation { get; set; }
     }
 
     private sealed class OcrCacheEnvelope
@@ -1030,18 +1062,11 @@ public class ImageViewerForm : Form
 
     private void ToggleManualOcrDrawMode()
     {
-        if (_aiBusy)
-            return;
-
         _manualOcrDrawMode = !_manualOcrDrawMode;
         _isDrawingManualOcrRegion = false;
         UpdateManualOcrUiState();
         _pictureBox.Invalidate();
-
-        if (_manualOcrDrawMode)
-            _aiStatusLabel.Text = "Draw OCR boxes with the mouse";
-        else if (_pendingManualOcrRegions.Count > 0)
-            _aiStatusLabel.Text = $"{_pendingManualOcrRegions.Count} manual OCR box(es) queued";
+        RefreshAiStatusLabel(_manualOcrDrawMode ? "Draw OCR boxes with the mouse" : null);
     }
 
     private void ClearPendingManualOcrRegions(bool updateStatus = true)
@@ -1051,13 +1076,13 @@ public class ImageViewerForm : Form
         UpdateManualOcrUiState();
         _pictureBox.Invalidate();
 
-        if (updateStatus && !_aiBusy)
-            _aiStatusLabel.Text = "Cleared pending manual OCR boxes";
+        if (updateStatus)
+            RefreshAiStatusLabel("Cleared pending manual OCR boxes");
     }
 
     private void UpdateManualOcrUiState()
     {
-        bool canEdit = !_aiBusy && _currentImage != null;
+        bool canEdit = _currentImage != null;
         _drawOcrBoxBtn.Enabled = canEdit;
         _clearManualOcrBoxesBtn.Enabled = canEdit && _pendingManualOcrRegions.Count > 0;
         _drawOcrBoxBtn.BackColor = _manualOcrDrawMode ? Color.FromArgb(78, 78, 78) : Color.FromArgb(60, 60, 60);
@@ -1068,12 +1093,10 @@ public class ImageViewerForm : Form
     private void SetAiBusy(bool busy, string statusText)
     {
         _aiBusy = busy;
-        _ocrBtn.Enabled = !busy;
-        _translateBtn.Enabled = !busy;
-        _drawOcrBoxBtn.Enabled = !busy && _currentImage != null;
-        _clearManualOcrBoxesBtn.Enabled = !busy && _pendingManualOcrRegions.Count > 0;
+        _ocrBtn.Enabled = _currentImage != null;
+        _translateBtn.Enabled = _currentImage != null;
         _tagBtn.Enabled = !busy;
-        _targetLanguageBox.Enabled = !busy;
+        _targetLanguageBox.Enabled = _currentImage != null;
         _abortBtn.Visible = busy;
         _overlayToggle.Enabled = !busy;
         _showSavedOcrCheck.Enabled = !busy;
@@ -1088,6 +1111,192 @@ public class ImageViewerForm : Form
             _aiOutputBox.Cursor = Cursors.Default;
         UpdateManualOcrUiState();
         UpdateSavedCacheUiState();
+    }
+
+    private bool HasQueuedAiWork()
+        => _activeAiJob != null || _queuedAiJobs.Count > 0;
+
+    private int GetQueuedAiJobsForImage(string imagePath)
+        => _queuedAiJobCountsByImage.TryGetValue(imagePath, out int count) ? count : 0;
+
+    private void IncrementQueuedAiJobsForImage(string imagePath)
+    {
+        if (string.IsNullOrWhiteSpace(imagePath))
+            return;
+
+        _queuedAiJobCountsByImage[imagePath] = GetQueuedAiJobsForImage(imagePath) + 1;
+    }
+
+    private void DecrementQueuedAiJobsForImage(string imagePath)
+    {
+        if (string.IsNullOrWhiteSpace(imagePath))
+            return;
+
+        int count = GetQueuedAiJobsForImage(imagePath);
+        if (count <= 1)
+            _queuedAiJobCountsByImage.Remove(imagePath);
+        else
+            _queuedAiJobCountsByImage[imagePath] = count - 1;
+    }
+
+    private void RegisterQueuedManualRegions(ImageAiJob job)
+    {
+        if (job.ManualSnippets.Count == 0 || string.IsNullOrWhiteSpace(job.ImagePath))
+            return;
+
+        if (!_queuedManualRegionsByImage.TryGetValue(job.ImagePath, out var regions))
+        {
+            regions = new List<RectangleF>();
+            _queuedManualRegionsByImage[job.ImagePath] = regions;
+        }
+
+        regions.AddRange(job.ManualSnippets.Select(s => s.NormalizedRect));
+    }
+
+    private void UnregisterQueuedManualRegions(ImageAiJob job)
+    {
+        if (job.ManualSnippets.Count == 0 || string.IsNullOrWhiteSpace(job.ImagePath))
+            return;
+
+        if (!_queuedManualRegionsByImage.TryGetValue(job.ImagePath, out var regions) || regions.Count == 0)
+            return;
+
+        foreach (var snippet in job.ManualSnippets)
+        {
+            int index = regions.FindIndex(r =>
+                Math.Abs(r.X - snippet.NormalizedRect.X) < 0.0001f &&
+                Math.Abs(r.Y - snippet.NormalizedRect.Y) < 0.0001f &&
+                Math.Abs(r.Width - snippet.NormalizedRect.Width) < 0.0001f &&
+                Math.Abs(r.Height - snippet.NormalizedRect.Height) < 0.0001f);
+            if (index >= 0)
+                regions.RemoveAt(index);
+        }
+
+        if (regions.Count == 0)
+            _queuedManualRegionsByImage.Remove(job.ImagePath);
+    }
+
+    private static bool RectanglesRoughlyEqual(RectangleF a, RectangleF b)
+        => Math.Abs(a.X - b.X) < 0.0001f &&
+           Math.Abs(a.Y - b.Y) < 0.0001f &&
+           Math.Abs(a.Width - b.Width) < 0.0001f &&
+           Math.Abs(a.Height - b.Height) < 0.0001f;
+
+    private static void AddRectIfMissing(List<RectangleF> regions, RectangleF rect)
+    {
+        if (!regions.Any(existing => RectanglesRoughlyEqual(existing, rect)))
+            regions.Add(rect);
+    }
+
+    private void AddPendingManualRegionIfMissing(RectangleF rect)
+    {
+        if (!_pendingManualOcrRegions.Any(existing => RectanglesRoughlyEqual(existing.NormalizedRect, rect)))
+            _pendingManualOcrRegions.Add(new ManualOcrRegion { NormalizedRect = rect });
+    }
+
+    private bool HasQueuedManualRegions(ImageAiJob job)
+    {
+        if (job.ManualSnippets.Count == 0 || string.IsNullOrWhiteSpace(job.ImagePath))
+            return false;
+
+        if (!_queuedManualRegionsByImage.TryGetValue(job.ImagePath, out var regions) || regions.Count == 0)
+            return false;
+
+        return job.ManualSnippets.Any(snippet => regions.Any(region => RectanglesRoughlyEqual(region, snippet.NormalizedRect)));
+    }
+
+    private void RestoreManualRegionsFromAbortedJob(ImageAiJob job)
+    {
+        if (!HasQueuedManualRegions(job))
+            return;
+
+        string? currentImagePath = GetCurrentImagePath();
+        bool isCurrentImage = string.Equals(currentImagePath, job.ImagePath, StringComparison.OrdinalIgnoreCase);
+        List<RectangleF>? storedRegions = null;
+        if (!isCurrentImage)
+        {
+            if (!_restorableManualRegionsByImage.TryGetValue(job.ImagePath, out storedRegions))
+            {
+                storedRegions = new List<RectangleF>();
+                _restorableManualRegionsByImage[job.ImagePath] = storedRegions;
+            }
+        }
+
+        foreach (var snippet in job.ManualSnippets)
+        {
+            if (isCurrentImage)
+                AddPendingManualRegionIfMissing(snippet.NormalizedRect);
+            else
+                AddRectIfMissing(storedRegions!, snippet.NormalizedRect);
+        }
+    }
+
+    private void RestorePendingManualRegionsForCurrentImage()
+    {
+        string? imagePath = GetCurrentImagePath();
+        if (string.IsNullOrWhiteSpace(imagePath))
+            return;
+
+        if (!_restorableManualRegionsByImage.TryGetValue(imagePath, out var restoredRegions) || restoredRegions.Count == 0)
+            return;
+
+        foreach (var rect in restoredRegions)
+            AddPendingManualRegionIfMissing(rect);
+
+        _restorableManualRegionsByImage.Remove(imagePath);
+    }
+
+    private void RefreshAiStatusLabel(string? overrideStatus = null)
+    {
+        if (!string.IsNullOrWhiteSpace(overrideStatus))
+        {
+            _aiStatusLabel.Text = overrideStatus;
+            return;
+        }
+
+        if (_manualOcrDrawMode)
+        {
+            _aiStatusLabel.Text = "Draw OCR boxes with the mouse";
+            return;
+        }
+
+        if (_pendingManualOcrRegions.Count > 0)
+        {
+            _aiStatusLabel.Text = $"{_pendingManualOcrRegions.Count} manual OCR box(es) queued";
+            return;
+        }
+
+        string? imagePath = GetCurrentImagePath();
+        if (!string.IsNullOrWhiteSpace(imagePath))
+        {
+            if (_activeAiJob != null &&
+                string.Equals(_activeAiJob.ImagePath, imagePath, StringComparison.OrdinalIgnoreCase))
+            {
+                string action = _activeAiJob.WithTranslation ? "translate" : "OCR";
+                _aiStatusLabel.Text = _activeAiJob.ManualSnippets.Count > 0
+                    ? $"Processing queued manual {action}..."
+                    : $"Processing queued {action}...";
+                return;
+            }
+
+            int queuedForImage = GetQueuedAiJobsForImage(imagePath);
+            if (queuedForImage > 0)
+            {
+                _aiStatusLabel.Text = queuedForImage == 1
+                    ? "1 AI job queued for this image"
+                    : $"{queuedForImage} AI jobs queued for this image";
+                return;
+            }
+        }
+
+        if (HasQueuedAiWork())
+        {
+            int pending = _queuedAiJobs.Count + (_activeAiJob != null ? 1 : 0);
+            _aiStatusLabel.Text = pending == 1 ? "1 AI job in progress" : $"{pending} AI jobs in progress";
+            return;
+        }
+
+        _aiStatusLabel.Text = "AI ready";
     }
 
     private async Task<string?> EnsureVisionModelAsync()
@@ -1827,7 +2036,7 @@ public class ImageViewerForm : Form
         };
     }
 
-    private LlmImageTextResult GetBestBaseOcrForCurrentImage(string imagePath)
+    private LlmImageTextResult GetBestBaseOcrForImage(string imagePath)
     {
         if (TryLoadSavedOcrEnvelope(imagePath, out var savedEnvelope) && savedEnvelope?.Result != null)
             return CloneOcrResult(savedEnvelope.Result);
@@ -1836,7 +2045,7 @@ public class ImageViewerForm : Form
         return new LlmImageTextResult();
     }
 
-    private LlmTextTranslationResult? GetBestSavedTranslationForCurrentImage(string imagePath)
+    private LlmTextTranslationResult? GetBestSavedTranslationForImage(string imagePath)
     {
         if (TryLoadSavedOcrEnvelope(imagePath, out var savedEnvelope) &&
             savedEnvelope != null &&
@@ -1858,6 +2067,49 @@ public class ImageViewerForm : Form
                 .Where(t => !string.IsNullOrWhiteSpace(t))
                 .Cast<string>());
 
+    private List<ManualOcrSnippet> CaptureManualOcrSnippetsForQueue()
+    {
+        var snippets = new List<ManualOcrSnippet>(_pendingManualOcrRegions.Count);
+        foreach (var region in _pendingManualOcrRegions)
+        {
+            using var snippet = CreateManualOcrSnippetBitmap(region.NormalizedRect);
+            if (snippet == null)
+                continue;
+
+            string tempPath = Path.Combine(Path.GetTempPath(), $"speedexplorer-ocr-{Guid.NewGuid():N}.png");
+            snippet.Save(tempPath, ImageFormat.Png);
+            snippets.Add(new ManualOcrSnippet
+            {
+                NormalizedRect = UnrotateNormalizedRect(region.NormalizedRect, _rotationQuarterTurns),
+                TempPath = tempPath
+            });
+        }
+
+        return snippets;
+    }
+
+    private static void CleanupManualOcrSnippets(IEnumerable<ManualOcrSnippet>? snippets)
+    {
+        if (snippets == null)
+            return;
+
+        foreach (var snippet in snippets)
+        {
+            if (snippet == null || string.IsNullOrWhiteSpace(snippet.TempPath))
+                continue;
+
+            try
+            {
+                if (File.Exists(snippet.TempPath))
+                    File.Delete(snippet.TempPath);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Failed to delete manual OCR temp snippet '{snippet.TempPath}': {ex.Message}");
+            }
+        }
+    }
+
     private Bitmap? CreateManualOcrSnippetBitmap(RectangleF normalizedRect)
     {
         if (_currentImage == null)
@@ -1875,52 +2127,30 @@ public class ImageViewerForm : Form
     }
 
     private async Task<(List<LlmImageTextBlock> Blocks, string DetectedLanguage)> ExtractManualOcrBlocksAsync(
-        IReadOnlyList<ManualOcrRegion> regions,
+        IReadOnlyList<ManualOcrSnippet> snippets,
         string model,
         CancellationToken cancellationToken)
     {
-        var blocks = new List<LlmImageTextBlock>(regions.Count);
+        var blocks = new List<LlmImageTextBlock>(snippets.Count);
         string detectedLanguage = "";
 
-        for (int i = 0; i < regions.Count; i++)
+        for (int i = 0; i < snippets.Count; i++)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            using var snippet = CreateManualOcrSnippetBitmap(regions[i].NormalizedRect);
-            if (snippet == null)
+            string text = (await _llmService.ExtractSnippetTextAsync(snippets[i].TempPath, model, cancellationToken))?.Trim() ?? "";
+            if (string.IsNullOrWhiteSpace(text))
                 continue;
 
-            string tempPath = Path.Combine(Path.GetTempPath(), $"speedexplorer-ocr-{Guid.NewGuid():N}.png");
-            try
+            blocks.Add(new LlmImageTextBlock
             {
-                snippet.Save(tempPath, ImageFormat.Png);
-                string text = (await _llmService.ExtractSnippetTextAsync(tempPath, model, cancellationToken))?.Trim() ?? "";
-                if (string.IsNullOrWhiteSpace(text))
-                    continue;
-
-                var originalRect = UnrotateNormalizedRect(regions[i].NormalizedRect, _rotationQuarterTurns);
-                blocks.Add(new LlmImageTextBlock
-                {
-                    Text = text,
-                    X = originalRect.X,
-                    Y = originalRect.Y,
-                    W = originalRect.Width,
-                    H = originalRect.Height,
-                    FontSize = 0f
-                });
-            }
-            finally
-            {
-                try
-                {
-                    if (File.Exists(tempPath))
-                        File.Delete(tempPath);
-                }
-                catch (Exception ex)
-                {
-                    Debug.WriteLine($"Failed to delete manual OCR temp snippet '{tempPath}': {ex.Message}");
-                }
-            }
+                Text = text,
+                X = snippets[i].NormalizedRect.X,
+                Y = snippets[i].NormalizedRect.Y,
+                W = snippets[i].NormalizedRect.Width,
+                H = snippets[i].NormalizedRect.Height,
+                FontSize = 0f
+            });
         }
 
         return (blocks, detectedLanguage);
@@ -2025,190 +2255,395 @@ public class ImageViewerForm : Form
 
     private async Task RunViewerOcrAsync(bool withTranslation)
     {
-        if (_aiBusy)
+        if (_tagCts != null)
+        {
+            RefreshAiStatusLabel("Wait for tagging to finish before queueing OCR or translation");
             return;
+        }
 
         string? imagePath = GetCurrentImagePath();
         if (string.IsNullOrWhiteSpace(imagePath) || !File.Exists(imagePath))
             return;
 
+        string targetLanguage = string.IsNullOrWhiteSpace(_targetLanguageBox.Text) ? "English" : _targetLanguageBox.Text.Trim();
+        List<ManualOcrSnippet>? manualSnippets = null;
+
         try
         {
-            string targetLanguage = string.IsNullOrWhiteSpace(_targetLanguageBox.Text) ? "English" : _targetLanguageBox.Text.Trim();
+            string actionName = withTranslation ? "translation" : "OCR";
+            SetAiBusy(HasQueuedAiWork(), $"Resolving model for queued {actionName}...");
+            string? model = await EnsureVisionModelAsync();
+            if (string.IsNullOrWhiteSpace(model))
+            {
+                SetAiBusy(HasQueuedAiWork(), "Model selection cancelled");
+                return;
+            }
 
             if (_pendingManualOcrRegions.Count > 0)
             {
-                var pendingRegions = _pendingManualOcrRegions.ToList();
-                var baseOcr = GetBestBaseOcrForCurrentImage(imagePath);
-                var existingTranslation = GetBestSavedTranslationForCurrentImage(imagePath);
-
-                SetAiBusy(true, "Resolving model...");
-                string? manualModel = await EnsureVisionModelAsync();
-                if (string.IsNullOrWhiteSpace(manualModel))
+                manualSnippets = CaptureManualOcrSnippetsForQueue();
+                if (manualSnippets.Count == 0)
                 {
-                    SetAiBusy(false, "Model selection cancelled");
+                    RefreshAiStatusLabel("No text snippets were captured from the manual OCR boxes");
                     return;
                 }
 
-                _aiCts = new CancellationTokenSource();
-                SetAiBusy(true, $"Extracting text from {pendingRegions.Count} manual box(es)...");
-                var (manualBlocks, detectedLanguage) = await ExtractManualOcrBlocksAsync(pendingRegions, manualModel, _aiCts.Token);
-                if (manualBlocks.Count == 0)
-                {
-                    SetAiBusy(false, "Manual OCR found no text");
-                    _aiOutputBox.Text = "No text was found inside the selected manual OCR boxes.";
-                    return;
-                }
-
-                var mergedOcr = MergeManualBlocksIntoOcr(baseOcr, manualBlocks, detectedLanguage);
-                _savedTranslationForCurrentImage = null;
-                _lastTranslations = new List<string>();
-                SetShowSavedTranslationChecked(false);
-                ApplyLoadedOcrToViewer(imagePath, mergedOcr, fromSavedCache: false);
-                SaveOcrResultToCache(imagePath, manualModel, mergedOcr);
                 ClearPendingManualOcrRegions(updateStatus: false);
-
-                if (!withTranslation)
-                {
-                    SetAiBusy(false, $"Added {manualBlocks.Count} manual OCR box(es)");
-                    UpdateSavedCacheUiState();
-                    return;
-                }
-
-                SetAiBusy(true, "Translating manual OCR...");
-                var mergedTranslation = await BuildMergedManualTranslationAsync(
-                    mergedOcr,
-                    existingTranslation,
-                    manualBlocks,
-                    targetLanguage,
-                    manualModel,
-                    _aiCts.Token);
-                if (mergedTranslation == null)
-                {
-                    SetAiBusy(false, "Translation failed");
-                    return;
-                }
-
-                _savedTranslationForCurrentImage = mergedTranslation;
-                _lastTranslations = mergedTranslation.Translations?.ToList() ?? new List<string>();
-                ApplyTranslationsToOverlay(_lastTranslations);
-                _aiOutputBox.Text = RenderTranslatedResult(mergedOcr, mergedTranslation);
-                SaveTranslationToCache(imagePath, manualModel, mergedOcr, mergedTranslation);
-                SetShowSavedTranslationChecked(true, updatePreference: true);
-                _currentOverlayFromSavedCache = false;
-                SetAiBusy(false, $"Added and translated {manualBlocks.Count} manual OCR box(es)");
-                UpdateSavedCacheUiState();
-                return;
             }
 
-            LlmImageTextResult? ocr = null;
-            string? model = null;
-            bool usingSavedOcr = false;
-
-            if (withTranslation && TryLoadSavedOcrEnvelope(imagePath, out var savedEnvelope) && savedEnvelope?.Result != null)
+            var job = new ImageAiJob
             {
-                ocr = savedEnvelope.Result;
-                _savedTranslationForCurrentImage = TryBuildSavedTranslation(savedEnvelope, out var savedTranslation) ? savedTranslation : null;
-                ApplyLoadedOcrToViewer(imagePath, ocr, fromSavedCache: true);
+                ImagePath = imagePath,
+                WithTranslation = withTranslation,
+                TargetLanguage = targetLanguage,
+                ModelId = model,
+                ManualSnippets = manualSnippets ?? new List<ManualOcrSnippet>()
+            };
 
-                if (_savedTranslationForCurrentImage != null
-                    && string.Equals(
-                        NormalizeLanguageKey(_savedTranslationForCurrentImage.TargetLanguage),
-                        NormalizeLanguageKey(targetLanguage),
-                        StringComparison.Ordinal))
-                {
-                    _lastTranslations = _savedTranslationForCurrentImage.Translations?.ToList() ?? new List<string>();
-                    ApplyTranslationsToOverlay(_lastTranslations);
-                    _aiOutputBox.Text = RenderTranslatedResult(ocr, _savedTranslationForCurrentImage);
-                    _aiOutputBox.AppendText(Environment.NewLine + Environment.NewLine + "[Loaded from OCR_output cache]");
-                    SetShowSavedTranslationChecked(true, updatePreference: true);
-                    _currentOverlayFromSavedCache = true;
-                    _aiStatusLabel.Text = $"Loaded saved translation ({_savedTranslationForCurrentImage.TargetLanguage})";
-                    UpdateSavedCacheUiState();
-                    return;
-                }
-
-                usingSavedOcr = true;
-            }
-
-            SetAiBusy(true, "Resolving model...");
-            model = await EnsureVisionModelAsync();
-            if (string.IsNullOrWhiteSpace(model))
-            {
-                SetAiBusy(false, "Model selection cancelled");
-                return;
-            }
-
-            _aiCts = new CancellationTokenSource();
-            if (!usingSavedOcr)
-            {
-                SetAiBusy(true, "Extracting text...");
-                ocr = await _llmService.ExtractImageTextAsync(imagePath, model, _aiCts.Token);
-
-                if (ocr == null)
-                {
-                    SetAiBusy(false, "OCR failed");
-                    _aiOutputBox.Text = "Failed to extract text from the image.";
-                    return;
-                }
-
-                _savedTranslationForCurrentImage = null;
-                ApplyLoadedOcrToViewer(imagePath, ocr, fromSavedCache: false);
-
-                if (!string.IsNullOrWhiteSpace(model))
-                    SaveOcrResultToCache(imagePath, model, ocr);
-
-                if (!withTranslation)
-                {
-                    SetAiBusy(false, $"OCR regenerated ({ocr.Blocks.Count} blocks)");
-                    UpdateSavedCacheUiState();
-                    return;
-                }
-            }
-
-            if (ocr == null)
-            {
-                SetAiBusy(false, "OCR failed");
-                return;
-            }
-
-            SetAiBusy(true, usingSavedOcr ? "Translating saved OCR..." : "Translating...");
-            var sourceBlocks = ocr.Blocks.Select(b => b.Text).Where(t => !string.IsNullOrWhiteSpace(t)).ToList();
-            if (sourceBlocks.Count == 0 && !string.IsNullOrWhiteSpace(ocr.FullText))
-                sourceBlocks.Add(ocr.FullText);
-
-            var translation = await _llmService.TranslateTextBlocksAsync(sourceBlocks, targetLanguage, null, model, _aiCts.Token);
-            if (translation == null)
-            {
-                SetAiBusy(false, "Translation failed");
-                return;
-            }
-
-            _savedTranslationForCurrentImage = translation;
-            _lastTranslations = translation.Translations;
-            ApplyTranslationsToOverlay(_lastTranslations);
-            _aiOutputBox.Text = RenderTranslatedResult(ocr, translation);
-            SaveTranslationToCache(imagePath, model, ocr, translation);
-            SetShowSavedTranslationChecked(true, updatePreference: true);
-            _currentOverlayFromSavedCache = false;
-            SetAiBusy(false, $"Translated to {translation.TargetLanguage}");
-            UpdateSavedCacheUiState();
-        }
-        catch (OperationCanceledException)
-        {
-            SetAiBusy(false, "Operation aborted");
+            EnqueueAiJob(job);
         }
         catch (Exception ex)
         {
-            SetAiBusy(false, $"AI error: {ex.Message}");
-            LlmDebugLogger.LogError($"Image viewer OCR/translate failed: {ex}");
-            UpdateSavedCacheUiState();
+            CleanupManualOcrSnippets(manualSnippets);
+            SetAiBusy(HasQueuedAiWork(), $"AI queue error: {ex.Message}");
+            LlmDebugLogger.LogError($"Failed to enqueue image viewer OCR/translate job: {ex}");
+        }
+    }
+
+    private void EnqueueAiJob(ImageAiJob job)
+    {
+        _queuedAiJobs.Add(job);
+        IncrementQueuedAiJobsForImage(job.ImagePath);
+        RegisterQueuedManualRegions(job);
+        SetAiBusy(true, BuildQueuedJobStatus(job));
+        UpdateSavedCacheUiState();
+        _pictureBox.Invalidate();
+        _ = ProcessQueuedAiJobsAsync();
+    }
+
+    private ImageAiJob TakeNextQueuedAiJob(string? preferredImagePath)
+    {
+        int index = 0;
+        if (!string.IsNullOrWhiteSpace(preferredImagePath))
+        {
+            int preferredIndex = _queuedAiJobs.FindIndex(job =>
+                string.Equals(job.ImagePath, preferredImagePath, StringComparison.OrdinalIgnoreCase));
+            if (preferredIndex >= 0)
+                index = preferredIndex;
+        }
+
+        var job = _queuedAiJobs[index];
+        _queuedAiJobs.RemoveAt(index);
+        return job;
+    }
+
+    private string BuildQueuedJobStatus(ImageAiJob job)
+    {
+        string action = job.WithTranslation ? "translation" : "OCR";
+        if (job.ManualSnippets.Count > 0)
+            return $"Queued manual {action} for {Path.GetFileName(job.ImagePath)}";
+        return $"Queued {action} for {Path.GetFileName(job.ImagePath)}";
+    }
+
+    private async Task ProcessQueuedAiJobsAsync()
+    {
+        if (_activeAiJob != null || _aiCts != null)
+            return;
+
+        _aiCts = new CancellationTokenSource();
+        string? preferredImagePath = null;
+        try
+        {
+            while (_queuedAiJobs.Count > 0)
+            {
+                if (!string.IsNullOrWhiteSpace(preferredImagePath) &&
+                    !_queuedAiJobs.Any(job => string.Equals(job.ImagePath, preferredImagePath, StringComparison.OrdinalIgnoreCase)))
+                {
+                    preferredImagePath = null;
+                }
+
+                var job = TakeNextQueuedAiJob(preferredImagePath);
+                DecrementQueuedAiJobsForImage(job.ImagePath);
+                _activeAiJob = job;
+                preferredImagePath = job.ImagePath;
+
+                string processingStatus = job.ManualSnippets.Count > 0
+                    ? (job.WithTranslation ? "Processing queued manual translation..." : "Processing queued manual OCR...")
+                    : (job.WithTranslation ? "Processing queued translation..." : "Processing queued OCR...");
+                SetAiBusy(true, processingStatus);
+
+                ImageAiJobResult result;
+                try
+                {
+                    result = await ExecuteAiJobAsync(
+                        job,
+                        _aiCts.Token,
+                        progressResult =>
+                        {
+                            if (progressResult.Ocr != null && job.ManualSnippets.Count > 0)
+                            {
+                                UnregisterQueuedManualRegions(job);
+                                _pictureBox.Invalidate();
+                            }
+
+                            bool appliedProgress = ApplyAiJobResultIfCurrent(job, progressResult);
+                            RefreshAiStatusLabel(appliedProgress ? progressResult.StatusText : null);
+                        });
+                }
+                catch (OperationCanceledException)
+                {
+                    UnregisterQueuedManualRegions(job);
+                    CleanupManualOcrSnippets(job.ManualSnippets);
+                    RefreshAiStatusLabel("Operation aborted");
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    UnregisterQueuedManualRegions(job);
+                    CleanupManualOcrSnippets(job.ManualSnippets);
+                    LlmDebugLogger.LogError($"Queued image viewer AI job failed: {ex}");
+                    result = new ImageAiJobResult
+                    {
+                        ImagePath = job.ImagePath,
+                        StatusText = $"AI error: {ex.Message}",
+                        ErrorText = ex.Message
+                    };
+                }
+
+                UnregisterQueuedManualRegions(job);
+                CleanupManualOcrSnippets(job.ManualSnippets);
+                bool appliedToCurrent = ApplyAiJobResultIfCurrent(job, result);
+                RefreshAiStatusLabel(appliedToCurrent ? result.StatusText : null);
+                _activeAiJob = null;
+                _pictureBox.Invalidate();
+            }
         }
         finally
         {
+            _activeAiJob = null;
             _aiCts?.Dispose();
             _aiCts = null;
+            string finalStatus = _aiStatusLabel.Text;
+            SetAiBusy(false, finalStatus);
         }
+    }
+
+    private async Task<ImageAiJobResult> ExecuteAiJobAsync(
+        ImageAiJob job,
+        CancellationToken cancellationToken,
+        Action<ImageAiJobResult>? progressCallback = null)
+    {
+        string imagePath = job.ImagePath;
+        string? model = job.ModelId;
+
+        if (job.ManualSnippets.Count > 0)
+        {
+            var baseOcr = GetBestBaseOcrForImage(imagePath);
+            var existingTranslation = GetBestSavedTranslationForImage(imagePath);
+            var (manualBlocks, detectedLanguage) = await ExtractManualOcrBlocksAsync(job.ManualSnippets, model ?? "", cancellationToken);
+            if (manualBlocks.Count == 0)
+            {
+                return new ImageAiJobResult
+                {
+                    ImagePath = imagePath,
+                    StatusText = "Manual OCR found no text",
+                    ErrorText = "No text was found inside the selected manual OCR boxes."
+                };
+            }
+
+            var mergedOcr = MergeManualBlocksIntoOcr(baseOcr, manualBlocks, detectedLanguage);
+            SaveOcrResultToCache(imagePath, model, mergedOcr);
+            if (job.WithTranslation)
+            {
+                progressCallback?.Invoke(new ImageAiJobResult
+                {
+                    ImagePath = imagePath,
+                    Ocr = mergedOcr,
+                    StatusText = $"Added {manualBlocks.Count} manual OCR box(es); translating..."
+                });
+            }
+
+            if (!job.WithTranslation)
+            {
+                return new ImageAiJobResult
+                {
+                    ImagePath = imagePath,
+                    Ocr = mergedOcr,
+                    StatusText = $"Added {manualBlocks.Count} manual OCR box(es)"
+                };
+            }
+
+            var mergedTranslation = await BuildMergedManualTranslationAsync(
+                mergedOcr,
+                existingTranslation,
+                manualBlocks,
+                job.TargetLanguage,
+                model,
+                cancellationToken);
+            if (mergedTranslation == null)
+            {
+                return new ImageAiJobResult
+                {
+                    ImagePath = imagePath,
+                    Ocr = mergedOcr,
+                    StatusText = "Translation failed",
+                    ErrorText = "Translation failed"
+                };
+            }
+
+            SaveTranslationToCache(imagePath, model, mergedOcr, mergedTranslation);
+            return new ImageAiJobResult
+            {
+                ImagePath = imagePath,
+                Ocr = mergedOcr,
+                Translation = mergedTranslation,
+                ShowSavedTranslation = true,
+                StatusText = $"Added and translated {manualBlocks.Count} manual OCR box(es)"
+            };
+        }
+
+        LlmImageTextResult? ocr = null;
+        bool usingSavedOcr = false;
+
+        if (job.WithTranslation && TryLoadSavedOcrEnvelope(imagePath, out var savedEnvelope) && savedEnvelope?.Result != null)
+        {
+            ocr = CloneOcrResult(savedEnvelope.Result);
+            if (TryBuildSavedTranslation(savedEnvelope, out var savedTranslation) &&
+                savedTranslation != null &&
+                string.Equals(
+                    NormalizeLanguageKey(savedTranslation.TargetLanguage),
+                    NormalizeLanguageKey(job.TargetLanguage),
+                    StringComparison.Ordinal))
+            {
+                return new ImageAiJobResult
+                {
+                    ImagePath = imagePath,
+                    Ocr = ocr,
+                    Translation = savedTranslation,
+                    FromSavedCache = true,
+                    ShowSavedTranslation = true,
+                    StatusText = $"Loaded saved translation ({savedTranslation.TargetLanguage})"
+                };
+            }
+
+            usingSavedOcr = true;
+        }
+
+        if (!usingSavedOcr)
+        {
+            ocr = await _llmService.ExtractImageTextAsync(imagePath, model, cancellationToken);
+            if (ocr == null)
+            {
+                return new ImageAiJobResult
+                {
+                    ImagePath = imagePath,
+                    StatusText = "OCR failed",
+                    ErrorText = "Failed to extract text from the image."
+                };
+            }
+
+            SaveOcrResultToCache(imagePath, model, ocr);
+            if (job.WithTranslation)
+            {
+                progressCallback?.Invoke(new ImageAiJobResult
+                {
+                    ImagePath = imagePath,
+                    Ocr = ocr,
+                    StatusText = $"OCR regenerated ({ocr.Blocks.Count} blocks); translating..."
+                });
+            }
+
+            if (!job.WithTranslation)
+            {
+                return new ImageAiJobResult
+                {
+                    ImagePath = imagePath,
+                    Ocr = ocr,
+                    StatusText = $"OCR regenerated ({ocr.Blocks.Count} blocks)"
+                };
+            }
+        }
+
+        if (ocr == null)
+        {
+            return new ImageAiJobResult
+            {
+                ImagePath = imagePath,
+                StatusText = "OCR failed",
+                ErrorText = "OCR failed"
+            };
+        }
+
+        var sourceBlocks = ocr.Blocks.Select(b => b.Text).Where(t => !string.IsNullOrWhiteSpace(t)).ToList();
+        if (sourceBlocks.Count == 0 && !string.IsNullOrWhiteSpace(ocr.FullText))
+            sourceBlocks.Add(ocr.FullText);
+
+        var translation = await _llmService.TranslateTextBlocksAsync(sourceBlocks, job.TargetLanguage, null, model, cancellationToken);
+        if (translation == null)
+        {
+            return new ImageAiJobResult
+            {
+                ImagePath = imagePath,
+                Ocr = ocr,
+                StatusText = "Translation failed",
+                ErrorText = "Translation failed"
+            };
+        }
+
+        SaveTranslationToCache(imagePath, model, ocr, translation);
+        return new ImageAiJobResult
+        {
+            ImagePath = imagePath,
+            Ocr = ocr,
+            Translation = translation,
+            ShowSavedTranslation = true,
+            StatusText = $"Translated to {translation.TargetLanguage}"
+        };
+    }
+
+    private bool ApplyAiJobResultIfCurrent(ImageAiJob job, ImageAiJobResult result)
+    {
+        if (!string.Equals(GetCurrentImagePath(), result.ImagePath, StringComparison.OrdinalIgnoreCase))
+        {
+            UpdateSavedCacheUiState();
+            return false;
+        }
+
+        if (!string.IsNullOrWhiteSpace(result.ErrorText))
+        {
+            if (!string.IsNullOrWhiteSpace(result.ErrorText))
+                _aiOutputBox.Text = result.ErrorText;
+            UpdateSavedCacheUiState();
+            return true;
+        }
+
+        if (result.Ocr == null)
+        {
+            UpdateSavedCacheUiState();
+            return true;
+        }
+
+        ApplyLoadedOcrToViewer(result.ImagePath, result.Ocr, result.FromSavedCache);
+        _savedTranslationForCurrentImage = result.Translation;
+        _lastTranslations = result.Translation?.Translations?.ToList() ?? new List<string>();
+
+        if (result.Translation != null)
+        {
+            ApplyTranslationsToOverlay(_lastTranslations);
+            _aiOutputBox.Text = RenderTranslatedResult(result.Ocr, result.Translation);
+            if (result.FromSavedCache)
+                _aiOutputBox.AppendText(Environment.NewLine + Environment.NewLine + "[Loaded from OCR_output cache]");
+            SetShowSavedTranslationChecked(result.ShowSavedTranslation, updatePreference: result.ShowSavedTranslation);
+            _currentOverlayFromSavedCache = result.FromSavedCache;
+        }
+        else
+        {
+            SetShowSavedTranslationChecked(false);
+            _currentOverlayFromSavedCache = result.FromSavedCache;
+        }
+
+        UpdateSavedCacheUiState();
+        return true;
     }
 
     private async Task RunViewerTaggingAsync()
@@ -2231,12 +2666,12 @@ public class ImageViewerForm : Form
             }
 
             SetAiBusy(true, "Generating tags...");
-            _aiCts = new CancellationTokenSource();
+            _tagCts = new CancellationTokenSource();
             var tags = await _llmService.GetImageTagsAsync(
                 "Analyze this image and return concise descriptive tags only. Prefer 8 to 20 tags.",
                 imagePath,
                 model,
-                _aiCts.Token);
+                _tagCts.Token);
 
             if (tags.Count == 0)
             {
@@ -2268,8 +2703,8 @@ public class ImageViewerForm : Form
         }
         finally
         {
-            _aiCts?.Dispose();
-            _aiCts = null;
+            _tagCts?.Dispose();
+            _tagCts = null;
         }
     }
 
@@ -2277,8 +2712,25 @@ public class ImageViewerForm : Form
     {
         try
         {
+            if (_activeAiJob != null)
+                RestoreManualRegionsFromAbortedJob(_activeAiJob);
+
             _aiCts?.Cancel();
-            _aiStatusLabel.Text = "Aborting...";
+            _tagCts?.Cancel();
+
+            while (_queuedAiJobs.Count > 0)
+            {
+                var job = _queuedAiJobs[0];
+                _queuedAiJobs.RemoveAt(0);
+                RestoreManualRegionsFromAbortedJob(job);
+                DecrementQueuedAiJobsForImage(job.ImagePath);
+                UnregisterQueuedManualRegions(job);
+                CleanupManualOcrSnippets(job.ManualSnippets);
+            }
+
+            UpdateManualOcrUiState();
+            RefreshAiStatusLabel("Aborting...");
+            _pictureBox.Invalidate();
         }
         catch (Exception ex)
         {
@@ -2770,8 +3222,8 @@ public class ImageViewerForm : Form
             _isDrawingManualOcrRegion = false;
             _aiOutputBox.Clear();
             _currentOverlayFromSavedCache = false;
-            if (!_aiBusy)
-                _aiStatusLabel.Text = "AI ready";
+            RestorePendingManualRegionsForCurrentImage();
+            RefreshAiStatusLabel();
         }
         
         ClearAnimationState();
@@ -2799,6 +3251,7 @@ public class ImageViewerForm : Form
             TryApplySavedOcrForCurrentImage(allowStatusUpdate: true);
             UpdateSavedCacheUiState();
             UpdateManualOcrUiState();
+            RefreshAiStatusLabel();
         }
         catch (SixLabors.ImageSharp.UnknownImageFormatException)
         {
@@ -3126,11 +3579,23 @@ public class ImageViewerForm : Form
 
     private void DrawPendingManualOcrRegions(Graphics g, RectangleF imageRect)
     {
-        if (_pendingManualOcrRegions.Count == 0 && !_isDrawingManualOcrRegion)
+        string? imagePath = GetCurrentImagePath();
+        List<RectangleF>? queuedRegions = null;
+        bool hasQueuedRegions =
+            !string.IsNullOrWhiteSpace(imagePath) &&
+            _queuedManualRegionsByImage.TryGetValue(imagePath, out queuedRegions) &&
+            queuedRegions.Count > 0;
+
+        if (_pendingManualOcrRegions.Count == 0 && !_isDrawingManualOcrRegion && !hasQueuedRegions)
             return;
 
         using var pendingFill = new SolidBrush(Color.FromArgb(90, 76, 29, 149));
         using var pendingBorder = new Pen(Color.FromArgb(240, 193, 155, 255), 1.4f)
+        {
+            DashStyle = DashStyle.Dash
+        };
+        using var queuedFill = new SolidBrush(Color.FromArgb(70, 204, 133, 32));
+        using var queuedBorder = new Pen(Color.FromArgb(240, 255, 196, 92), 1.4f)
         {
             DashStyle = DashStyle.Dash
         };
@@ -3163,6 +3628,35 @@ public class ImageViewerForm : Form
                 labelSize.Height + 2f);
             g.FillRectangle(labelBrush, labelRect);
             g.DrawString(label, labelFont, labelTextBrush, labelRect.X + 4f, labelRect.Y + 1f);
+        }
+
+        if (hasQueuedRegions && queuedRegions != null)
+        {
+            for (int i = 0; i < queuedRegions.Count; i++)
+            {
+                var region = queuedRegions[i];
+                var rect = new RectangleF(
+                    imageRect.X + (region.X * imageRect.Width),
+                    imageRect.Y + (region.Y * imageRect.Height),
+                    region.Width * imageRect.Width,
+                    region.Height * imageRect.Height);
+
+                if (rect.Width < 2f || rect.Height < 2f)
+                    continue;
+
+                g.FillRectangle(queuedFill, rect);
+                g.DrawRectangle(queuedBorder, rect.X, rect.Y, rect.Width, rect.Height);
+
+                string label = $"Queued {i + 1}";
+                var labelSize = g.MeasureString(label, labelFont);
+                var labelRect = new RectangleF(
+                    rect.X,
+                    Math.Max(imageRect.Y, rect.Y - labelSize.Height - 4f),
+                    labelSize.Width + 8f,
+                    labelSize.Height + 2f);
+                g.FillRectangle(labelBrush, labelRect);
+                g.DrawString(label, labelFont, labelTextBrush, labelRect.X + 4f, labelRect.Y + 1f);
+            }
         }
 
         if (_isDrawingManualOcrRegion &&
@@ -3386,8 +3880,7 @@ public class ImageViewerForm : Form
             if (TryGetNormalizedManualSelectionRect(_manualOcrDragStart, e.Location, out var normalizedRect))
             {
                 _pendingManualOcrRegions.Add(new ManualOcrRegion { NormalizedRect = normalizedRect });
-                if (!_aiBusy)
-                    _aiStatusLabel.Text = $"{_pendingManualOcrRegions.Count} manual OCR box(es) queued";
+                RefreshAiStatusLabel();
             }
 
             UpdateManualOcrUiState();
