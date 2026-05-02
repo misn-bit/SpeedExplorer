@@ -32,6 +32,13 @@ public class LlmVisionService
         return $"{prompt}\n\n{directive}";
     }
 
+    private static string FormatOptionalPromptLine(string label, string? value)
+    {
+        return string.IsNullOrWhiteSpace(value)
+            ? ""
+            : $"{label}: {value.Trim()}\n";
+    }
+
     /// <summary>
     /// Specialized method for getting tags from an image based on user criteria.
     /// Returns a list of tags.
@@ -194,7 +201,7 @@ public class LlmVisionService
     /// Performs OCR-like extraction with optional text blocks and normalized coordinates.
     /// Coordinates are normalized to [0..1] for image width/height.
     /// </summary>
-    public async Task<LlmImageTextResult?> ExtractImageTextAsync(string imagePath, string apiUrl, string? modelOverride = null, CancellationToken cancellationToken = default, bool useReasoning = false)
+    public async Task<LlmImageTextResult?> ExtractImageTextAsync(string imagePath, string apiUrl, string? modelOverride = null, CancellationToken cancellationToken = default, bool useReasoning = false, string? sourceLanguageHint = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var settings = AppSettings.Current;
@@ -219,6 +226,7 @@ public class LlmVisionService
 
         string userPrompt = WithReasoningDirective(
             "Extract readable text from this image.\n" +
+            FormatOptionalPromptLine("Expected source language or script", sourceLanguageHint) +
             "Return text blocks in reading order.\n" +
             "Prefer fewer complete phrase blocks instead of one block per line.\n" +
             "Output JSON with: detected_language, full_text, blocks[{text,x,y,w,h,font_size?}].",
@@ -549,7 +557,7 @@ public class LlmVisionService
         }
     }
 
-    public async Task<string?> ExtractSnippetTextAsync(string imagePath, string apiUrl, string? modelOverride = null, CancellationToken cancellationToken = default, bool useReasoning = false)
+    public async Task<string?> ExtractSnippetTextAsync(string imagePath, string apiUrl, string? modelOverride = null, CancellationToken cancellationToken = default, bool useReasoning = false, string? sourceLanguageHint = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
         string model = string.IsNullOrWhiteSpace(modelOverride) ? AppSettings.Current.LlmModelName : modelOverride;
@@ -565,6 +573,7 @@ public class LlmVisionService
         string systemPrompt = "You are to OCR the image snippet.";
         string userPrompt = WithReasoningDirective(
             "Return only the extracted text from this image snippet.\n" +
+            FormatOptionalPromptLine("Expected source language or script", sourceLanguageHint) +
             "Preserve meaningful line breaks.\n" +
             "If no readable text is present, return an empty response.",
             useReasoning);
@@ -694,6 +703,7 @@ public class LlmVisionService
         string targetLanguage,
         string apiUrl,
         string? sourceLanguage = null,
+        string? contextHint = null,
         string? modelOverride = null,
         CancellationToken cancellationToken = default,
         bool useReasoning = true)
@@ -738,6 +748,7 @@ public class LlmVisionService
         string userPrompt = WithReasoningDirective(
             $"Target language: {target}\n" +
             $"Source language hint: {(string.IsNullOrWhiteSpace(sourceLanguage) ? "unknown" : sourceLanguage)}\n" +
+            FormatOptionalPromptLine("General context hint", contextHint) +
             $"There are {cleanedBlocks.Count} input blocks.\n" +
             "Translate each numbered block.\n" +
             "The translations array must contain exactly one item per input block, in the same order.\n" +
@@ -837,6 +848,7 @@ public class LlmVisionService
         string imagePath,
         string apiUrl,
         string? sourceLanguage = null,
+        string? contextHint = null,
         string? modelOverride = null,
         CancellationToken cancellationToken = default,
         bool useReasoning = true)
@@ -882,6 +894,7 @@ public class LlmVisionService
         string userPrompt = WithReasoningDirective(
             $"Target language: {target}\n" +
             $"Source language hint: {(string.IsNullOrWhiteSpace(sourceLanguage) ? "unknown" : sourceLanguage)}\n" +
+            FormatOptionalPromptLine("General context hint", contextHint) +
             $"There are {cleanedBlocks.Count} OCR text blocks.\n" +
             "Focus on the OCR text blocks below.\n" +
             "Use the attached image only as supporting context when the OCR text is ambiguous.\n" +
@@ -977,12 +990,12 @@ public class LlmVisionService
             if (!response.IsSuccessStatusCode)
             {
                 LlmDebugLogger.LogError($"TranslateTextBlocksWithContextImage API Error {response.StatusCode}: {responseText}");
-                return await TranslateTextBlocksAsync(cleanedBlocks, targetLanguage, apiUrl, sourceLanguage, modelOverride, cancellationToken, useReasoning);
+                return await TranslateTextBlocksAsync(cleanedBlocks, targetLanguage, apiUrl, sourceLanguage, contextHint, modelOverride, cancellationToken, useReasoning);
             }
 
             using var doc = JsonDocument.Parse(responseText);
             if (!doc.RootElement.TryGetProperty("choices", out var choices) || choices.GetArrayLength() == 0)
-                return await TranslateTextBlocksAsync(cleanedBlocks, targetLanguage, apiUrl, sourceLanguage, modelOverride, cancellationToken, useReasoning);
+                return await TranslateTextBlocksAsync(cleanedBlocks, targetLanguage, apiUrl, sourceLanguage, contextHint, modelOverride, cancellationToken, useReasoning);
 
             string messageContent = LlmParsers.ExtractAssistantMessageText(
                 choices[0].GetProperty("message"),
@@ -991,7 +1004,7 @@ public class LlmVisionService
 
             var parsed = LlmParsers.ParseTranslationResult(messageContent, target);
             if (parsed == null)
-                return await TranslateTextBlocksAsync(cleanedBlocks, targetLanguage, apiUrl, sourceLanguage, modelOverride, cancellationToken, useReasoning);
+                return await TranslateTextBlocksAsync(cleanedBlocks, targetLanguage, apiUrl, sourceLanguage, contextHint, modelOverride, cancellationToken, useReasoning);
 
             parsed.Translations = NormalizeTranslationLines(parsed.Translations, parsed.TranslatedFullText, cleanedBlocks.Count);
             parsed.TranslatedFullText = BuildNormalizedTranslationFullText(parsed.Translations, parsed.TranslatedFullText);
@@ -1004,7 +1017,7 @@ public class LlmVisionService
         catch (Exception ex)
         {
             LlmDebugLogger.LogError($"TranslateTextBlocksWithContextImage failed: {ex.Message}");
-            return await TranslateTextBlocksAsync(cleanedBlocks, targetLanguage, apiUrl, sourceLanguage, modelOverride, cancellationToken, useReasoning);
+            return await TranslateTextBlocksAsync(cleanedBlocks, targetLanguage, apiUrl, sourceLanguage, contextHint, modelOverride, cancellationToken, useReasoning);
         }
     }
 
@@ -1014,7 +1027,8 @@ public class LlmVisionService
         string apiUrl,
         string? modelOverride = null,
         CancellationToken cancellationToken = default,
-        bool useReasoning = true)
+        bool useReasoning = true,
+        string? contextHint = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (string.IsNullOrWhiteSpace(sourceText))
@@ -1033,7 +1047,9 @@ public class LlmVisionService
 
         string systemPrompt = "You translate text accurately and naturally. Return only the translation.";
         string userPrompt = WithReasoningDirective(
-            $"Translate this text to {target}:{Environment.NewLine}{Environment.NewLine}{sourceText}",
+            $"Translate this text to {target}:{Environment.NewLine}" +
+            FormatOptionalPromptLine("General context hint", contextHint) +
+            $"{Environment.NewLine}{sourceText}",
             useReasoning);
 
         var messages = new[]

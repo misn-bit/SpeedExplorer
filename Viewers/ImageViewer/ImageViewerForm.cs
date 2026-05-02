@@ -72,6 +72,8 @@ public class ImageViewerForm : Form
     private readonly RichTextBox _aiOutputBox;
     private readonly Label _aiStatusLabel;
     private readonly TextBox _targetLanguageBox;
+    private readonly TextBox _sourceLanguageHintBox;
+    private readonly TextBox _translationContextHintBox;
     private readonly CheckBox _manualMaxEffortCheck;
     private readonly CheckBox _ocrReasoningCheck;
     private readonly CheckBox _translationReasoningCheck;
@@ -161,6 +163,8 @@ public class ImageViewerForm : Form
         public bool UseOcrReasoning { get; set; }
         public bool UseTranslationReasoning { get; set; }
         public string TargetLanguage { get; set; } = "English";
+        public string SourceLanguageHint { get; set; } = "";
+        public string TranslationContextHint { get; set; } = "";
         public string? ModelId { get; set; }
         public List<ManualOcrSnippet> ManualSnippets { get; set; } = new();
     }
@@ -393,6 +397,61 @@ public class ImageViewerForm : Form
         langRow.Controls.Add(langLabel);
         langRow.Controls.Add(_targetLanguageBox);
 
+        var sourceHintRow = new Panel
+        {
+            Dock = DockStyle.Top,
+            Height = Scale(28),
+            BackColor = Color.Transparent
+        };
+        var sourceHintLabel = new Label
+        {
+            AutoSize = true,
+            Text = "Source hint:",
+            ForeColor = Color.FromArgb(220, 220, 220),
+            Font = new Font("Segoe UI", 8),
+            Location = new Point(Scale(2), Scale(6))
+        };
+        _sourceLanguageHintBox = new TextBox
+        {
+            BorderStyle = BorderStyle.FixedSingle,
+            BackColor = Color.FromArgb(45, 45, 45),
+            ForeColor = Color.Gainsboro,
+            Font = new Font("Segoe UI", 8),
+            Location = new Point(Scale(86), Scale(3)),
+            Width = Scale(248)
+        };
+        sourceHintRow.Controls.Add(sourceHintLabel);
+        sourceHintRow.Controls.Add(_sourceLanguageHintBox);
+
+        var contextHintRow = new Panel
+        {
+            Dock = DockStyle.Top,
+            Height = Scale(46),
+            BackColor = Color.Transparent
+        };
+        var contextHintLabel = new Label
+        {
+            AutoSize = true,
+            Text = "Context:",
+            ForeColor = Color.FromArgb(220, 220, 220),
+            Font = new Font("Segoe UI", 8),
+            Location = new Point(Scale(2), Scale(6))
+        };
+        _translationContextHintBox = new TextBox
+        {
+            BorderStyle = BorderStyle.FixedSingle,
+            BackColor = Color.FromArgb(45, 45, 45),
+            ForeColor = Color.Gainsboro,
+            Font = new Font("Segoe UI", 8),
+            Location = new Point(Scale(86), Scale(3)),
+            Width = Scale(248),
+            Height = Scale(38),
+            Multiline = true,
+            ScrollBars = ScrollBars.Vertical
+        };
+        contextHintRow.Controls.Add(contextHintLabel);
+        contextHintRow.Controls.Add(_translationContextHintBox);
+
         var manualModeRow = new FlowLayoutPanel
         {
             Dock = DockStyle.Top,
@@ -558,6 +617,8 @@ public class ImageViewerForm : Form
         _aiPanel.Controls.Add(aiToolsRow);
         _aiPanel.Controls.Add(reasoningRow);
         _aiPanel.Controls.Add(manualModeRow);
+        _aiPanel.Controls.Add(contextHintRow);
+        _aiPanel.Controls.Add(sourceHintRow);
         _aiPanel.Controls.Add(langRow);
         _aiPanel.Controls.Add(aiActionRow);
 
@@ -712,8 +773,7 @@ public class ImageViewerForm : Form
 
     protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
     {
-        // Do not trigger viewer hotkeys while target-language input is focused.
-        if (_targetLanguageBox.Focused)
+        if (IsTextInputFocused())
             return base.ProcessCmdKey(ref msg, keyData);
 
         // Handle specific keys and combinations
@@ -809,6 +869,19 @@ public class ImageViewerForm : Form
         }
 
         return base.ProcessCmdKey(ref msg, keyData);
+    }
+
+    private bool IsTextInputFocused()
+    {
+        if (_targetLanguageBox.Focused ||
+            _sourceLanguageHintBox.Focused ||
+            _translationContextHintBox.Focused ||
+            _aiOutputBox.Focused)
+        {
+            return true;
+        }
+
+        return ActiveControl is TextBoxBase or ComboBox or RichTextBox;
     }
 
 
@@ -1173,6 +1246,8 @@ public class ImageViewerForm : Form
         _translateBtn.Enabled = _currentImage != null;
         _tagBtn.Enabled = !busy;
         _targetLanguageBox.Enabled = _currentImage != null;
+        _sourceLanguageHintBox.Enabled = _currentImage != null;
+        _translationContextHintBox.Enabled = _currentImage != null;
         _ocrReasoningCheck.Enabled = _currentImage != null;
         _translationReasoningCheck.Enabled = _currentImage != null;
         _abortBtn.Visible = busy;
@@ -2272,6 +2347,7 @@ public class ImageViewerForm : Form
         IReadOnlyList<ManualOcrSnippet> snippets,
         string model,
         bool useOcrReasoning,
+        string sourceLanguageHint,
         CancellationToken cancellationToken)
     {
         var blocks = new List<LlmImageTextBlock>(snippets.Count);
@@ -2281,7 +2357,7 @@ public class ImageViewerForm : Form
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            string text = (await _llmService.ExtractSnippetTextAsync(snippets[i].TempPath, model, cancellationToken, useReasoning: useOcrReasoning))?.Trim() ?? "";
+            string text = (await _llmService.ExtractSnippetTextAsync(snippets[i].TempPath, model, cancellationToken, useReasoning: useOcrReasoning, sourceLanguageHint: sourceLanguageHint))?.Trim() ?? "";
             if (string.IsNullOrWhiteSpace(text))
                 continue;
 
@@ -2319,6 +2395,8 @@ public class ImageViewerForm : Form
         LlmTextTranslationResult? existingTranslation,
         IReadOnlyList<LlmImageTextBlock> manualBlocks,
         string targetLanguage,
+        string sourceLanguageHint,
+        string translationContextHint,
         bool useMaximumEffortManualTranslation,
         bool useTranslationReasoning,
         string? model,
@@ -2344,7 +2422,8 @@ public class ImageViewerForm : Form
                 allTexts,
                 targetLanguage,
                 imagePath,
-                string.IsNullOrWhiteSpace(mergedOcr.DetectedLanguage) ? null : mergedOcr.DetectedLanguage,
+                GetTranslationSourceLanguageHint(sourceLanguageHint, mergedOcr.DetectedLanguage),
+                translationContextHint,
                 model,
                 cancellationToken,
                 useReasoning: useTranslationReasoning);
@@ -2358,7 +2437,7 @@ public class ImageViewerForm : Form
 
         if (canAppendToSavedTranslation && manualTexts.Count > 0)
         {
-            var translatedManual = await TranslateManualBlocksAsync(manualTexts, targetLanguage, model, useTranslationReasoning, cancellationToken);
+            var translatedManual = await TranslateManualBlocksAsync(manualTexts, targetLanguage, translationContextHint, model, useTranslationReasoning, cancellationToken);
             if (translatedManual == null)
                 return null;
 
@@ -2372,7 +2451,7 @@ public class ImageViewerForm : Form
             };
         }
 
-        var translatedAll = await TranslateManualBlocksAsync(allTexts, targetLanguage, model, useTranslationReasoning, cancellationToken);
+        var translatedAll = await TranslateManualBlocksAsync(allTexts, targetLanguage, translationContextHint, model, useTranslationReasoning, cancellationToken);
         if (translatedAll == null)
             return null;
 
@@ -2387,6 +2466,7 @@ public class ImageViewerForm : Form
     private async Task<List<string>?> TranslateManualBlocksAsync(
         IReadOnlyList<string> sourceBlocks,
         string targetLanguage,
+        string translationContextHint,
         string? model,
         bool useTranslationReasoning,
         CancellationToken cancellationToken)
@@ -2402,7 +2482,7 @@ public class ImageViewerForm : Form
                 continue;
             }
 
-            string? translated = await _llmService.TranslateSimpleTextAsync(source, targetLanguage, model, cancellationToken, useReasoning: useTranslationReasoning);
+            string? translated = await _llmService.TranslateSimpleTextAsync(source, targetLanguage, model, cancellationToken, useReasoning: useTranslationReasoning, contextHint: translationContextHint);
             if (translated == null)
                 return null;
 
@@ -2410,6 +2490,15 @@ public class ImageViewerForm : Form
         }
 
         return translations;
+    }
+
+    private static string? GetTranslationSourceLanguageHint(string? userHint, string? detectedLanguage)
+    {
+        if (!string.IsNullOrWhiteSpace(userHint))
+            return userHint.Trim();
+        if (!string.IsNullOrWhiteSpace(detectedLanguage))
+            return detectedLanguage.Trim();
+        return null;
     }
 
     private async Task RunViewerOcrAsync(bool withTranslation)
@@ -2458,6 +2547,8 @@ public class ImageViewerForm : Form
                 UseOcrReasoning = _ocrReasoningCheck.Checked,
                 UseTranslationReasoning = _translationReasoningCheck.Checked,
                 TargetLanguage = targetLanguage,
+                SourceLanguageHint = withTranslation ? _sourceLanguageHintBox.Text.Trim() : "",
+                TranslationContextHint = withTranslation ? _translationContextHintBox.Text.Trim() : "",
                 ModelId = model,
                 ManualSnippets = manualSnippets ?? new List<ManualOcrSnippet>()
             };
@@ -2615,7 +2706,7 @@ public class ImageViewerForm : Form
         {
             var baseOcr = GetBestBaseOcrForImage(imagePath);
             var existingTranslation = GetBestSavedTranslationForImage(imagePath);
-            var (manualBlocks, detectedLanguage) = await ExtractManualOcrBlocksAsync(job.ManualSnippets, model ?? "", job.UseOcrReasoning, cancellationToken);
+            var (manualBlocks, detectedLanguage) = await ExtractManualOcrBlocksAsync(job.ManualSnippets, model ?? "", job.UseOcrReasoning, job.SourceLanguageHint, cancellationToken);
             if (manualBlocks.Count == 0)
             {
                 return new ImageAiJobResult
@@ -2654,6 +2745,8 @@ public class ImageViewerForm : Form
                 existingTranslation,
                 manualBlocks,
                 job.TargetLanguage,
+                job.SourceLanguageHint,
+                job.TranslationContextHint,
                 job.UseMaximumEffortManualTranslation,
                 job.UseTranslationReasoning,
                 model,
@@ -2710,7 +2803,7 @@ public class ImageViewerForm : Form
 
         if (!usingSavedOcr)
         {
-            ocr = await _llmService.ExtractImageTextAsync(imagePath, model, cancellationToken, useReasoning: job.UseOcrReasoning);
+            ocr = await _llmService.ExtractImageTextAsync(imagePath, model, cancellationToken, useReasoning: job.UseOcrReasoning, sourceLanguageHint: job.SourceLanguageHint);
             if (ocr == null)
             {
                 return new ImageAiJobResult
@@ -2762,11 +2855,19 @@ public class ImageViewerForm : Form
                 sourceBlocks,
                 job.TargetLanguage,
                 imagePath,
-                string.IsNullOrWhiteSpace(ocr.DetectedLanguage) ? null : ocr.DetectedLanguage,
+                GetTranslationSourceLanguageHint(job.SourceLanguageHint, ocr.DetectedLanguage),
+                job.TranslationContextHint,
                 model,
                 cancellationToken,
                 useReasoning: job.UseTranslationReasoning)
-            : await _llmService.TranslateTextBlocksAsync(sourceBlocks, job.TargetLanguage, null, model, cancellationToken, useReasoning: job.UseTranslationReasoning);
+            : await _llmService.TranslateTextBlocksAsync(
+                sourceBlocks,
+                job.TargetLanguage,
+                GetTranslationSourceLanguageHint(job.SourceLanguageHint, ocr.DetectedLanguage),
+                job.TranslationContextHint,
+                model,
+                cancellationToken,
+                useReasoning: job.UseTranslationReasoning);
         if (translation == null)
         {
             return new ImageAiJobResult
