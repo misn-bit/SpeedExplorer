@@ -134,12 +134,27 @@ public static class LlmDebugLogger
         catch
         {
             // Fallback: decode basic Unicode escapes in plain text payloads.
-            return Regex.Replace(input, @"\\u([0-9a-fA-F]{4})", m =>
-            {
-                int code = Convert.ToInt32(m.Groups[1].Value, 16);
-                return char.ConvertFromUtf32(code);
-            });
+            return DecodeUnicodeEscapesForLog(input);
         }
+    }
+
+    private static string DecodeUnicodeEscapesForLog(string input)
+    {
+        return Regex.Replace(input, @"\\u([0-9a-fA-F]{4})(?:\\u([0-9a-fA-F]{4}))?", m =>
+        {
+            int first = Convert.ToInt32(m.Groups[1].Value, 16);
+            if (char.IsHighSurrogate((char)first) && m.Groups[2].Success)
+            {
+                int second = Convert.ToInt32(m.Groups[2].Value, 16);
+                if (char.IsLowSurrogate((char)second))
+                    return char.ConvertFromUtf32(char.ConvertToUtf32((char)first, (char)second));
+            }
+
+            if (char.IsSurrogate((char)first))
+                return m.Value;
+
+            return char.ConvertFromUtf32(first);
+        });
     }
 
     private static string GetAppDirectory()
