@@ -92,6 +92,8 @@ public class AppSettings
     public int ImageViewerHeight { get; set; } = 900;
     public bool ImageViewerMaximized { get; set; } = false;
     public bool ImageViewerShowSavedOcr { get; set; } = true;
+    public bool ImageViewerOcrReasoningEnabled { get; set; } = false;
+    public bool ImageViewerTranslationReasoningEnabled { get; set; } = true;
 
     public System.Collections.Generic.List<string> PinnedPaths { get; set; } = new();
     public System.Collections.Generic.List<string> SidebarBlockOrder { get; set; } = new()

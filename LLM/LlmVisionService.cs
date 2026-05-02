@@ -24,6 +24,14 @@ public class LlmVisionService
         _modelManager = modelManager;
     }
 
+    private static string WithReasoningDirective(string prompt, bool useReasoning)
+    {
+        string directive = useReasoning
+            ? "Reasoning mode: enabled. If the requested JSON schema contains a thought field, use it for brief reasoning before the final answer fields."
+            : "Reasoning mode: disabled. Answer directly in the requested format.";
+        return $"{prompt}\n\n{directive}";
+    }
+
     /// <summary>
     /// Specialized method for getting tags from an image based on user criteria.
     /// Returns a list of tags.
@@ -186,7 +194,7 @@ public class LlmVisionService
     /// Performs OCR-like extraction with optional text blocks and normalized coordinates.
     /// Coordinates are normalized to [0..1] for image width/height.
     /// </summary>
-    public async Task<LlmImageTextResult?> ExtractImageTextAsync(string imagePath, string apiUrl, string? modelOverride = null, CancellationToken cancellationToken = default)
+    public async Task<LlmImageTextResult?> ExtractImageTextAsync(string imagePath, string apiUrl, string? modelOverride = null, CancellationToken cancellationToken = default, bool useReasoning = false)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var settings = AppSettings.Current;
@@ -209,11 +217,12 @@ public class LlmVisionService
             "Be conservative with block count: merge nearby lines from the same text region and avoid duplicate/overlapping blocks. " +
             "Return blocks with coordinates x,y,w,h and optional font_size.";
 
-        string userPrompt =
+        string userPrompt = WithReasoningDirective(
             "Extract readable text from this image.\n" +
             "Return text blocks in reading order.\n" +
             "Prefer fewer complete phrase blocks instead of one block per line.\n" +
-            "Output JSON with: detected_language, full_text, blocks[{text,x,y,w,h,font_size?}].";
+            "Output JSON with: detected_language, full_text, blocks[{text,x,y,w,h,font_size?}].",
+            useReasoning);
 
         var schema = new
         {
@@ -292,7 +301,8 @@ public class LlmVisionService
                 "Use conservative block count, merge nearby lines from the same region, and avoid duplicate/overlapping blocks. " +
                 "If coordinates are uncertain, return blocks as empty array.";
             string fallbackUserPrompt =
-                userPrompt + "\nIf JSON is not possible, return plain extracted text only.";
+                userPrompt +
+                "\nIf JSON is not possible, return plain extracted text only.";
 
             var attempts = new List<(long MaxPixels, int Quality)>
             {
@@ -382,7 +392,7 @@ public class LlmVisionService
 
                     string fallbackMessage = LlmParsers.ExtractAssistantMessageText(
                         fallbackChoices[0].GetProperty("message"),
-                        allowReasoningFallback: true);
+                        allowReasoningFallback: useReasoning);
                     LlmDebugLogger.LogResponse(fallbackMessage);
 
                     try
@@ -508,7 +518,7 @@ public class LlmVisionService
 
             string messageContent = LlmParsers.ExtractAssistantMessageText(
                 choices[0].GetProperty("message"),
-                allowReasoningFallback: true);
+                allowReasoningFallback: useReasoning);
             LlmDebugLogger.LogResponse(messageContent);
             try
             {
@@ -539,7 +549,7 @@ public class LlmVisionService
         }
     }
 
-    public async Task<string?> ExtractSnippetTextAsync(string imagePath, string apiUrl, string? modelOverride = null, CancellationToken cancellationToken = default)
+    public async Task<string?> ExtractSnippetTextAsync(string imagePath, string apiUrl, string? modelOverride = null, CancellationToken cancellationToken = default, bool useReasoning = false)
     {
         cancellationToken.ThrowIfCancellationRequested();
         string model = string.IsNullOrWhiteSpace(modelOverride) ? AppSettings.Current.LlmModelName : modelOverride;
@@ -553,10 +563,11 @@ public class LlmVisionService
         }
 
         string systemPrompt = "You are to OCR the image snippet.";
-        string userPrompt =
+        string userPrompt = WithReasoningDirective(
             "Return only the extracted text from this image snippet.\n" +
             "Preserve meaningful line breaks.\n" +
-            "If no readable text is present, return an empty response.";
+            "If no readable text is present, return an empty response.",
+            useReasoning);
 
         (string Json, List<LlmImageStats> Stats) BuildRequest(bool usePreparedJpeg)
         {
@@ -646,7 +657,7 @@ public class LlmVisionService
 
             string messageContent = LlmParsers.ExtractAssistantMessageText(
                 choices[0].GetProperty("message"),
-                allowReasoningFallback: true);
+                allowReasoningFallback: useReasoning);
             LlmDebugLogger.LogResponse(messageContent);
             return NormalizePlainTextResponse(messageContent);
         }
@@ -684,7 +695,8 @@ public class LlmVisionService
         string apiUrl,
         string? sourceLanguage = null,
         string? modelOverride = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool useReasoning = true)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var settings = AppSettings.Current;
@@ -723,7 +735,7 @@ public class LlmVisionService
             numbered.AppendLine($"{i + 1}. {cleanedBlocks[i]}");
         }
 
-        string userPrompt =
+        string userPrompt = WithReasoningDirective(
             $"Target language: {target}\n" +
             $"Source language hint: {(string.IsNullOrWhiteSpace(sourceLanguage) ? "unknown" : sourceLanguage)}\n" +
             $"There are {cleanedBlocks.Count} input blocks.\n" +
@@ -731,7 +743,8 @@ public class LlmVisionService
             "The translations array must contain exactly one item per input block, in the same order.\n" +
             "If one block translates to multiple lines, keep those lines inside the same array string using \\n.\n" +
             "Input blocks:\n" +
-            numbered.ToString();
+            numbered.ToString(),
+            useReasoning);
 
         var schema = new
         {
@@ -745,7 +758,6 @@ public class LlmVisionService
                     type = "object",
                     properties = new
                     {
-                        translated_full_text = new { type = "string" },
                         translations = new
                         {
                             type = "array",
@@ -754,7 +766,7 @@ public class LlmVisionService
                             items = new { type = "string" }
                         }
                     },
-                    required = new[] { "translated_full_text", "translations" },
+                    required = new[] { "translations" },
                     additionalProperties = false
                 }
             }
@@ -796,7 +808,7 @@ public class LlmVisionService
 
             string messageContent = LlmParsers.ExtractAssistantMessageText(
                 choices[0].GetProperty("message"),
-                allowReasoningFallback: true);
+                allowReasoningFallback: useReasoning);
             LlmDebugLogger.LogResponse(messageContent);
 
             var parsed = LlmParsers.ParseTranslationResult(messageContent, target);
@@ -819,12 +831,190 @@ public class LlmVisionService
         }
     }
 
+    public async Task<LlmTextTranslationResult?> TranslateTextBlocksWithContextImageAsync(
+        IReadOnlyList<string> sourceBlocks,
+        string targetLanguage,
+        string imagePath,
+        string apiUrl,
+        string? sourceLanguage = null,
+        string? modelOverride = null,
+        CancellationToken cancellationToken = default,
+        bool useReasoning = true)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var settings = AppSettings.Current;
+        string model = string.IsNullOrWhiteSpace(modelOverride) ? settings.LlmModelName : modelOverride;
+        string requestUrl = LlmModelManager.GetCompletionsApiUrl(string.IsNullOrWhiteSpace(apiUrl) ? settings.LlmApiUrl : apiUrl, null);
+        string target = string.IsNullOrWhiteSpace(targetLanguage) ? "English" : targetLanguage.Trim();
+        int translationMaxTokens = Math.Max(settings.LlmMaxTokens, 5000);
+        if (translationMaxTokens < 256) translationMaxTokens = 256;
+        int translationTimeoutSeconds = LlmModelManager.ComputeTranslationTimeoutSeconds(translationMaxTokens);
+
+        var cleanedBlocks = sourceBlocks?
+            .Select(b => b?.Trim() ?? "")
+            .Where(b => !string.IsNullOrWhiteSpace(b))
+            .ToList() ?? new List<string>();
+
+        if (cleanedBlocks.Count == 0)
+        {
+            return new LlmTextTranslationResult
+            {
+                TargetLanguage = target,
+                TranslatedFullText = "",
+                Translations = new List<string>()
+            };
+        }
+
+        string systemPrompt =
+            "You are a translation engine. Return strict JSON only. " +
+            "The OCR text blocks are the primary source of truth. " +
+            "The attached image is for context clues only, such as ambiguous names or scene context. " +
+            "Do not replace, invent, expand, or omit text based on what you think you see in the image. " +
+            "Translate each input text block into the requested target language. " +
+            "Preserve order exactly and return exactly one string in the translations array for each input block. " +
+            "If a single block needs multiple translated lines, keep them inside that one string using line breaks, not separate array entries." +
+            (useReasoning ? " Include a concise thought field explaining translation choices before the final translation fields." : "");
+
+        var numbered = new StringBuilder();
+        for (int i = 0; i < cleanedBlocks.Count; i++)
+            numbered.AppendLine($"{i + 1}. {cleanedBlocks[i]}");
+
+        string userPrompt = WithReasoningDirective(
+            $"Target language: {target}\n" +
+            $"Source language hint: {(string.IsNullOrWhiteSpace(sourceLanguage) ? "unknown" : sourceLanguage)}\n" +
+            $"There are {cleanedBlocks.Count} OCR text blocks.\n" +
+            "Focus on the OCR text blocks below.\n" +
+            "Use the attached image only as supporting context when the OCR text is ambiguous.\n" +
+            "Do not translate text you only think you see in the image if it is not present in the OCR blocks.\n" +
+            "Return exactly one translation item per OCR block, in the same order.\n" +
+            "If one block translates to multiple lines, keep those lines inside the same array string using \\n.\n" +
+            "OCR text blocks:\n" +
+            numbered.ToString(),
+            useReasoning);
+
+        var properties = new Dictionary<string, object>
+        {
+            {
+                "translations", new
+                {
+                    type = "array",
+                    minItems = cleanedBlocks.Count,
+                    maxItems = cleanedBlocks.Count,
+                    items = new { type = "string" }
+                }
+            }
+        };
+        var required = new List<string> { "translations" };
+        if (useReasoning)
+        {
+            properties = new Dictionary<string, object>
+            {
+                { "thought", new { type = "string" } },
+                {
+                    "translations", new
+                    {
+                        type = "array",
+                        minItems = cleanedBlocks.Count,
+                        maxItems = cleanedBlocks.Count,
+                        items = new { type = "string" }
+                    }
+                }
+            };
+            required.Insert(0, "thought");
+        }
+
+        var schema = new
+        {
+            type = "json_schema",
+            json_schema = new
+            {
+                name = "translated_text_blocks_with_context",
+                strict = true,
+                schema = new
+                {
+                    type = "object",
+                    properties,
+                    required = required.ToArray(),
+                    additionalProperties = false
+                }
+            }
+        };
+
+        var (imageBytes, imageStats) = LlmImageProcessor.PrepareImageForVision(imagePath, LlmImageProcessor.GetConfiguredVisionMaxPixels(), 85);
+        string base64 = Convert.ToBase64String(imageBytes);
+        var contentList = new List<object>
+        {
+            new { type = "text", text = userPrompt },
+            new { type = "image_url", image_url = new { url = $"data:image/jpeg;base64,{base64}" } }
+        };
+
+        var messages = new[]
+        {
+            new { role = "system", content = (object)systemPrompt },
+            new { role = "user", content = (object)contentList }
+        };
+
+        var requestBody = new
+        {
+            model = model,
+            messages = messages,
+            response_format = schema,
+            stream = false
+        };
+
+        string requestJson = JsonSerializer.Serialize(requestBody, new JsonSerializerOptions { WriteIndented = true });
+        LlmDebugLogger.LogRequest(Path.GetDirectoryName(imagePath) ?? "", userPrompt, systemPrompt, requestJson, new[] { imagePath }, new[] { imageStats });
+
+        try
+        {
+            LlmDebugLogger.LogExecution($"TranslateTextBlocksWithContextImage endpoint: {requestUrl} | model: {model} | vision: true | timeout: {translationTimeoutSeconds}s");
+            using var content = new StringContent(requestJson, Encoding.UTF8, "application/json");
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            cts.CancelAfter(TimeSpan.FromSeconds(translationTimeoutSeconds));
+            var response = await LlmModelManager.HttpClient.PostAsync(requestUrl, content, cts.Token);
+            var responseText = await response.Content.ReadAsStringAsync();
+
+            if (!response.IsSuccessStatusCode)
+            {
+                LlmDebugLogger.LogError($"TranslateTextBlocksWithContextImage API Error {response.StatusCode}: {responseText}");
+                return await TranslateTextBlocksAsync(cleanedBlocks, targetLanguage, apiUrl, sourceLanguage, modelOverride, cancellationToken, useReasoning);
+            }
+
+            using var doc = JsonDocument.Parse(responseText);
+            if (!doc.RootElement.TryGetProperty("choices", out var choices) || choices.GetArrayLength() == 0)
+                return await TranslateTextBlocksAsync(cleanedBlocks, targetLanguage, apiUrl, sourceLanguage, modelOverride, cancellationToken, useReasoning);
+
+            string messageContent = LlmParsers.ExtractAssistantMessageText(
+                choices[0].GetProperty("message"),
+                allowReasoningFallback: useReasoning);
+            LlmDebugLogger.LogResponse(messageContent);
+
+            var parsed = LlmParsers.ParseTranslationResult(messageContent, target);
+            if (parsed == null)
+                return await TranslateTextBlocksAsync(cleanedBlocks, targetLanguage, apiUrl, sourceLanguage, modelOverride, cancellationToken, useReasoning);
+
+            parsed.Translations = NormalizeTranslationLines(parsed.Translations, parsed.TranslatedFullText, cleanedBlocks.Count);
+            parsed.TranslatedFullText = BuildNormalizedTranslationFullText(parsed.Translations, parsed.TranslatedFullText);
+            return parsed;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            LlmDebugLogger.LogError($"TranslateTextBlocksWithContextImage failed: {ex.Message}");
+            return await TranslateTextBlocksAsync(cleanedBlocks, targetLanguage, apiUrl, sourceLanguage, modelOverride, cancellationToken, useReasoning);
+        }
+    }
+
     public async Task<string?> TranslateSimpleTextAsync(
         string sourceText,
         string targetLanguage,
         string apiUrl,
         string? modelOverride = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool useReasoning = true)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (string.IsNullOrWhiteSpace(sourceText))
@@ -842,7 +1032,9 @@ public class LlmVisionService
         }
 
         string systemPrompt = "You translate text accurately and naturally. Return only the translation.";
-        string userPrompt = $"Translate this text to {target}:{Environment.NewLine}{Environment.NewLine}{sourceText}";
+        string userPrompt = WithReasoningDirective(
+            $"Translate this text to {target}:{Environment.NewLine}{Environment.NewLine}{sourceText}",
+            useReasoning);
 
         var messages = new[]
         {
@@ -893,7 +1085,7 @@ public class LlmVisionService
 
             string messageContent = LlmParsers.ExtractAssistantMessageText(
                 choices[0].GetProperty("message"),
-                allowReasoningFallback: true);
+                allowReasoningFallback: useReasoning);
             LlmDebugLogger.LogResponse(messageContent);
             return NormalizePlainTextResponse(messageContent);
         }

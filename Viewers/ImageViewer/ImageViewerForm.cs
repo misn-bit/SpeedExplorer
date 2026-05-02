@@ -72,6 +72,9 @@ public class ImageViewerForm : Form
     private readonly RichTextBox _aiOutputBox;
     private readonly Label _aiStatusLabel;
     private readonly TextBox _targetLanguageBox;
+    private readonly CheckBox _manualMaxEffortCheck;
+    private readonly CheckBox _ocrReasoningCheck;
+    private readonly CheckBox _translationReasoningCheck;
     private readonly CheckBox _overlayToggle;
     private readonly CheckBox _showSavedOcrCheck;
     private readonly CheckBox _showSavedTranslationCheck;
@@ -89,6 +92,7 @@ public class ImageViewerForm : Form
     private readonly Button _clearManualOcrBoxesBtn;
     private readonly Button _tagBtn;
     private readonly Button _clearOverlayBtn;
+    private readonly Button _deleteSavedTranslationBtn;
     private readonly Button _copyResultBtn;
     private readonly Button _abortBtn;
     private readonly Button _openSavedOcrFileBtn;
@@ -153,6 +157,9 @@ public class ImageViewerForm : Form
     {
         public string ImagePath { get; set; } = "";
         public bool WithTranslation { get; set; }
+        public bool UseMaximumEffortManualTranslation { get; set; }
+        public bool UseOcrReasoning { get; set; }
+        public bool UseTranslationReasoning { get; set; }
         public string TargetLanguage { get; set; } = "English";
         public string? ModelId { get; set; }
         public List<ManualOcrSnippet> ManualSnippets { get; set; } = new();
@@ -386,6 +393,60 @@ public class ImageViewerForm : Form
         langRow.Controls.Add(langLabel);
         langRow.Controls.Add(_targetLanguageBox);
 
+        var manualModeRow = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            Height = Scale(24),
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false,
+            BackColor = Color.Transparent,
+            Margin = Padding.Empty,
+            Padding = Padding.Empty
+        };
+        _manualMaxEffortCheck = new CheckBox
+        {
+            AutoSize = true,
+            Text = "Max effort translate",
+            ForeColor = ForeColor_Dark,
+            Font = new Font("Segoe UI", 8),
+            BackColor = Color.Transparent,
+            Margin = new Padding(0, Scale(3), 0, 0)
+        };
+        manualModeRow.Controls.Add(_manualMaxEffortCheck);
+
+        var reasoningRow = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            Height = Scale(24),
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false,
+            BackColor = Color.Transparent,
+            Margin = Padding.Empty,
+            Padding = Padding.Empty
+        };
+        _ocrReasoningCheck = new CheckBox
+        {
+            AutoSize = true,
+            Text = "OCR reasoning",
+            Checked = _settings.ImageViewerOcrReasoningEnabled,
+            ForeColor = ForeColor_Dark,
+            Font = new Font("Segoe UI", 8),
+            BackColor = Color.Transparent,
+            Margin = new Padding(0, Scale(3), Scale(12), 0)
+        };
+        _translationReasoningCheck = new CheckBox
+        {
+            AutoSize = true,
+            Text = "Translation reasoning",
+            Checked = _settings.ImageViewerTranslationReasoningEnabled,
+            ForeColor = ForeColor_Dark,
+            Font = new Font("Segoe UI", 8),
+            BackColor = Color.Transparent,
+            Margin = new Padding(0, Scale(3), 0, 0)
+        };
+        reasoningRow.Controls.Add(_ocrReasoningCheck);
+        reasoningRow.Controls.Add(_translationReasoningCheck);
+
         var aiToolsRow = new FlowLayoutPanel
         {
             Dock = DockStyle.Top,
@@ -459,9 +520,11 @@ public class ImageViewerForm : Form
             Margin = Padding.Empty,
             Padding = Padding.Empty
         };
-        _openSavedOcrFileBtn = CreateButton("Show File", Scale(74));
-        _clearOverlayBtn = CreateButton("Delete Saved OCR", Scale(136));
+        _openSavedOcrFileBtn = CreateButton("Show", Scale(54));
+        _deleteSavedTranslationBtn = CreateButton("Delete Translation", Scale(118));
+        _clearOverlayBtn = CreateButton("Delete OCR", Scale(104));
         savedActionRow.Controls.Add(_openSavedOcrFileBtn);
+        savedActionRow.Controls.Add(_deleteSavedTranslationBtn);
         savedActionRow.Controls.Add(_clearOverlayBtn);
 
         _aiStatusLabel = new Label
@@ -493,6 +556,8 @@ public class ImageViewerForm : Form
         _aiPanel.Controls.Add(savedToggleRow);
         _aiPanel.Controls.Add(_aiStatusLabel);
         _aiPanel.Controls.Add(aiToolsRow);
+        _aiPanel.Controls.Add(reasoningRow);
+        _aiPanel.Controls.Add(manualModeRow);
         _aiPanel.Controls.Add(langRow);
         _aiPanel.Controls.Add(aiActionRow);
 
@@ -504,7 +569,18 @@ public class ImageViewerForm : Form
         _overlayToggle.CheckedChanged += (s, e) => _pictureBox.Invalidate();
         _showSavedOcrCheck.CheckedChanged += (s, e) => OnShowSavedOcrToggled();
         _showSavedTranslationCheck.CheckedChanged += (s, e) => OnShowSavedTranslationToggled();
+        _ocrReasoningCheck.CheckedChanged += (s, e) =>
+        {
+            _settings.ImageViewerOcrReasoningEnabled = _ocrReasoningCheck.Checked;
+            _settings.Save();
+        };
+        _translationReasoningCheck.CheckedChanged += (s, e) =>
+        {
+            _settings.ImageViewerTranslationReasoningEnabled = _translationReasoningCheck.Checked;
+            _settings.Save();
+        };
         _clearOverlayBtn.Click += (s, e) => DeleteSavedOcrForCurrentImage();
+        _deleteSavedTranslationBtn.Click += (s, e) => DeleteSavedTranslationForCurrentImage();
         _openSavedOcrFileBtn.Click += (s, e) => OpenSavedOcrFileForCurrentImage();
         _copyResultBtn.Click += (s, e) =>
         {
@@ -1097,11 +1173,14 @@ public class ImageViewerForm : Form
         _translateBtn.Enabled = _currentImage != null;
         _tagBtn.Enabled = !busy;
         _targetLanguageBox.Enabled = _currentImage != null;
+        _ocrReasoningCheck.Enabled = _currentImage != null;
+        _translationReasoningCheck.Enabled = _currentImage != null;
         _abortBtn.Visible = busy;
         _overlayToggle.Enabled = !busy;
         _showSavedOcrCheck.Enabled = !busy;
         _showSavedTranslationCheck.Enabled = !busy;
         _clearOverlayBtn.Enabled = !busy;
+        _deleteSavedTranslationBtn.Enabled = !busy;
         _openSavedOcrFileBtn.Enabled = !busy;
         _copyResultBtn.Enabled = !busy;
         _aiStatusLabel.Text = statusText;
@@ -1673,12 +1752,20 @@ public class ImageViewerForm : Form
     private void UpdateSavedCacheUiState()
     {
         bool hasSaved = false;
+        bool hasSavedTranslation = false;
         string? imagePath = GetCurrentImagePath();
         if (!string.IsNullOrWhiteSpace(imagePath))
+        {
             hasSaved = TryGetExistingOcrCachePath(imagePath, out _);
+            hasSavedTranslation =
+                TryLoadSavedOcrEnvelope(imagePath, out var envelope) &&
+                envelope != null &&
+                TryBuildSavedTranslation(envelope, out _);
+        }
 
         _openSavedOcrFileBtn.Enabled = !_aiBusy && hasSaved;
         _clearOverlayBtn.Enabled = !_aiBusy && hasSaved;
+        _deleteSavedTranslationBtn.Enabled = !_aiBusy && hasSavedTranslation;
 
         _showSavedTranslationCheck.Enabled = !_aiBusy && _showSavedOcrCheck.Checked && _savedTranslationForCurrentImage != null;
     }
@@ -1762,6 +1849,61 @@ public class ImageViewerForm : Form
 
         if (!_aiBusy)
             _aiStatusLabel.Text = "Deleted saved OCR";
+
+        UpdateSavedCacheUiState();
+    }
+
+    private void DeleteSavedTranslationForCurrentImage()
+    {
+        string? imagePath = GetCurrentImagePath();
+        if (string.IsNullOrWhiteSpace(imagePath))
+            return;
+
+        if (!TryGetExistingOcrCachePath(imagePath, out string cachePath) ||
+            !TryLoadSavedOcrEnvelope(imagePath, out var envelope) ||
+            envelope == null ||
+            !TryBuildSavedTranslation(envelope, out _))
+        {
+            if (!_aiBusy)
+                _aiStatusLabel.Text = "No saved translation to delete";
+            UpdateSavedCacheUiState();
+            return;
+        }
+
+        try
+        {
+            envelope.TranslationTargetLanguage = "";
+            envelope.TranslationSourceLanguage = "";
+            envelope.TranslationModelId = "";
+            envelope.TranslationFullText = "";
+            envelope.TranslationLines = new List<string>();
+            envelope.TranslationSavedUtcTicks = 0;
+
+            File.WriteAllText(cachePath, SerializeOcrCacheEnvelopeForDisk(envelope));
+        }
+        catch (Exception ex)
+        {
+            LlmDebugLogger.LogError($"Failed to delete saved translation from '{cachePath}': {ex.Message}");
+            if (!_aiBusy)
+                _aiStatusLabel.Text = "Failed to delete saved translation";
+            UpdateSavedCacheUiState();
+            return;
+        }
+
+        _savedTranslationForCurrentImage = null;
+        _lastTranslations = new List<string>();
+        SetShowSavedTranslationChecked(false, updatePreference: true);
+
+        if (_lastOcrResult != null && string.Equals(_ocrImagePath, imagePath, StringComparison.OrdinalIgnoreCase))
+        {
+            SetOverlayFromOcrResult(_lastOcrResult, null);
+            _aiOutputBox.Text = RenderOcrResult(_lastOcrResult);
+            _aiOutputBox.AppendText(Environment.NewLine + Environment.NewLine + "[Translation deleted from OCR_output cache]");
+        }
+
+        _pictureBox.Invalidate();
+        if (!_aiBusy)
+            _aiStatusLabel.Text = "Deleted saved translation";
 
         UpdateSavedCacheUiState();
     }
@@ -2129,6 +2271,7 @@ public class ImageViewerForm : Form
     private async Task<(List<LlmImageTextBlock> Blocks, string DetectedLanguage)> ExtractManualOcrBlocksAsync(
         IReadOnlyList<ManualOcrSnippet> snippets,
         string model,
+        bool useOcrReasoning,
         CancellationToken cancellationToken)
     {
         var blocks = new List<LlmImageTextBlock>(snippets.Count);
@@ -2138,7 +2281,7 @@ public class ImageViewerForm : Form
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            string text = (await _llmService.ExtractSnippetTextAsync(snippets[i].TempPath, model, cancellationToken))?.Trim() ?? "";
+            string text = (await _llmService.ExtractSnippetTextAsync(snippets[i].TempPath, model, cancellationToken, useReasoning: useOcrReasoning))?.Trim() ?? "";
             if (string.IsNullOrWhiteSpace(text))
                 continue;
 
@@ -2171,10 +2314,13 @@ public class ImageViewerForm : Form
     }
 
     private async Task<LlmTextTranslationResult?> BuildMergedManualTranslationAsync(
+        string imagePath,
         LlmImageTextResult mergedOcr,
         LlmTextTranslationResult? existingTranslation,
         IReadOnlyList<LlmImageTextBlock> manualBlocks,
         string targetLanguage,
+        bool useMaximumEffortManualTranslation,
+        bool useTranslationReasoning,
         string? model,
         CancellationToken cancellationToken)
     {
@@ -2184,6 +2330,26 @@ public class ImageViewerForm : Form
             .Cast<string>()
             .ToList();
 
+        var allTexts = mergedOcr.Blocks
+            .Select(b => b.Text?.Trim())
+            .Where(t => !string.IsNullOrWhiteSpace(t))
+            .Cast<string>()
+            .ToList();
+        if (allTexts.Count == 0 && !string.IsNullOrWhiteSpace(mergedOcr.FullText))
+            allTexts.Add(mergedOcr.FullText.Trim());
+
+        if (useMaximumEffortManualTranslation && allTexts.Count > 0)
+        {
+            return await _llmService.TranslateTextBlocksWithContextImageAsync(
+                allTexts,
+                targetLanguage,
+                imagePath,
+                string.IsNullOrWhiteSpace(mergedOcr.DetectedLanguage) ? null : mergedOcr.DetectedLanguage,
+                model,
+                cancellationToken,
+                useReasoning: useTranslationReasoning);
+        }
+
         bool canAppendToSavedTranslation =
             existingTranslation != null &&
             string.Equals(NormalizeLanguageKey(existingTranslation.TargetLanguage), NormalizeLanguageKey(targetLanguage), StringComparison.Ordinal) &&
@@ -2192,7 +2358,7 @@ public class ImageViewerForm : Form
 
         if (canAppendToSavedTranslation && manualTexts.Count > 0)
         {
-            var translatedManual = await TranslateManualBlocksAsync(manualTexts, targetLanguage, model, cancellationToken);
+            var translatedManual = await TranslateManualBlocksAsync(manualTexts, targetLanguage, model, useTranslationReasoning, cancellationToken);
             if (translatedManual == null)
                 return null;
 
@@ -2206,15 +2372,7 @@ public class ImageViewerForm : Form
             };
         }
 
-        var allTexts = mergedOcr.Blocks
-            .Select(b => b.Text?.Trim())
-            .Where(t => !string.IsNullOrWhiteSpace(t))
-            .Cast<string>()
-            .ToList();
-        if (allTexts.Count == 0 && !string.IsNullOrWhiteSpace(mergedOcr.FullText))
-            allTexts.Add(mergedOcr.FullText.Trim());
-
-        var translatedAll = await TranslateManualBlocksAsync(allTexts, targetLanguage, model, cancellationToken);
+        var translatedAll = await TranslateManualBlocksAsync(allTexts, targetLanguage, model, useTranslationReasoning, cancellationToken);
         if (translatedAll == null)
             return null;
 
@@ -2230,6 +2388,7 @@ public class ImageViewerForm : Form
         IReadOnlyList<string> sourceBlocks,
         string targetLanguage,
         string? model,
+        bool useTranslationReasoning,
         CancellationToken cancellationToken)
     {
         var translations = new List<string>(sourceBlocks.Count);
@@ -2243,7 +2402,7 @@ public class ImageViewerForm : Form
                 continue;
             }
 
-            string? translated = await _llmService.TranslateSimpleTextAsync(source, targetLanguage, model, cancellationToken);
+            string? translated = await _llmService.TranslateSimpleTextAsync(source, targetLanguage, model, cancellationToken, useReasoning: useTranslationReasoning);
             if (translated == null)
                 return null;
 
@@ -2295,6 +2454,9 @@ public class ImageViewerForm : Form
             {
                 ImagePath = imagePath,
                 WithTranslation = withTranslation,
+                UseMaximumEffortManualTranslation = withTranslation && _manualMaxEffortCheck.Checked,
+                UseOcrReasoning = _ocrReasoningCheck.Checked,
+                UseTranslationReasoning = _translationReasoningCheck.Checked,
                 TargetLanguage = targetLanguage,
                 ModelId = model,
                 ManualSnippets = manualSnippets ?? new List<ManualOcrSnippet>()
@@ -2340,8 +2502,17 @@ public class ImageViewerForm : Form
     private string BuildQueuedJobStatus(ImageAiJob job)
     {
         string action = job.WithTranslation ? "translation" : "OCR";
+        if (job.WithTranslation && job.UseMaximumEffortManualTranslation)
+        {
+            if (job.ManualSnippets.Count > 0)
+                return $"Queued max-effort manual {action} for {Path.GetFileName(job.ImagePath)}";
+            return $"Queued max-effort {action} for {Path.GetFileName(job.ImagePath)}";
+        }
+
         if (job.ManualSnippets.Count > 0)
+        {
             return $"Queued manual {action} for {Path.GetFileName(job.ImagePath)}";
+        }
         return $"Queued {action} for {Path.GetFileName(job.ImagePath)}";
     }
 
@@ -2368,8 +2539,12 @@ public class ImageViewerForm : Form
                 preferredImagePath = job.ImagePath;
 
                 string processingStatus = job.ManualSnippets.Count > 0
-                    ? (job.WithTranslation ? "Processing queued manual translation..." : "Processing queued manual OCR...")
-                    : (job.WithTranslation ? "Processing queued translation..." : "Processing queued OCR...");
+                    ? (job.WithTranslation
+                        ? (job.UseMaximumEffortManualTranslation ? "Processing queued max-effort manual translation..." : "Processing queued manual translation...")
+                        : "Processing queued manual OCR...")
+                    : (job.WithTranslation
+                        ? (job.UseMaximumEffortManualTranslation ? "Processing queued max-effort translation..." : "Processing queued translation...")
+                        : "Processing queued OCR...");
                 SetAiBusy(true, processingStatus);
 
                 ImageAiJobResult result;
@@ -2440,7 +2615,7 @@ public class ImageViewerForm : Form
         {
             var baseOcr = GetBestBaseOcrForImage(imagePath);
             var existingTranslation = GetBestSavedTranslationForImage(imagePath);
-            var (manualBlocks, detectedLanguage) = await ExtractManualOcrBlocksAsync(job.ManualSnippets, model ?? "", cancellationToken);
+            var (manualBlocks, detectedLanguage) = await ExtractManualOcrBlocksAsync(job.ManualSnippets, model ?? "", job.UseOcrReasoning, cancellationToken);
             if (manualBlocks.Count == 0)
             {
                 return new ImageAiJobResult
@@ -2474,10 +2649,13 @@ public class ImageViewerForm : Form
             }
 
             var mergedTranslation = await BuildMergedManualTranslationAsync(
+                imagePath,
                 mergedOcr,
                 existingTranslation,
                 manualBlocks,
                 job.TargetLanguage,
+                job.UseMaximumEffortManualTranslation,
+                job.UseTranslationReasoning,
                 model,
                 cancellationToken);
             if (mergedTranslation == null)
@@ -2508,7 +2686,8 @@ public class ImageViewerForm : Form
         if (job.WithTranslation && TryLoadSavedOcrEnvelope(imagePath, out var savedEnvelope) && savedEnvelope?.Result != null)
         {
             ocr = CloneOcrResult(savedEnvelope.Result);
-            if (TryBuildSavedTranslation(savedEnvelope, out var savedTranslation) &&
+            if (!job.UseMaximumEffortManualTranslation &&
+                TryBuildSavedTranslation(savedEnvelope, out var savedTranslation) &&
                 savedTranslation != null &&
                 string.Equals(
                     NormalizeLanguageKey(savedTranslation.TargetLanguage),
@@ -2531,7 +2710,7 @@ public class ImageViewerForm : Form
 
         if (!usingSavedOcr)
         {
-            ocr = await _llmService.ExtractImageTextAsync(imagePath, model, cancellationToken);
+            ocr = await _llmService.ExtractImageTextAsync(imagePath, model, cancellationToken, useReasoning: job.UseOcrReasoning);
             if (ocr == null)
             {
                 return new ImageAiJobResult
@@ -2578,7 +2757,16 @@ public class ImageViewerForm : Form
         if (sourceBlocks.Count == 0 && !string.IsNullOrWhiteSpace(ocr.FullText))
             sourceBlocks.Add(ocr.FullText);
 
-        var translation = await _llmService.TranslateTextBlocksAsync(sourceBlocks, job.TargetLanguage, null, model, cancellationToken);
+        var translation = job.UseMaximumEffortManualTranslation
+            ? await _llmService.TranslateTextBlocksWithContextImageAsync(
+                sourceBlocks,
+                job.TargetLanguage,
+                imagePath,
+                string.IsNullOrWhiteSpace(ocr.DetectedLanguage) ? null : ocr.DetectedLanguage,
+                model,
+                cancellationToken,
+                useReasoning: job.UseTranslationReasoning)
+            : await _llmService.TranslateTextBlocksAsync(sourceBlocks, job.TargetLanguage, null, model, cancellationToken, useReasoning: job.UseTranslationReasoning);
         if (translation == null)
         {
             return new ImageAiJobResult

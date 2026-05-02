@@ -150,6 +150,9 @@ public static class LlmParsers
             TargetLanguage = targetLanguage
         };
 
+        if (root.TryGetProperty("thought", out var thought) && thought.ValueKind == JsonValueKind.String)
+            LlmDebugLogger.LogResponse($"[Translation Thought]\n{thought.GetString()}\n");
+
         if (root.TryGetProperty("translated_full_text", out var fullText))
             result.TranslatedFullText = NormalizeTranslationText(fullText.GetString() ?? "");
 

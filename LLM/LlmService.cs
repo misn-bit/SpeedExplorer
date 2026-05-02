@@ -1436,14 +1436,14 @@ public class LlmService
     /// Performs OCR-like extraction with optional text blocks and normalized coordinates.
     /// Coordinates are normalized to [0..1] for image width/height.
     /// </summary>
-    public async Task<LlmImageTextResult?> ExtractImageTextAsync(string imagePath, string? modelOverride = null, CancellationToken cancellationToken = default)
+    public async Task<LlmImageTextResult?> ExtractImageTextAsync(string imagePath, string? modelOverride = null, CancellationToken cancellationToken = default, bool useReasoning = false)
     {
-        return await _visionService.ExtractImageTextAsync(imagePath, ApiUrl, modelOverride, cancellationToken);
+        return await _visionService.ExtractImageTextAsync(imagePath, ApiUrl, modelOverride, cancellationToken, useReasoning);
     }
 
-    public async Task<string?> ExtractSnippetTextAsync(string imagePath, string? modelOverride = null, CancellationToken cancellationToken = default)
+    public async Task<string?> ExtractSnippetTextAsync(string imagePath, string? modelOverride = null, CancellationToken cancellationToken = default, bool useReasoning = false)
     {
-        return await _visionService.ExtractSnippetTextAsync(imagePath, ApiUrl, modelOverride, cancellationToken);
+        return await _visionService.ExtractSnippetTextAsync(imagePath, ApiUrl, modelOverride, cancellationToken, useReasoning);
     }
 
     /// <summary>
@@ -1454,18 +1454,32 @@ public class LlmService
         string targetLanguage,
         string? sourceLanguage = null,
         string? modelOverride = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool useReasoning = true)
     {
-        return await _visionService.TranslateTextBlocksAsync(sourceBlocks, targetLanguage, ApiUrl, sourceLanguage, modelOverride, cancellationToken);
+        return await _visionService.TranslateTextBlocksAsync(sourceBlocks, targetLanguage, ApiUrl, sourceLanguage, modelOverride, cancellationToken, useReasoning);
+    }
+
+    public async Task<LlmTextTranslationResult?> TranslateTextBlocksWithContextImageAsync(
+        IReadOnlyList<string> sourceBlocks,
+        string targetLanguage,
+        string imagePath,
+        string? sourceLanguage = null,
+        string? modelOverride = null,
+        CancellationToken cancellationToken = default,
+        bool useReasoning = true)
+    {
+        return await _visionService.TranslateTextBlocksWithContextImageAsync(sourceBlocks, targetLanguage, imagePath, ApiUrl, sourceLanguage, modelOverride, cancellationToken, useReasoning);
     }
 
     public async Task<string?> TranslateSimpleTextAsync(
         string sourceText,
         string targetLanguage,
         string? modelOverride = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool useReasoning = true)
     {
-        return await _visionService.TranslateSimpleTextAsync(sourceText, targetLanguage, ApiUrl, modelOverride, cancellationToken);
+        return await _visionService.TranslateSimpleTextAsync(sourceText, targetLanguage, ApiUrl, modelOverride, cancellationToken, useReasoning);
     }
 
 
