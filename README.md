@@ -7,36 +7,10 @@
 
 **SpeedExplorer** is a purely vibe-coded Windows file manager replacement. As in, it’s fully written by AI agents under my guidance.
 
-The app is focused on enabling you to navigate and perform simple file operations quickly and frictionlessly.
+It's a file explorer with a built-in image viewer that has OCR+Translation capabilities using locally run AI in LM Studio through the LM Studio server.
+The app can show OCR'd text and translation right on top of the image, and it saves the OCR'd text and the translation in a separate text file.
 
-The initial idea was simply: “Hmmm. What can I do with these AI agents? Well, I kind of hate the Windows File Explorer because it’s slow at times. Sure, why not - let’s vibe-code a file explorer.” So here we are.
-
-If you're wondering if i even use the app myself - yes, i do. I've been using it by default for a little bit now. It's fleshed out enough to not make me want to go back to the windows file explorer.
-
-## Main Features
-
-*   **Fast Navigation:** Optimized for speed and low friction.
-*   **Tabbed Interface:** Manage multiple folders in one window.
-*   **Search & Hotkeys:** Full keyboard support with custom mapping capabilities.
-*   **Tagging System:** In-app file tagging and a "search by tags" mode.
-
-
-## AI Integration (Experimental)
-
-SpeedExplorer features an optional local AI assistant that runs on your own hardware.
-
-*   **Chat with your files:** Let the AI manage or organize files (limited functionality to prevent accidents).
-*   **Batch Image Processing:** Automatically tag images, get text from images or generate text descriptions based on visual content.
-*   **OCR & Translation:** Show OCR'd text on top of the image in the built-in image viewer and translate it to any language.
-
-### Requirements for AI features:
-*   **Software:** LM Studio 0.4.0+ (with Local Server enabled).
-*   **Models:**
-    *   *For General Logic:* A decent size model (e.g., `gpt-oss-20b`).
-    *   *For Vision/Images:* A vision-capable model (e.g., `qwen3.5-4b` or better).
-
-> **Note:** AI features are non-destructive by default, but please exercise caution when allowing an LLM to manage file operations.
-
+For good quality OCR, i recommend using Gemma-4-31B or better.
 
 ## Disclaimer & Safety
 
