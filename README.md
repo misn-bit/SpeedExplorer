@@ -11,9 +11,6 @@ It's a file explorer with a built-in image viewer that has OCR+Translation capab
 The image viewer can show OCR'd text and translation right on top of the image, and it saves the OCR'd text and the translation in a separate text file.
 
 
-[![Image](https://github.com/misn-bit/SpeedExplorer/blob/main/Icons/ImageViewer.jpg)](https://github.com/misn-bit/SpeedExplorer/blob/main/Icons/ImageViewer.jpg)
-_*Image source of the image in the screenshot: MOR on Pixiv (user 54244836)_
-
 For good quality OCR, i recommend using Gemma-4-31B or better. 
 The "Max effort translate" flag, while enabled, makes it so we send the text from all blocks
 
