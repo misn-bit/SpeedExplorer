@@ -8,9 +8,16 @@
 **SpeedExplorer** is a purely vibe-coded Windows file manager replacement. As in, it’s fully written by AI agents under my guidance.
 
 It's a file explorer with a built-in image viewer that has OCR+Translation capabilities using locally run AI in LM Studio through the LM Studio server.
-The app can show OCR'd text and translation right on top of the image, and it saves the OCR'd text and the translation in a separate text file.
+The image viewer can show OCR'd text and translation right on top of the image, and it saves the OCR'd text and the translation in a separate text file.
 
-For good quality OCR, i recommend using Gemma-4-31B or better.
+
+[![Image](https://github.com/misn-bit/SpeedExplorer/blob/main/Icons/ImageViewer.jpg)](https://github.com/misn-bit/SpeedExplorer/blob/main/Icons/ImageViewer.jpg)
+*Image source in the screenshot: MOR on Pixiv (user 54244836)
+
+For good quality OCR, i recommend using Gemma-4-31B or better. 
+The "Max effort translate" flag, while enabled, makes it so we send the text from all blocks
+
+It's best to disable the "Enable Thinking" toggle in the server inference tab in LM Studio, unless you prefer the model to potentially think about the OCR for thousand of tokens.
 
 ## Disclaimer & Safety
 
