@@ -12,9 +12,9 @@ The image viewer can show OCR'd text and translation right on top of the image, 
 
 
 For good quality OCR, i recommend using Gemma-4-31B or better. 
-The "Max effort translate" flag, while enabled, makes it so we send the text from all blocks
 
-It's best to disable the "Enable Thinking" toggle in the server inference tab in LM Studio, unless you prefer the model to potentially think about the OCR for thousand of tokens.
+
+It's best to disable the "Enable Thinking" toggle in the server inference tab in LM Studio, unless you prefer the model to potentially think about the OCR for thousands of tokens.
 
 ## Disclaimer & Safety
 
