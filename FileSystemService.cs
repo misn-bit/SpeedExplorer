@@ -540,6 +540,12 @@ public class FileSystemService
         items.AddRange(files);
     }
 
+    public static int CompareItems(FileItem a, FileItem b, SortColumn column, SortDirection direction)
+    {
+        int result = CompareItemsCore(a, b, column, null);
+        return direction == SortDirection.Descending ? -result : result;
+    }
+
     private static void SortList(List<FileItem> items, SortColumn column, SortDirection direction)
     {
         Dictionary<FileItem, string>? tagSortKeys = null;
@@ -553,32 +559,44 @@ public class FileSystemService
             }
         }
 
-        Comparison<FileItem> comparison = column switch
-        {
-            SortColumn.Name => (a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase),
-            SortColumn.Size => (a, b) => a.Size.CompareTo(b.Size),
-            SortColumn.DateModified => (a, b) => a.DateModified.CompareTo(b.DateModified),
-            SortColumn.DateCreated => (a, b) => a.DateCreated.CompareTo(b.DateCreated),
-            SortColumn.Type => (a, b) => string.Compare(a.Extension, b.Extension, StringComparison.OrdinalIgnoreCase),
-            SortColumn.Tags => (a, b) =>
-            {
-                // Precomputed keys avoid repeated path normalization + tag set allocations.
-                string tagA = tagSortKeys != null && tagSortKeys.TryGetValue(a, out var v1) ? v1 : "";
-                string tagB = tagSortKeys != null && tagSortKeys.TryGetValue(b, out var v2) ? v2 : "";
-                int byTag = string.Compare(tagA, tagB, StringComparison.OrdinalIgnoreCase);
-                if (byTag != 0) return byTag;
-                return string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase);
-            },
-            SortColumn.Format => (a, b) => string.Compare(a.DriveFormat, b.DriveFormat, StringComparison.OrdinalIgnoreCase),
-            SortColumn.FreeSpace => (a, b) => a.FreeSpace.CompareTo(b.FreeSpace),
-            SortColumn.DriveNumber => (a, b) => a.DriveNumber.CompareTo(b.DriveNumber),
-            _ => (a, b) => 0
-        };
-
-        items.Sort(comparison);
+        items.Sort((a, b) => CompareItemsCore(a, b, column, tagSortKeys));
 
         if (direction == SortDirection.Descending)
             items.Reverse();
+    }
+
+    private static int CompareItemsCore(
+        FileItem a,
+        FileItem b,
+        SortColumn column,
+        Dictionary<FileItem, string>? tagSortKeys)
+    {
+        return column switch
+        {
+            SortColumn.Name => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase),
+            SortColumn.Size => a.Size.CompareTo(b.Size),
+            SortColumn.DateModified => a.DateModified.CompareTo(b.DateModified),
+            SortColumn.DateCreated => a.DateCreated.CompareTo(b.DateCreated),
+            SortColumn.Type => string.Compare(a.Extension, b.Extension, StringComparison.OrdinalIgnoreCase),
+            SortColumn.Tags => CompareTags(a, b, tagSortKeys),
+            SortColumn.Format => string.Compare(a.DriveFormat, b.DriveFormat, StringComparison.OrdinalIgnoreCase),
+            SortColumn.FreeSpace => a.FreeSpace.CompareTo(b.FreeSpace),
+            SortColumn.DriveNumber => a.DriveNumber.CompareTo(b.DriveNumber),
+            _ => 0
+        };
+    }
+
+    private static int CompareTags(FileItem a, FileItem b, Dictionary<FileItem, string>? tagSortKeys)
+    {
+        string tagA = tagSortKeys != null && tagSortKeys.TryGetValue(a, out var v1)
+            ? v1
+            : (a.IsShellItem ? "" : TagManager.Instance.GetPrimaryTagForSort(a.FullPath));
+        string tagB = tagSortKeys != null && tagSortKeys.TryGetValue(b, out var v2)
+            ? v2
+            : (b.IsShellItem ? "" : TagManager.Instance.GetPrimaryTagForSort(b.FullPath));
+        int byTag = string.Compare(tagA, tagB, StringComparison.OrdinalIgnoreCase);
+        if (byTag != 0) return byTag;
+        return string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase);
     }
 
     public static List<DriveInfo> GetDrives()

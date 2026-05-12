@@ -1436,14 +1436,14 @@ public class LlmService
     /// Performs OCR-like extraction with optional text blocks and normalized coordinates.
     /// Coordinates are normalized to [0..1] for image width/height.
     /// </summary>
-    public async Task<LlmImageTextResult?> ExtractImageTextAsync(string imagePath, string? modelOverride = null, CancellationToken cancellationToken = default, bool useReasoning = false, string? sourceLanguageHint = null)
+    public async Task<LlmImageTextResult?> ExtractImageTextAsync(string imagePath, string? modelOverride = null, CancellationToken cancellationToken = default, bool useReasoning = false, string? sourceLanguageHint = null, string? ocrHint = null)
     {
-        return await _visionService.ExtractImageTextAsync(imagePath, ApiUrl, modelOverride, cancellationToken, useReasoning, sourceLanguageHint);
+        return await _visionService.ExtractImageTextAsync(imagePath, ApiUrl, modelOverride, cancellationToken, useReasoning, sourceLanguageHint, ocrHint);
     }
 
-    public async Task<string?> ExtractSnippetTextAsync(string imagePath, string? modelOverride = null, CancellationToken cancellationToken = default, bool useReasoning = false, string? sourceLanguageHint = null)
+    public async Task<string?> ExtractSnippetTextAsync(string imagePath, string? modelOverride = null, CancellationToken cancellationToken = default, bool useReasoning = false, string? sourceLanguageHint = null, string? ocrHint = null)
     {
-        return await _visionService.ExtractSnippetTextAsync(imagePath, ApiUrl, modelOverride, cancellationToken, useReasoning, sourceLanguageHint);
+        return await _visionService.ExtractSnippetTextAsync(imagePath, ApiUrl, modelOverride, cancellationToken, useReasoning, sourceLanguageHint, ocrHint);
     }
 
     /// <summary>

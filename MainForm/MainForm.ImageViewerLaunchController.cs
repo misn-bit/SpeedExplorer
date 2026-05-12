@@ -92,7 +92,10 @@ public partial class MainForm
         if (startIndex < 0)
             startIndex = 0;
 
-        var viewer = new ImageViewerForm(imageFiles, startIndex);
+        var viewer = new ImageViewerForm(
+            imageFiles,
+            startIndex,
+            new ImageViewerSortOptions(_sortColumn, _sortDirection, _taggedFilesOnTop));
         viewer.Show();
         return true;
     }

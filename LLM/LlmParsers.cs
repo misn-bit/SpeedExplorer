@@ -86,6 +86,9 @@ public static class LlmParsers
             var root = doc.RootElement;
 
             var result = new LlmImageTextResult();
+            if (root.TryGetProperty("thought", out var thought) && thought.ValueKind == JsonValueKind.String)
+                LlmDebugLogger.LogResponse($"[OCR Thought]\n{thought.GetString()}\n");
+
             if (root.TryGetProperty("detected_language", out var language))
                 result.DetectedLanguage = language.GetString() ?? "";
 

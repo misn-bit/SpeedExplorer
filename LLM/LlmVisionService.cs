@@ -201,7 +201,7 @@ public class LlmVisionService
     /// Performs OCR-like extraction with optional text blocks and normalized coordinates.
     /// Coordinates are normalized to [0..1] for image width/height.
     /// </summary>
-    public async Task<LlmImageTextResult?> ExtractImageTextAsync(string imagePath, string apiUrl, string? modelOverride = null, CancellationToken cancellationToken = default, bool useReasoning = false, string? sourceLanguageHint = null)
+    public async Task<LlmImageTextResult?> ExtractImageTextAsync(string imagePath, string apiUrl, string? modelOverride = null, CancellationToken cancellationToken = default, bool useReasoning = false, string? sourceLanguageHint = null, string? ocrHint = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var settings = AppSettings.Current;
@@ -222,15 +222,76 @@ public class LlmVisionService
             "You are an OCR extractor. Return strict JSON only. " +
             "Extract readable text from the image. " +
             "Be conservative with block count: merge nearby lines from the same text region and avoid duplicate/overlapping blocks. " +
-            "Return blocks with coordinates x,y,w,h and optional font_size.";
+            "Return blocks with coordinates x,y,w,h and optional font_size." +
+            (useReasoning ? " Include a concise thought field explaining OCR interpretation choices before the final OCR fields." : "");
 
         string userPrompt = WithReasoningDirective(
             "Extract readable text from this image.\n" +
             FormatOptionalPromptLine("Expected source language or script", sourceLanguageHint) +
+            FormatOptionalPromptLine("OCR hint", ocrHint) +
             "Return text blocks in reading order.\n" +
             "Prefer fewer complete phrase blocks instead of one block per line.\n" +
             "Output JSON with: detected_language, full_text, blocks[{text,x,y,w,h,font_size?}].",
             useReasoning);
+
+        var properties = new Dictionary<string, object>
+        {
+            { "detected_language", new { type = "string" } },
+            { "full_text", new { type = "string" } },
+            {
+                "blocks", new
+                {
+                    type = "array",
+                    items = new
+                    {
+                        type = "object",
+                        properties = new
+                        {
+                            text = new { type = "string" },
+                            x = new { type = "number" },
+                            y = new { type = "number" },
+                            w = new { type = "number" },
+                            h = new { type = "number" },
+                            font_size = new { type = "number" }
+                        },
+                        required = new[] { "text", "x", "y", "w", "h" },
+                        additionalProperties = false
+                    }
+                }
+            }
+        };
+        var required = new List<string> { "detected_language", "full_text", "blocks" };
+        if (useReasoning)
+        {
+            properties = new Dictionary<string, object>
+            {
+                { "thought", new { type = "string" } },
+                { "detected_language", new { type = "string" } },
+                { "full_text", new { type = "string" } },
+                {
+                    "blocks", new
+                    {
+                        type = "array",
+                        items = new
+                        {
+                            type = "object",
+                            properties = new
+                            {
+                                text = new { type = "string" },
+                                x = new { type = "number" },
+                                y = new { type = "number" },
+                                w = new { type = "number" },
+                                h = new { type = "number" },
+                                font_size = new { type = "number" }
+                            },
+                            required = new[] { "text", "x", "y", "w", "h" },
+                            additionalProperties = false
+                        }
+                    }
+                }
+            };
+            required.Insert(0, "thought");
+        }
 
         var schema = new
         {
@@ -242,31 +303,8 @@ public class LlmVisionService
                 schema = new
                 {
                     type = "object",
-                    properties = new
-                    {
-                        detected_language = new { type = "string" },
-                        full_text = new { type = "string" },
-                        blocks = new
-                        {
-                            type = "array",
-                            items = new
-                            {
-                                type = "object",
-                                properties = new
-                                {
-                                    text = new { type = "string" },
-                                    x = new { type = "number" },
-                                    y = new { type = "number" },
-                                    w = new { type = "number" },
-                                    h = new { type = "number" },
-                                    font_size = new { type = "number" }
-                                },
-                                required = new[] { "text", "x", "y", "w", "h" },
-                                additionalProperties = false
-                            }
-                        }
-                    },
-                    required = new[] { "detected_language", "full_text", "blocks" },
+                    properties,
+                    required = required.ToArray(),
                     additionalProperties = false
                 }
             }
@@ -557,7 +595,7 @@ public class LlmVisionService
         }
     }
 
-    public async Task<string?> ExtractSnippetTextAsync(string imagePath, string apiUrl, string? modelOverride = null, CancellationToken cancellationToken = default, bool useReasoning = false, string? sourceLanguageHint = null)
+    public async Task<string?> ExtractSnippetTextAsync(string imagePath, string apiUrl, string? modelOverride = null, CancellationToken cancellationToken = default, bool useReasoning = false, string? sourceLanguageHint = null, string? ocrHint = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
         string model = string.IsNullOrWhiteSpace(modelOverride) ? AppSettings.Current.LlmModelName : modelOverride;
@@ -570,13 +608,44 @@ public class LlmVisionService
             return await _modelManager.TryRecoverVisionModelAsync(requestUrl, model, $"ExtractSnippetText {stage}", cancellationToken);
         }
 
-        string systemPrompt = "You are to OCR the image snippet.";
+        string systemPrompt =
+            useReasoning
+                ? "You are to OCR the image snippet. Return strict JSON only. Include a concise thought field explaining OCR interpretation choices before the final text field."
+                : "You are to OCR the image snippet.";
         string userPrompt = WithReasoningDirective(
-            "Return only the extracted text from this image snippet.\n" +
+            (useReasoning
+                ? "Extract text from this image snippet.\n"
+                : "Return only the extracted text from this image snippet.\n") +
             FormatOptionalPromptLine("Expected source language or script", sourceLanguageHint) +
+            FormatOptionalPromptLine("OCR hint", ocrHint) +
             "Preserve meaningful line breaks.\n" +
-            "If no readable text is present, return an empty response.",
+            (useReasoning
+                ? "If no readable text is present, return an empty text field."
+                : "If no readable text is present, return an empty response."),
             useReasoning);
+
+        var snippetSchema = useReasoning
+            ? new
+        {
+            type = "json_schema",
+            json_schema = new
+            {
+                name = "image_ocr_snippet",
+                strict = true,
+                schema = new
+                {
+                    type = "object",
+                    properties = new
+                    {
+                        thought = new { type = "string" },
+                        text = new { type = "string" }
+                    },
+                    required = new[] { "thought", "text" },
+                    additionalProperties = false
+                }
+            }
+        }
+            : null;
 
         (string Json, List<LlmImageStats> Stats) BuildRequest(bool usePreparedJpeg)
         {
@@ -622,12 +691,20 @@ public class LlmVisionService
                 new { role = "user", content = (object)contentList }
             };
 
-            var requestBody = new
-            {
-                model = model,
-                messages = messages,
-                stream = false
-            };
+            object requestBody = useReasoning
+                ? new
+                {
+                    model = model,
+                    messages = messages,
+                    response_format = snippetSchema,
+                    stream = false
+                }
+                : new
+                {
+                    model = model,
+                    messages = messages,
+                    stream = false
+                };
 
             return (JsonSerializer.Serialize(requestBody, new JsonSerializerOptions { WriteIndented = true }), new List<LlmImageStats> { stats });
         }
@@ -668,7 +745,7 @@ public class LlmVisionService
                 choices[0].GetProperty("message"),
                 allowReasoningFallback: useReasoning);
             LlmDebugLogger.LogResponse(messageContent);
-            return NormalizePlainTextResponse(messageContent);
+            return ExtractSnippetTextFromResponse(messageContent);
         }
 
         try
@@ -1308,6 +1385,25 @@ public class LlmVisionService
             return "";
 
         return text.Replace("\r\n", "\n").Replace('\r', '\n').Trim();
+    }
+
+    private static string ExtractSnippetTextFromResponse(string messageContent)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(LlmParsers.ExtractJsonObject(messageContent));
+            var root = doc.RootElement;
+            if (root.TryGetProperty("thought", out var thought) && thought.ValueKind == JsonValueKind.String)
+                LlmDebugLogger.LogResponse($"[OCR Snippet Thought]\n{thought.GetString()}\n");
+            if (root.TryGetProperty("text", out var text) && text.ValueKind == JsonValueKind.String)
+                return NormalizePlainTextResponse(text.GetString() ?? "");
+        }
+        catch
+        {
+            // Older/fallback servers may still return plain text despite the schema request.
+        }
+
+        return NormalizePlainTextResponse(messageContent);
     }
 
     private static string NormalizePlainTextResponse(string text)

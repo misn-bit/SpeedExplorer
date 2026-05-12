@@ -17,6 +17,20 @@ using System.Runtime.InteropServices;
 
 namespace SpeedExplorer;
 
+public sealed class ImageViewerSortOptions
+{
+    public ImageViewerSortOptions(SortColumn column, SortDirection direction, bool taggedFilesOnTop)
+    {
+        Column = column;
+        Direction = direction;
+        TaggedFilesOnTop = taggedFilesOnTop;
+    }
+
+    public SortColumn Column { get; }
+    public SortDirection Direction { get; }
+    public bool TaggedFilesOnTop { get; }
+}
+
 public class ImageViewerForm : Form
 {
     // ... Imports for window dragging ...
@@ -73,6 +87,7 @@ public class ImageViewerForm : Form
     private readonly Label _aiStatusLabel;
     private readonly TextBox _targetLanguageBox;
     private readonly TextBox _sourceLanguageHintBox;
+    private readonly TextBox _ocrHintBox;
     private readonly TextBox _translationContextHintBox;
     private readonly CheckBox _manualMaxEffortCheck;
     private readonly CheckBox _ocrReasoningCheck;
@@ -97,10 +112,14 @@ public class ImageViewerForm : Form
     private readonly Button _deleteSavedTranslationBtn;
     private readonly Button _copyResultBtn;
     private readonly Button _abortBtn;
+    private readonly Button _cancelCurrentJobBtn;
     private readonly Button _openSavedOcrFileBtn;
     private readonly LlmService _llmService = new();
     private CancellationTokenSource? _aiCts;
     private CancellationTokenSource? _tagCts;
+    private FileSystemWatcher? _imageFolderWatcher;
+    private readonly System.Windows.Forms.Timer _imageFolderRefreshTimer;
+    private string? _watchedImageFolder;
 
     private float _zoomLevel = 1.0f;
     private Point _panOffset = Point.Empty;
@@ -132,6 +151,7 @@ public class ImageViewerForm : Form
     private readonly Dictionary<string, List<RectangleF>> _queuedManualRegionsByImage = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, List<RectangleF>> _restorableManualRegionsByImage = new(StringComparer.OrdinalIgnoreCase);
     private ImageAiJob? _activeAiJob;
+    private bool _cancelActiveAiJobOnly;
 
     private sealed class OverlayTextBlock
     {
@@ -164,6 +184,7 @@ public class ImageViewerForm : Form
         public bool UseTranslationReasoning { get; set; }
         public string TargetLanguage { get; set; } = "English";
         public string SourceLanguageHint { get; set; } = "";
+        public string OcrHint { get; set; } = "";
         public string TranslationContextHint { get; set; } = "";
         public string? ModelId { get; set; }
         public List<ManualOcrSnippet> ManualSnippets { get; set; } = new();
@@ -211,12 +232,17 @@ public class ImageViewerForm : Form
     private int ZoomSliderVisualOffsetY => Scale(2);
     private Padding WindowFramePadding => Scale(new Padding(2));
 
-    public ImageViewerForm(List<string> imagePaths, int startIndex)
+    private readonly ImageViewerSortOptions? _sortOptions;
+
+    public ImageViewerForm(List<string> imagePaths, int startIndex, ImageViewerSortOptions? sortOptions = null)
     {
         _imagePaths = imagePaths;
+        _sortOptions = sortOptions;
         _currentIndex = Math.Clamp(startIndex, 0, imagePaths.Count - 1);
         _animationTimer = new System.Windows.Forms.Timer();
         _animationTimer.Tick += AnimationTimer_Tick;
+        _imageFolderRefreshTimer = new System.Windows.Forms.Timer { Interval = 500 };
+        _imageFolderRefreshTimer.Tick += ImageFolderRefreshTimer_Tick;
 
         // Form setup
         Text = "Speed Explorer"; // Generic title for taskbar
@@ -423,6 +449,35 @@ public class ImageViewerForm : Form
         sourceHintRow.Controls.Add(sourceHintLabel);
         sourceHintRow.Controls.Add(_sourceLanguageHintBox);
 
+        var ocrHintRow = new Panel
+        {
+            Dock = DockStyle.Top,
+            Height = Scale(46),
+            BackColor = Color.Transparent
+        };
+        var ocrHintLabel = new Label
+        {
+            AutoSize = true,
+            Text = "OCR hint:",
+            ForeColor = Color.FromArgb(220, 220, 220),
+            Font = new Font("Segoe UI", 8),
+            Location = new Point(Scale(2), Scale(6))
+        };
+        _ocrHintBox = new TextBox
+        {
+            BorderStyle = BorderStyle.FixedSingle,
+            BackColor = Color.FromArgb(45, 45, 45),
+            ForeColor = Color.Gainsboro,
+            Font = new Font("Segoe UI", 8),
+            Location = new Point(Scale(86), Scale(3)),
+            Width = Scale(248),
+            Height = Scale(38),
+            Multiline = true,
+            ScrollBars = ScrollBars.Vertical
+        };
+        ocrHintRow.Controls.Add(ocrHintLabel);
+        ocrHintRow.Controls.Add(_ocrHintBox);
+
         var contextHintRow = new Panel
         {
             Dock = DockStyle.Top,
@@ -530,9 +585,14 @@ public class ImageViewerForm : Form
         _abortBtn.ForeColor = Color.Salmon;
         _abortBtn.Visible = false;
         _abortBtn.Click += (s, e) => AbortAi();
+        _cancelCurrentJobBtn = CreateButton("Cancel Job", Scale(78));
+        _cancelCurrentJobBtn.ForeColor = Color.Salmon;
+        _cancelCurrentJobBtn.Visible = false;
+        _cancelCurrentJobBtn.Click += (s, e) => CancelAiJobForCurrentImage();
 
         aiToolsRow.Controls.Add(_overlayToggle);
         aiToolsRow.Controls.Add(_copyResultBtn);
+        aiToolsRow.Controls.Add(_cancelCurrentJobBtn);
         aiToolsRow.Controls.Add(_abortBtn);
 
         var savedToggleRow = new FlowLayoutPanel
@@ -618,6 +678,7 @@ public class ImageViewerForm : Form
         _aiPanel.Controls.Add(reasoningRow);
         _aiPanel.Controls.Add(manualModeRow);
         _aiPanel.Controls.Add(contextHintRow);
+        _aiPanel.Controls.Add(ocrHintRow);
         _aiPanel.Controls.Add(sourceHintRow);
         _aiPanel.Controls.Add(langRow);
         _aiPanel.Controls.Add(aiActionRow);
@@ -875,6 +936,7 @@ public class ImageViewerForm : Form
     {
         if (_targetLanguageBox.Focused ||
             _sourceLanguageHintBox.Focused ||
+            _ocrHintBox.Focused ||
             _translationContextHintBox.Focused ||
             _aiOutputBox.Focused)
         {
@@ -1247,10 +1309,12 @@ public class ImageViewerForm : Form
         _tagBtn.Enabled = !busy;
         _targetLanguageBox.Enabled = _currentImage != null;
         _sourceLanguageHintBox.Enabled = _currentImage != null;
+        _ocrHintBox.Enabled = _currentImage != null;
         _translationContextHintBox.Enabled = _currentImage != null;
         _ocrReasoningCheck.Enabled = _currentImage != null;
         _translationReasoningCheck.Enabled = _currentImage != null;
         _abortBtn.Visible = busy;
+        UpdateCancelCurrentJobButton();
         _overlayToggle.Enabled = !busy;
         _showSavedOcrCheck.Enabled = !busy;
         _showSavedTranslationCheck.Enabled = !busy;
@@ -1267,11 +1331,37 @@ public class ImageViewerForm : Form
         UpdateSavedCacheUiState();
     }
 
+    private void UpdateCancelCurrentJobButton()
+    {
+        bool canCancel = TryGetCancelableAiJobForCurrentImage(out _);
+        _cancelCurrentJobBtn.Visible = canCancel;
+        _cancelCurrentJobBtn.Enabled = canCancel;
+    }
+
     private bool HasQueuedAiWork()
         => _activeAiJob != null || _queuedAiJobs.Count > 0;
 
     private int GetQueuedAiJobsForImage(string imagePath)
         => _queuedAiJobCountsByImage.TryGetValue(imagePath, out int count) ? count : 0;
+
+    private bool TryGetCancelableAiJobForCurrentImage(out ImageAiJob? job)
+    {
+        job = null;
+        string? imagePath = GetCurrentImagePath();
+        if (string.IsNullOrWhiteSpace(imagePath))
+            return false;
+
+        if (_activeAiJob != null &&
+            string.Equals(_activeAiJob.ImagePath, imagePath, StringComparison.OrdinalIgnoreCase))
+        {
+            job = _activeAiJob;
+            return true;
+        }
+
+        job = _queuedAiJobs.FirstOrDefault(queued =>
+            string.Equals(queued.ImagePath, imagePath, StringComparison.OrdinalIgnoreCase));
+        return job != null;
+    }
 
     private void IncrementQueuedAiJobsForImage(string imagePath)
     {
@@ -2348,6 +2438,7 @@ public class ImageViewerForm : Form
         string model,
         bool useOcrReasoning,
         string sourceLanguageHint,
+        string ocrHint,
         CancellationToken cancellationToken)
     {
         var blocks = new List<LlmImageTextBlock>(snippets.Count);
@@ -2357,7 +2448,7 @@ public class ImageViewerForm : Form
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            string text = (await _llmService.ExtractSnippetTextAsync(snippets[i].TempPath, model, cancellationToken, useReasoning: useOcrReasoning, sourceLanguageHint: sourceLanguageHint))?.Trim() ?? "";
+            string text = (await _llmService.ExtractSnippetTextAsync(snippets[i].TempPath, model, cancellationToken, useReasoning: useOcrReasoning, sourceLanguageHint: sourceLanguageHint, ocrHint: ocrHint))?.Trim() ?? "";
             if (string.IsNullOrWhiteSpace(text))
                 continue;
 
@@ -2547,7 +2638,8 @@ public class ImageViewerForm : Form
                 UseOcrReasoning = _ocrReasoningCheck.Checked,
                 UseTranslationReasoning = _translationReasoningCheck.Checked,
                 TargetLanguage = targetLanguage,
-                SourceLanguageHint = withTranslation ? _sourceLanguageHintBox.Text.Trim() : "",
+                SourceLanguageHint = _sourceLanguageHintBox.Text.Trim(),
+                OcrHint = _ocrHintBox.Text.Trim(),
                 TranslationContextHint = withTranslation ? _translationContextHintBox.Text.Trim() : "",
                 ModelId = model,
                 ManualSnippets = manualSnippets ?? new List<ManualOcrSnippet>()
@@ -2658,8 +2750,23 @@ public class ImageViewerForm : Form
                 }
                 catch (OperationCanceledException)
                 {
+                    bool cancelOnlyThisJob = _cancelActiveAiJobOnly;
+                    _cancelActiveAiJobOnly = false;
                     UnregisterQueuedManualRegions(job);
                     CleanupManualOcrSnippets(job.ManualSnippets);
+                    _activeAiJob = null;
+                    _pictureBox.Invalidate();
+
+                    if (cancelOnlyThisJob)
+                    {
+                        RefreshAiStatusLabel("Cancelled current AI job");
+                        _aiCts?.Dispose();
+                        _aiCts = _queuedAiJobs.Count > 0 ? new CancellationTokenSource() : null;
+                        if (_aiCts == null)
+                            break;
+                        continue;
+                    }
+
                     RefreshAiStatusLabel("Operation aborted");
                     break;
                 }
@@ -2681,12 +2788,14 @@ public class ImageViewerForm : Form
                 bool appliedToCurrent = ApplyAiJobResultIfCurrent(job, result);
                 RefreshAiStatusLabel(appliedToCurrent ? result.StatusText : null);
                 _activeAiJob = null;
+                UpdateCancelCurrentJobButton();
                 _pictureBox.Invalidate();
             }
         }
         finally
         {
             _activeAiJob = null;
+            _cancelActiveAiJobOnly = false;
             _aiCts?.Dispose();
             _aiCts = null;
             string finalStatus = _aiStatusLabel.Text;
@@ -2706,7 +2815,7 @@ public class ImageViewerForm : Form
         {
             var baseOcr = GetBestBaseOcrForImage(imagePath);
             var existingTranslation = GetBestSavedTranslationForImage(imagePath);
-            var (manualBlocks, detectedLanguage) = await ExtractManualOcrBlocksAsync(job.ManualSnippets, model ?? "", job.UseOcrReasoning, job.SourceLanguageHint, cancellationToken);
+            var (manualBlocks, detectedLanguage) = await ExtractManualOcrBlocksAsync(job.ManualSnippets, model ?? "", job.UseOcrReasoning, job.SourceLanguageHint, job.OcrHint, cancellationToken);
             if (manualBlocks.Count == 0)
             {
                 return new ImageAiJobResult
@@ -2803,7 +2912,7 @@ public class ImageViewerForm : Form
 
         if (!usingSavedOcr)
         {
-            ocr = await _llmService.ExtractImageTextAsync(imagePath, model, cancellationToken, useReasoning: job.UseOcrReasoning, sourceLanguageHint: job.SourceLanguageHint);
+            ocr = await _llmService.ExtractImageTextAsync(imagePath, model, cancellationToken, useReasoning: job.UseOcrReasoning, sourceLanguageHint: job.SourceLanguageHint, ocrHint: job.OcrHint);
             if (ocr == null)
             {
                 return new ImageAiJobResult
@@ -3001,6 +3110,7 @@ public class ImageViewerForm : Form
     {
         try
         {
+            _cancelActiveAiJobOnly = false;
             if (_activeAiJob != null)
                 RestoreManualRegionsFromAbortedJob(_activeAiJob);
 
@@ -3018,12 +3128,56 @@ public class ImageViewerForm : Form
             }
 
             UpdateManualOcrUiState();
+            UpdateCancelCurrentJobButton();
             RefreshAiStatusLabel("Aborting...");
             _pictureBox.Invalidate();
         }
         catch (Exception ex)
         {
             LlmDebugLogger.LogError($"Failed to abort AI: {ex.Message}");
+        }
+    }
+
+    private void CancelAiJobForCurrentImage()
+    {
+        try
+        {
+            string? imagePath = GetCurrentImagePath();
+            if (string.IsNullOrWhiteSpace(imagePath))
+                return;
+
+            if (_activeAiJob != null &&
+                string.Equals(_activeAiJob.ImagePath, imagePath, StringComparison.OrdinalIgnoreCase))
+            {
+                RestoreManualRegionsFromAbortedJob(_activeAiJob);
+                _cancelActiveAiJobOnly = true;
+                _aiCts?.Cancel();
+                RefreshAiStatusLabel("Cancelling current AI job...");
+                UpdateCancelCurrentJobButton();
+                _pictureBox.Invalidate();
+                return;
+            }
+
+            int queuedIndex = _queuedAiJobs.FindIndex(job =>
+                string.Equals(job.ImagePath, imagePath, StringComparison.OrdinalIgnoreCase));
+            if (queuedIndex < 0)
+                return;
+
+            var queuedJob = _queuedAiJobs[queuedIndex];
+            _queuedAiJobs.RemoveAt(queuedIndex);
+            RestoreManualRegionsFromAbortedJob(queuedJob);
+            DecrementQueuedAiJobsForImage(queuedJob.ImagePath);
+            UnregisterQueuedManualRegions(queuedJob);
+            CleanupManualOcrSnippets(queuedJob.ManualSnippets);
+
+            UpdateManualOcrUiState();
+            UpdateCancelCurrentJobButton();
+            SetAiBusy(HasQueuedAiWork(), "Cancelled queued AI job");
+            _pictureBox.Invalidate();
+        }
+        catch (Exception ex)
+        {
+            LlmDebugLogger.LogError($"Failed to cancel current image AI job: {ex.Message}");
         }
     }
 
@@ -3536,10 +3690,12 @@ public class ImageViewerForm : Form
             _titleLabel.Text = $"Speed Explorer - {Path.GetFileName(path)}";
 
             UpdateTags(path);
+            EnsureImageFolderWatcher(path);
             FitToWindow(allowUpscale: false);
             TryApplySavedOcrForCurrentImage(allowStatusUpdate: true);
             UpdateSavedCacheUiState();
             UpdateManualOcrUiState();
+            UpdateCancelCurrentJobButton();
             RefreshAiStatusLabel();
         }
         catch (SixLabors.ImageSharp.UnknownImageFormatException)
@@ -3554,6 +3710,220 @@ public class ImageViewerForm : Form
         }
         _pictureBox.Invalidate();
         UpdateManualOcrUiState();
+        UpdateCancelCurrentJobButton();
+    }
+
+    private void EnsureImageFolderWatcher(string imagePath)
+    {
+        string? folder = Path.GetDirectoryName(imagePath);
+        if (string.IsNullOrWhiteSpace(folder) || !Directory.Exists(folder))
+            return;
+
+        folder = folder.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        if (string.Equals(_watchedImageFolder, folder, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        _imageFolderWatcher?.Dispose();
+        _imageFolderWatcher = null;
+        _watchedImageFolder = folder;
+
+        try
+        {
+            _imageFolderWatcher = new FileSystemWatcher(folder)
+            {
+                IncludeSubdirectories = false,
+                NotifyFilter = NotifyFilters.FileName | NotifyFilters.CreationTime | NotifyFilters.LastWrite,
+                EnableRaisingEvents = true
+            };
+            _imageFolderWatcher.Created += ImageFolderWatcher_FileChanged;
+            _imageFolderWatcher.Renamed += ImageFolderWatcher_FileChanged;
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"Failed to watch image viewer folder: {ex.Message}");
+        }
+    }
+
+    private void ImageFolderWatcher_FileChanged(object sender, FileSystemEventArgs e)
+    {
+        try
+        {
+            BeginInvoke(new Action(() =>
+            {
+                _imageFolderRefreshTimer.Stop();
+                _imageFolderRefreshTimer.Start();
+            }));
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"Failed to schedule image viewer folder refresh: {ex.Message}");
+        }
+    }
+
+    private void ImageFolderRefreshTimer_Tick(object? sender, EventArgs e)
+    {
+        _imageFolderRefreshTimer.Stop();
+        AddNewImagesFromWatchedFolder();
+    }
+
+    private void AddNewImagesFromWatchedFolder()
+    {
+        if (string.IsNullOrWhiteSpace(_watchedImageFolder) || !Directory.Exists(_watchedImageFolder))
+            return;
+
+        var seen = new HashSet<string>(_imagePaths, StringComparer.OrdinalIgnoreCase);
+        var added = new List<string>();
+        try
+        {
+            foreach (var file in Directory.EnumerateFiles(_watchedImageFolder))
+            {
+                string fullPath;
+                try { fullPath = Path.GetFullPath(file); }
+                catch { continue; }
+
+                if (!seen.Add(fullPath))
+                    continue;
+                if (!FileSystemService.IsImageFile(fullPath))
+                    continue;
+
+                added.Add(fullPath);
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"Failed to add new image viewer files: {ex.Message}");
+            return;
+        }
+
+        if (added.Count == 0)
+            return;
+
+        if (_sortOptions == null)
+        {
+            int insertIndex = FindWatchedFolderAppendIndex();
+            _imagePaths.InsertRange(insertIndex, added);
+        }
+        else
+        {
+            added.Sort((a, b) => CompareImagePathsForSort(a, b, _sortOptions));
+            foreach (var imagePath in added)
+            {
+                int insertIndex = FindWatchedFolderSortedInsertIndex(imagePath, _sortOptions);
+                _imagePaths.Insert(insertIndex, imagePath);
+            }
+        }
+
+        string? currentPath = GetCurrentImagePath();
+        if (!string.IsNullOrWhiteSpace(currentPath))
+        {
+            int newIndex = _imagePaths.FindIndex(path => string.Equals(path, currentPath, StringComparison.OrdinalIgnoreCase));
+            if (newIndex >= 0)
+                _currentIndex = newIndex;
+        }
+
+        _indexLabel.Text = $"{_currentIndex + 1} / {_imagePaths.Count}";
+    }
+
+    private int FindWatchedFolderAppendIndex()
+    {
+        if (string.IsNullOrWhiteSpace(_watchedImageFolder))
+            return _imagePaths.Count;
+
+        int lastFolderImageIndex = -1;
+        for (int i = 0; i < _imagePaths.Count; i++)
+        {
+            string? folder = Path.GetDirectoryName(_imagePaths[i]);
+            if (!string.IsNullOrWhiteSpace(folder) &&
+                string.Equals(
+                    folder.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+                    _watchedImageFolder,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                lastFolderImageIndex = i;
+            }
+        }
+
+        return lastFolderImageIndex >= 0 ? lastFolderImageIndex + 1 : _imagePaths.Count;
+    }
+
+    private int FindWatchedFolderSortedInsertIndex(string imagePath, ImageViewerSortOptions sortOptions)
+    {
+        if (string.IsNullOrWhiteSpace(_watchedImageFolder))
+            return _imagePaths.Count;
+
+        int lastFolderImageIndex = -1;
+        for (int i = 0; i < _imagePaths.Count; i++)
+        {
+            if (!IsPathInWatchedImageFolder(_imagePaths[i]))
+                continue;
+
+            lastFolderImageIndex = i;
+            if (CompareImagePathsForSort(imagePath, _imagePaths[i], sortOptions) < 0)
+                return i;
+        }
+
+        return lastFolderImageIndex >= 0 ? lastFolderImageIndex + 1 : _imagePaths.Count;
+    }
+
+    private bool IsPathInWatchedImageFolder(string imagePath)
+    {
+        if (string.IsNullOrWhiteSpace(_watchedImageFolder))
+            return false;
+
+        string? folder = Path.GetDirectoryName(imagePath);
+        return !string.IsNullOrWhiteSpace(folder) &&
+            string.Equals(
+                folder.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+                _watchedImageFolder,
+                StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static int CompareImagePathsForSort(string leftPath, string rightPath, ImageViewerSortOptions sortOptions)
+    {
+        if (string.Equals(leftPath, rightPath, StringComparison.OrdinalIgnoreCase))
+            return 0;
+
+        if (sortOptions.TaggedFilesOnTop)
+        {
+            bool leftTagged = TagManager.Instance.HasTags(leftPath);
+            bool rightTagged = TagManager.Instance.HasTags(rightPath);
+            if (leftTagged != rightTagged)
+                return leftTagged ? -1 : 1;
+        }
+
+        var leftItem = CreateImageFileItemForSort(leftPath);
+        var rightItem = CreateImageFileItemForSort(rightPath);
+        return FileSystemService.CompareItems(leftItem, rightItem, sortOptions.Column, sortOptions.Direction);
+    }
+
+    private static FileItem CreateImageFileItemForSort(string path)
+    {
+        try
+        {
+            var info = new FileInfo(path);
+            return new FileItem
+            {
+                FullPath = info.FullName,
+                Name = info.Name,
+                IsDirectory = false,
+                Size = info.Exists ? info.Length : 0,
+                DateModified = info.Exists ? info.LastWriteTime : DateTime.MinValue,
+                DateCreated = info.Exists ? info.CreationTime : DateTime.MinValue,
+                Extension = info.Extension,
+                DisplayPath = info.DirectoryName ?? ""
+            };
+        }
+        catch
+        {
+            return new FileItem
+            {
+                FullPath = path,
+                Name = Path.GetFileName(path),
+                IsDirectory = false,
+                Extension = Path.GetExtension(path),
+                DisplayPath = Path.GetDirectoryName(path) ?? ""
+            };
+        }
     }
 
     private bool TryGetCurrentImageDisplayRect(out RectangleF imageRect)
@@ -4439,6 +4809,10 @@ public class ImageViewerForm : Form
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
         ClearAnimationState();
+        _imageFolderRefreshTimer.Stop();
+        _imageFolderRefreshTimer.Dispose();
+        _imageFolderWatcher?.Dispose();
+        _imageFolderWatcher = null;
         _animationTimer.Dispose();
         base.OnFormClosed(e);
     }
