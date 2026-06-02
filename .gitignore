@@ -17,6 +17,7 @@ folder_settings.json
 debug_*.log
 build_warnings*.log
 build_*.txt
+IMAGE_VIEWER_TBD.md
 
 # Keep repository clean from icon scratch assets
 Icons/*

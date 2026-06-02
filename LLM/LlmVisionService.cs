@@ -222,7 +222,7 @@ public class LlmVisionService
             "You are an OCR extractor. Return strict JSON only. " +
             "Extract readable text from the image. " +
             "Be conservative with block count: merge nearby lines from the same text region and avoid duplicate/overlapping blocks. " +
-            "Return blocks with coordinates x,y,w,h and optional font_size." +
+            "Return blocks with coordinates x,y,w,h and optional font_size. Coordinate range is from 0 to 1." +
             (useReasoning ? " Include a concise thought field explaining OCR interpretation choices before the final OCR fields." : "");
 
         string userPrompt = WithReasoningDirective(
@@ -647,42 +647,14 @@ public class LlmVisionService
         }
             : null;
 
-        (string Json, List<LlmImageStats> Stats) BuildRequest(bool usePreparedJpeg)
+        (string Json, List<LlmImageStats> Stats) BuildRequest(long maxPixels, int jpegQuality)
         {
-            byte[] imageBytes;
-            string mime;
-            var stats = new LlmImageStats { Path = imagePath };
-
-            if (usePreparedJpeg)
-            {
-                (imageBytes, stats) = LlmImageProcessor.PrepareImageForVision(imagePath, Math.Min(LlmImageProcessor.GetConfiguredVisionMaxPixels(), 1024L * 1024L), 95);
-                mime = "image/jpeg";
-            }
-            else
-            {
-                imageBytes = File.ReadAllBytes(imagePath);
-                stats.Bytes = imageBytes.Length;
-                try
-                {
-                    using var infoImage = SixLabors.ImageSharp.Image.Load<SixLabors.ImageSharp.PixelFormats.Rgba32>(imagePath);
-                    infoImage.Mutate(static ctx => ctx.AutoOrient());
-                    stats.OrigW = infoImage.Width;
-                    stats.OrigH = infoImage.Height;
-                    stats.NewW = infoImage.Width;
-                    stats.NewH = infoImage.Height;
-                }
-                catch
-                {
-                    // Best-effort stats only; raw bytes are enough to send the request.
-                }
-                mime = "image/png";
-            }
-
+            var (imageBytes, stats) = LlmImageProcessor.PrepareImageForVision(imagePath, maxPixels, jpegQuality);
             string base64 = Convert.ToBase64String(imageBytes);
             var contentList = new List<object>
             {
                 new { type = "text", text = userPrompt },
-                new { type = "image_url", image_url = new { url = $"data:{mime};base64,{base64}" } }
+                new { type = "image_url", image_url = new { url = $"data:image/jpeg;base64,{base64}" } }
             };
 
             var messages = new[]
@@ -752,13 +724,14 @@ public class LlmVisionService
         {
             LlmDebugLogger.LogExecution($"ExtractSnippetText endpoint: {requestUrl} | model: {model} | vision: true | timeout: {timeoutSeconds}s");
 
-            var (requestJson, stats) = BuildRequest(usePreparedJpeg: false);
+            long snippetMaxPixels = Math.Min(LlmImageProcessor.GetConfiguredVisionMaxPixels(), 1024L * 1024L);
+            var (requestJson, stats) = BuildRequest(snippetMaxPixels, 95);
             string? result = await SendAsync(requestJson, stats, "primary");
             if (result != null)
                 return result;
 
-            LlmDebugLogger.LogExecution("ExtractSnippetText retry with prepared JPEG payload", success: false);
-            var (fallbackJson, fallbackStats) = BuildRequest(usePreparedJpeg: true);
+            LlmDebugLogger.LogExecution("ExtractSnippetText retry with smaller prepared JPEG payload", success: false);
+            var (fallbackJson, fallbackStats) = BuildRequest(Math.Min(snippetMaxPixels, 768L * 768L), 85);
             return await SendAsync(fallbackJson, fallbackStats, "retry-jpeg");
         }
         catch (OperationCanceledException)
@@ -1030,29 +1003,47 @@ public class LlmVisionService
             }
         };
 
-        var (imageBytes, imageStats) = LlmImageProcessor.PrepareImageForVision(imagePath, LlmImageProcessor.GetConfiguredVisionMaxPixels(), 85);
-        string base64 = Convert.ToBase64String(imageBytes);
-        var contentList = new List<object>
-        {
-            new { type = "text", text = userPrompt },
-            new { type = "image_url", image_url = new { url = $"data:image/jpeg;base64,{base64}" } }
-        };
+        long contextMaxPixels = Math.Min(LlmImageProcessor.GetConfiguredVisionMaxPixels(), 1024L * 1024L);
 
-        var messages = new[]
+        (string Json, LlmImageStats Stats) BuildContextImageRequest(long maxPixels, int jpegQuality)
         {
-            new { role = "system", content = (object)systemPrompt },
-            new { role = "user", content = (object)contentList }
-        };
+            var (imageBytes, imageStats) = LlmImageProcessor.PrepareImageForVision(imagePath, maxPixels, jpegQuality);
+            string base64 = Convert.ToBase64String(imageBytes);
+            var contentList = new List<object>
+            {
+                new { type = "text", text = userPrompt },
+                new { type = "image_url", image_url = new { url = $"data:image/jpeg;base64,{base64}" } }
+            };
 
-        var requestBody = new
+            var messages = new[]
+            {
+                new { role = "system", content = (object)systemPrompt },
+                new { role = "user", content = (object)contentList }
+            };
+
+            var requestBody = new
+            {
+                model = model,
+                messages = messages,
+                response_format = schema,
+                stream = false
+            };
+
+            return (JsonSerializer.Serialize(requestBody, new JsonSerializerOptions { WriteIndented = true }), imageStats);
+        }
+
+        string requestJson;
+        LlmImageStats imageStats;
+        try
         {
-            model = model,
-            messages = messages,
-            response_format = schema,
-            stream = false
-        };
+            (requestJson, imageStats) = BuildContextImageRequest(contextMaxPixels, 75);
+        }
+        catch (Exception ex)
+        {
+            LlmDebugLogger.LogError($"TranslateTextBlocksWithContextImage failed to prepare image: {ex.Message}");
+            return await TranslateTextBlocksAsync(cleanedBlocks, targetLanguage, apiUrl, sourceLanguage, contextHint, modelOverride, cancellationToken, useReasoning);
+        }
 
-        string requestJson = JsonSerializer.Serialize(requestBody, new JsonSerializerOptions { WriteIndented = true });
         LlmDebugLogger.LogRequest(Path.GetDirectoryName(imagePath) ?? "", userPrompt, systemPrompt, requestJson, new[] { imagePath }, new[] { imageStats });
 
         try
@@ -1063,6 +1054,46 @@ public class LlmVisionService
             cts.CancelAfter(TimeSpan.FromSeconds(translationTimeoutSeconds));
             var response = await LlmModelManager.HttpClient.PostAsync(requestUrl, content, cts.Token);
             var responseText = await response.Content.ReadAsStringAsync();
+
+            if (!response.IsSuccessStatusCode && LlmModelManager.IsModelUnloadedError(responseText))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (await _modelManager.TryRecoverVisionModelAsync(requestUrl, model, "TranslateTextBlocksWithContextImage primary model-unloaded", cancellationToken))
+                {
+                    using var recoveryContent = new StringContent(requestJson, Encoding.UTF8, "application/json");
+                    using var recoveryCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                    recoveryCts.CancelAfter(TimeSpan.FromSeconds(translationTimeoutSeconds));
+                    response = await LlmModelManager.HttpClient.PostAsync(requestUrl, recoveryContent, recoveryCts.Token);
+                    responseText = await response.Content.ReadAsStringAsync();
+                }
+            }
+
+            if (!response.IsSuccessStatusCode &&
+                LlmModelManager.IsFailedToProcessImageError(response.StatusCode, responseText))
+            {
+                LlmDebugLogger.LogExecution("TranslateTextBlocksWithContextImage retry with smaller context image", success: false);
+                (requestJson, imageStats) = BuildContextImageRequest(Math.Min(contextMaxPixels, 768L * 768L), 60);
+                LlmDebugLogger.LogRequest(Path.GetDirectoryName(imagePath) ?? "", userPrompt, systemPrompt, requestJson, new[] { imagePath }, new[] { imageStats });
+
+                using var retryContent = new StringContent(requestJson, Encoding.UTF8, "application/json");
+                using var retryCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                retryCts.CancelAfter(TimeSpan.FromSeconds(translationTimeoutSeconds));
+                response = await LlmModelManager.HttpClient.PostAsync(requestUrl, retryContent, retryCts.Token);
+                responseText = await response.Content.ReadAsStringAsync();
+
+                if (!response.IsSuccessStatusCode && LlmModelManager.IsModelUnloadedError(responseText))
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (await _modelManager.TryRecoverVisionModelAsync(requestUrl, model, "TranslateTextBlocksWithContextImage retry model-unloaded", cancellationToken))
+                    {
+                        using var retryRecoveryContent = new StringContent(requestJson, Encoding.UTF8, "application/json");
+                        using var retryRecoveryCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                        retryRecoveryCts.CancelAfter(TimeSpan.FromSeconds(translationTimeoutSeconds));
+                        response = await LlmModelManager.HttpClient.PostAsync(requestUrl, retryRecoveryContent, retryRecoveryCts.Token);
+                        responseText = await response.Content.ReadAsStringAsync();
+                    }
+                }
+            }
 
             if (!response.IsSuccessStatusCode)
             {
@@ -1368,6 +1399,9 @@ public class LlmVisionService
         if (marker != '.' && marker != ')' && marker != ':' && marker != '-')
             return false;
 
+        if (marker == ':' && i + 1 < trimmed.Length && !char.IsWhiteSpace(trimmed[i + 1]))
+            return false;
+
         if (!int.TryParse(trimmed.Substring(0, i), out order))
             return false;
 
@@ -1438,6 +1472,9 @@ public class LlmVisionService
             char marker = trimmed[i];
             if (marker == '.' || marker == ')' || marker == ':' || marker == '-')
             {
+                if (marker == ':' && i + 1 < trimmed.Length && !char.IsWhiteSpace(trimmed[i + 1]))
+                    return trimmed;
+
                 i++;
                 while (i < trimmed.Length && char.IsWhiteSpace(trimmed[i]))
                     i++;

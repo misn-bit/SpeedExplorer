@@ -101,6 +101,7 @@ public class ImageViewerForm : Form
     private readonly Button _zoomInBtn;
     private readonly Button _fitBtn;
     private readonly Button _actualBtn;
+    private readonly Button _rotateBtn;
     private readonly Button _fullscreenBtn;
     private readonly Button _aiToggleBtn;
     private readonly Button _ocrBtn;
@@ -114,9 +115,12 @@ public class ImageViewerForm : Form
     private readonly Button _abortBtn;
     private readonly Button _cancelCurrentJobBtn;
     private readonly Button _openSavedOcrFileBtn;
+    private readonly Button _closeBtn;
+    private ToolStripMenuItem _editOverlayBlockMenuItem = null!;
     private readonly LlmService _llmService = new();
     private CancellationTokenSource? _aiCts;
     private CancellationTokenSource? _tagCts;
+    private string? _activeTagImagePath;
     private FileSystemWatcher? _imageFolderWatcher;
     private readonly System.Windows.Forms.Timer _imageFolderRefreshTimer;
     private string? _watchedImageFolder;
@@ -143,6 +147,14 @@ public class ImageViewerForm : Form
     private bool _showSavedTranslationPreferred;
     private bool _manualOcrDrawMode;
     private bool _isDrawingManualOcrRegion;
+    private bool _cornerCloseHover;
+    private int _contextOverlayBlockIndex = -1;
+    private OverlayDragMode _overlayDragMode = OverlayDragMode.None;
+    private int _overlayDragBlockIndex = -1;
+    private string? _overlayDragImagePath;
+    private Point _overlayDragStartPoint;
+    private RectangleF _overlayDragStartRect;
+    private bool _overlayDragChanged;
     private Point _manualOcrDragStart;
     private Point _manualOcrDragCurrent;
     private readonly List<ManualOcrRegion> _pendingManualOcrRegions = new();
@@ -162,6 +174,21 @@ public class ImageViewerForm : Form
         public float NormalizedFontSize { get; set; }
         public bool IsManualBox { get; set; }
         public bool IsPendingManualBox { get; set; }
+        public bool HasUserOverride { get; set; }
+    }
+
+    private enum OverlayDragMode
+    {
+        None,
+        Move,
+        ResizeLeft,
+        ResizeRight,
+        ResizeTop,
+        ResizeBottom,
+        ResizeTopLeft,
+        ResizeTopRight,
+        ResizeBottomLeft,
+        ResizeBottomRight
     }
 
     private sealed class ManualOcrRegion
@@ -215,6 +242,27 @@ public class ImageViewerForm : Form
         public string TranslationFullText { get; set; } = "";
         public List<string> TranslationLines { get; set; } = new();
         public long TranslationSavedUtcTicks { get; set; }
+        public List<OcrOverlayBlockOverride> OverlayOverrides { get; set; } = new();
+    }
+
+    private sealed class OcrOverlayBlockOverride
+    {
+        public int SourceIndex { get; set; }
+        public string? Text { get; set; }
+        public string? TranslationText { get; set; }
+        public float X { get; set; }
+        public float Y { get; set; }
+        public float W { get; set; }
+        public float H { get; set; }
+        public float FontSize { get; set; }
+    }
+
+    private sealed class OverlayBlockEditResult
+    {
+        public string OcrText { get; set; } = "";
+        public string TranslationText { get; set; } = "";
+        public RectangleF NormalizedRect { get; set; }
+        public float NormalizedFontSize { get; set; }
     }
 
     private const string OcrCacheJsonSeparator = "###__OCR_CACHE_JSON__###";
@@ -321,9 +369,9 @@ public class ImageViewerForm : Form
         _titleBar.Controls.Add(_titleLabel);
 
         // Window Controls (Matching MainForm)
-        var closeBtn = CreateWindowButton("X", "Close");
-        closeBtn.FlatAppearance.MouseOverBackColor = Color.FromArgb(232, 17, 35);
-        closeBtn.Click += (s, e) => Close();
+        _closeBtn = CreateWindowButton("X", "Close");
+        _closeBtn.FlatAppearance.MouseOverBackColor = Color.FromArgb(232, 17, 35);
+        _closeBtn.Click += (s, e) => Close();
         
         var maxBtn = CreateWindowButton("[ ]", "Maximize");
         maxBtn.Click += (s, e) => ToggleMaximize();
@@ -334,14 +382,14 @@ public class ImageViewerForm : Form
         // Manual positioning to match MainForm exactly
         _titleBar.Resize += (s, e) =>
         {
-            closeBtn.Location = new Point(_titleBar.Width - closeBtn.Width, 0);
-            maxBtn.Location = new Point(closeBtn.Left - maxBtn.Width, 0);
+            _closeBtn.Location = new Point(_titleBar.Width - _closeBtn.Width, 0);
+            maxBtn.Location = new Point(_closeBtn.Left - maxBtn.Width, 0);
             minBtn.Location = new Point(maxBtn.Left - minBtn.Width, 0);
             _titleLabel.Width = Math.Max(Scale(80), minBtn.Left - Scale(12));
         };
         
         // Add buttons
-        _titleBar.Controls.Add(closeBtn);
+        _titleBar.Controls.Add(_closeBtn);
         _titleBar.Controls.Add(maxBtn);
         _titleBar.Controls.Add(minBtn);
 
@@ -356,6 +404,11 @@ public class ImageViewerForm : Form
         _pictureBox.MouseDown += PictureBox_MouseDown;
         _pictureBox.MouseMove += PictureBox_MouseMove;
         _pictureBox.MouseUp += PictureBox_MouseUp;
+        _pictureBox.MouseDoubleClick += (s, e) =>
+        {
+            if (e.Button == MouseButtons.Left)
+                ToggleFullscreen();
+        };
         _pictureBox.MouseWheel += PictureBox_MouseWheel;
         _imageContextMenu = BuildImageContextMenu();
         _pictureBox.ContextMenuStrip = _imageContextMenu;
@@ -416,7 +469,9 @@ public class ImageViewerForm : Form
             BackColor = Color.FromArgb(45, 45, 45),
             ForeColor = Color.Gainsboro,
             Font = new Font("Segoe UI", 8),
-            Text = "English",
+            Text = string.IsNullOrWhiteSpace(_settings.ImageViewerTargetLanguage)
+                ? "English"
+                : _settings.ImageViewerTargetLanguage,
             Location = new Point(Scale(86), Scale(3)),
             Width = Scale(248)
         };
@@ -443,6 +498,7 @@ public class ImageViewerForm : Form
             BackColor = Color.FromArgb(45, 45, 45),
             ForeColor = Color.Gainsboro,
             Font = new Font("Segoe UI", 8),
+            Text = _settings.ImageViewerSourceLanguageHint ?? "",
             Location = new Point(Scale(86), Scale(3)),
             Width = Scale(248)
         };
@@ -469,6 +525,7 @@ public class ImageViewerForm : Form
             BackColor = Color.FromArgb(45, 45, 45),
             ForeColor = Color.Gainsboro,
             Font = new Font("Segoe UI", 8),
+            Text = _settings.ImageViewerOcrHint ?? "",
             Location = new Point(Scale(86), Scale(3)),
             Width = Scale(248),
             Height = Scale(38),
@@ -498,6 +555,7 @@ public class ImageViewerForm : Form
             BackColor = Color.FromArgb(45, 45, 45),
             ForeColor = Color.Gainsboro,
             Font = new Font("Segoe UI", 8),
+            Text = _settings.ImageViewerTranslationContextHint ?? "",
             Location = new Point(Scale(86), Scale(3)),
             Width = Scale(248),
             Height = Scale(38),
@@ -521,6 +579,7 @@ public class ImageViewerForm : Form
         {
             AutoSize = true,
             Text = "Max effort translate",
+            Checked = _settings.ImageViewerManualMaxEffortTranslation,
             ForeColor = ForeColor_Dark,
             Font = new Font("Segoe UI", 8),
             BackColor = Color.Transparent,
@@ -574,7 +633,7 @@ public class ImageViewerForm : Form
         {
             AutoSize = true,
             Text = "Show boxes",
-            Checked = true,
+            Checked = _settings.ImageViewerOverlayBoxesVisible,
             ForeColor = ForeColor_Dark,
             Font = new Font("Segoe UI", 8),
             BackColor = Color.Transparent,
@@ -619,7 +678,7 @@ public class ImageViewerForm : Form
         {
             AutoSize = true,
             Text = "Show saved translation",
-            Checked = false,
+            Checked = _settings.ImageViewerShowSavedTranslation,
             ForeColor = ForeColor_Dark,
             Font = new Font("Segoe UI", 8),
             BackColor = Color.Transparent,
@@ -682,13 +741,28 @@ public class ImageViewerForm : Form
         _aiPanel.Controls.Add(sourceHintRow);
         _aiPanel.Controls.Add(langRow);
         _aiPanel.Controls.Add(aiActionRow);
+        _aiPanel.Visible = _settings.ImageViewerAiPanelVisible;
 
         _ocrBtn.Click += async (s, e) => await RunViewerOcrAsync(false);
         _translateBtn.Click += async (s, e) => await RunViewerOcrAsync(true);
         _drawOcrBoxBtn.Click += (s, e) => ToggleManualOcrDrawMode();
         _clearManualOcrBoxesBtn.Click += (s, e) => ClearPendingManualOcrRegions();
         _tagBtn.Click += async (s, e) => await RunViewerTaggingAsync();
-        _overlayToggle.CheckedChanged += (s, e) => _pictureBox.Invalidate();
+        _targetLanguageBox.TextChanged += (s, e) => _settings.ImageViewerTargetLanguage = _targetLanguageBox.Text;
+        _sourceLanguageHintBox.TextChanged += (s, e) => _settings.ImageViewerSourceLanguageHint = _sourceLanguageHintBox.Text;
+        _ocrHintBox.TextChanged += (s, e) => _settings.ImageViewerOcrHint = _ocrHintBox.Text;
+        _translationContextHintBox.TextChanged += (s, e) => _settings.ImageViewerTranslationContextHint = _translationContextHintBox.Text;
+        _manualMaxEffortCheck.CheckedChanged += (s, e) =>
+        {
+            _settings.ImageViewerManualMaxEffortTranslation = _manualMaxEffortCheck.Checked;
+            _settings.Save();
+        };
+        _overlayToggle.CheckedChanged += (s, e) =>
+        {
+            _settings.ImageViewerOverlayBoxesVisible = _overlayToggle.Checked;
+            _settings.Save();
+            _pictureBox.Invalidate();
+        };
         _showSavedOcrCheck.CheckedChanged += (s, e) => OnShowSavedOcrToggled();
         _showSavedTranslationCheck.CheckedChanged += (s, e) => OnShowSavedTranslationToggled();
         _ocrReasoningCheck.CheckedChanged += (s, e) =>
@@ -803,6 +877,9 @@ public class ImageViewerForm : Form
         _actualBtn = CreateButton("1:1", Scale(50));
         _actualBtn.Click += (s, e) => ActualSize();
 
+        _rotateBtn = CreateButton("↻", Scale(38));
+        _rotateBtn.Click += (s, e) => RotateImageClockwise();
+
         _fullscreenBtn = CreateButton("⛶", Scale(40));
         _fullscreenBtn.Click += (s, e) => ToggleFullscreen();
 
@@ -810,7 +887,7 @@ public class ImageViewerForm : Form
         _aiToggleBtn.Click += (s, e) => ToggleAiPanel();
 
         // Add controls
-        _controlPanel.Controls.AddRange(new Control[] { _prevBtn, _nextBtn, _infoContainer, _zoomOutBtn, _zoomSlider, _zoomInBtn, _zoomLabel, _fitBtn, _actualBtn, _fullscreenBtn, _aiToggleBtn });
+        _controlPanel.Controls.AddRange(new Control[] { _prevBtn, _nextBtn, _infoContainer, _zoomOutBtn, _zoomSlider, _zoomInBtn, _zoomLabel, _fitBtn, _actualBtn, _rotateBtn, _fullscreenBtn, _aiToggleBtn });
         _controlPanel.Resize += (s, e) => LayoutControls();
 
         Controls.Add(_contentPanel);
@@ -828,6 +905,7 @@ public class ImageViewerForm : Form
         };
 
         LoadCurrentImage();
+        ApplyAiPanelToggleVisualState();
         LayoutControls();
         ApplySavedWindowState();
     }
@@ -884,6 +962,26 @@ public class ImageViewerForm : Form
             FitToWindowBySmallerDimension();
             return true;
         }
+        if (IsHotkeyPressed("ImageViewerToggleAI", keyData))
+        {
+            ToggleAiPanel();
+            return true;
+        }
+        if (IsHotkeyPressed("ImageViewerStartTranslation", keyData))
+        {
+            _ = RunViewerOcrAsync(true);
+            return true;
+        }
+        if (IsHotkeyPressed("ImageViewerStartOcr", keyData))
+        {
+            _ = RunViewerOcrAsync(false);
+            return true;
+        }
+        if (IsHotkeyPressed("ImageViewerTag", keyData))
+        {
+            _ = RunViewerTaggingAsync();
+            return true;
+        }
         if (IsHotkeyPressed("EditTags", keyData))
         {
             EditCurrentImageTags();
@@ -934,16 +1032,27 @@ public class ImageViewerForm : Form
 
     private bool IsTextInputFocused()
     {
+        if (_aiOutputBox.Focused || ActiveControl == _aiOutputBox)
+            return false;
+
         if (_targetLanguageBox.Focused ||
             _sourceLanguageHintBox.Focused ||
             _ocrHintBox.Focused ||
-            _translationContextHintBox.Focused ||
-            _aiOutputBox.Focused)
+            _translationContextHintBox.Focused)
         {
             return true;
         }
 
         return ActiveControl is TextBoxBase or ComboBox or RichTextBox;
+    }
+
+    private void FocusViewerForHotkeys()
+    {
+        if (!IsTextInputFocused() && !_aiOutputBox.Focused)
+            return;
+
+        ActiveControl = null;
+        Focus();
     }
 
 
@@ -990,10 +1099,21 @@ public class ImageViewerForm : Form
         if (m.Msg == WM_NCHITTEST)
         {
             base.WndProc(ref m);
-            if (this.WindowState == FormWindowState.Normal && (int)m.Result == HTCLIENT)
+            if ((int)m.Result == HTCLIENT)
             {
                 Point screenPoint = new Point(m.LParam.ToInt32());
                 Point clientPoint = this.PointToClient(screenPoint);
+                if (IsPointInCornerCloseHitZone(clientPoint))
+                {
+                    SetCornerCloseHover(true);
+                    m.Result = (IntPtr)HTCLIENT;
+                    return;
+                }
+                SetCornerCloseHover(false);
+
+                if (this.WindowState != FormWindowState.Normal)
+                    return;
+
                 int resizeBorder = Scale(15);
                 if (clientPoint.Y <= resizeBorder)
                 {
@@ -1016,6 +1136,46 @@ public class ImageViewerForm : Form
             return;
         }
         base.WndProc(ref m);
+    }
+
+    protected override void OnMouseMove(MouseEventArgs e)
+    {
+        base.OnMouseMove(e);
+        SetCornerCloseHover(IsPointInCornerCloseHitZone(e.Location));
+    }
+
+    protected override void OnMouseLeave(EventArgs e)
+    {
+        base.OnMouseLeave(e);
+        SetCornerCloseHover(false);
+    }
+
+    protected override void OnMouseUp(MouseEventArgs e)
+    {
+        base.OnMouseUp(e);
+        if (e.Button == MouseButtons.Left && IsPointInCornerCloseHitZone(e.Location))
+            Close();
+    }
+
+    private void SetCornerCloseHover(bool hover)
+    {
+        if (_cornerCloseHover == hover)
+            return;
+
+        _cornerCloseHover = hover;
+        _closeBtn.BackColor = hover ? Color.FromArgb(232, 17, 35) : Color.Transparent;
+        _closeBtn.ForeColor = ForeColor_Dark;
+    }
+
+    private bool IsPointInCornerCloseHitZone(Point clientPoint)
+    {
+        if (_isFullscreen)
+            return false;
+
+        int closeWidth = _closeBtn.Width > 0 ? _closeBtn.Width : Scale(46);
+        int closeHeight = Math.Max(TitleBarHeight, _closeBtn.Height);
+        return clientPoint.X >= Width - closeWidth - WindowFramePadding.Right &&
+            clientPoint.Y <= closeHeight + WindowFramePadding.Top;
     }
 
     protected override void OnResize(EventArgs e)
@@ -1049,6 +1209,9 @@ public class ImageViewerForm : Form
 
         _fullscreenBtn.Location = new Point(right - _fullscreenBtn.Width, centerButtonY);
         right = _fullscreenBtn.Left - spacing;
+
+        _rotateBtn.Location = new Point(right - _rotateBtn.Width, centerButtonY);
+        right = _rotateBtn.Left - spacing;
 
         _actualBtn.Location = new Point(right - _actualBtn.Width, centerButtonY);
         right = _actualBtn.Left - spacing;
@@ -1123,8 +1286,15 @@ public class ImageViewerForm : Form
             ShowImageMargin = false,
             BackColor = Color.FromArgb(30, 30, 30)
         };
+        _editOverlayBlockMenuItem = new ToolStripMenuItem("Edit OCR/Translation Box", null, (s, e) => EditContextOverlayBlock())
+        {
+            Enabled = false
+        };
+        menu.Items.Add(_editOverlayBlockMenuItem);
+        menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Draw OCR Box", null, (s, e) => ToggleManualOcrDrawMode());
         menu.Items.Add("Clear Pending OCR Boxes", null, (s, e) => ClearPendingManualOcrRegions());
+        menu.Items.Add("AI Tagging", null, async (s, e) => await RunViewerTaggingAsync());
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(Localization.T("rotate_clockwise"), null, (s, e) => RotateImageClockwise());
         menu.Items.Add(Localization.T("edit_tags"), null, (s, e) => EditCurrentImageTags());
@@ -1132,7 +1302,311 @@ public class ImageViewerForm : Form
         menu.Items.Add("Copy Image File", null, (s, e) => CopyCurrentImageFileToClipboard());
         menu.Items.Add("Open File Location", null, (s, e) => OpenCurrentImageLocation());
         menu.Items.Add(Localization.T("properties"), null, (s, e) => ShowCurrentImageProperties());
+        menu.Opening += (s, e) =>
+        {
+            _editOverlayBlockMenuItem.Enabled = _contextOverlayBlockIndex >= 0;
+        };
         return menu;
+    }
+
+    private int HitTestOverlayBlock(Point point)
+    {
+        if (!_overlayToggle.Checked || _overlayBlocks.Count == 0 || !TryGetCurrentImageDisplayRect(out var imageRect))
+            return -1;
+
+        for (int i = _overlayBlocks.Count - 1; i >= 0; i--)
+        {
+            var block = _overlayBlocks[i];
+            var rect = new RectangleF(
+                imageRect.X + (block.NormalizedRect.X * imageRect.Width),
+                imageRect.Y + (block.NormalizedRect.Y * imageRect.Height),
+                block.NormalizedRect.Width * imageRect.Width,
+                block.NormalizedRect.Height * imageRect.Height);
+            rect.Inflate(4f, 4f);
+            if (rect.Contains(point))
+                return i;
+        }
+
+        return -1;
+    }
+
+    private bool TryHitTestOverlayManipulation(Point point, out int blockIndex, out OverlayDragMode mode)
+    {
+        blockIndex = -1;
+        mode = OverlayDragMode.None;
+
+        if (!_overlayToggle.Checked || _overlayBlocks.Count == 0 || !TryGetCurrentImageDisplayRect(out var imageRect))
+            return false;
+
+        int edge = Math.Max(Scale(6), 4);
+        for (int i = _overlayBlocks.Count - 1; i >= 0; i--)
+        {
+            var rect = GetOverlayBlockScreenRect(_overlayBlocks[i], imageRect);
+            var hitRect = rect;
+            hitRect.Inflate(edge, edge);
+            if (!hitRect.Contains(point))
+                continue;
+
+            bool nearLeft = Math.Abs(point.X - rect.Left) <= edge;
+            bool nearRight = Math.Abs(point.X - rect.Right) <= edge;
+            bool nearTop = Math.Abs(point.Y - rect.Top) <= edge;
+            bool nearBottom = Math.Abs(point.Y - rect.Bottom) <= edge;
+
+            mode =
+                nearLeft && nearTop ? OverlayDragMode.ResizeTopLeft :
+                nearRight && nearTop ? OverlayDragMode.ResizeTopRight :
+                nearLeft && nearBottom ? OverlayDragMode.ResizeBottomLeft :
+                nearRight && nearBottom ? OverlayDragMode.ResizeBottomRight :
+                nearLeft ? OverlayDragMode.ResizeLeft :
+                nearRight ? OverlayDragMode.ResizeRight :
+                nearTop ? OverlayDragMode.ResizeTop :
+                nearBottom ? OverlayDragMode.ResizeBottom :
+                OverlayDragMode.Move;
+
+            blockIndex = i;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static RectangleF GetOverlayBlockScreenRect(OverlayTextBlock block, RectangleF imageRect)
+        => new(
+            imageRect.X + (block.NormalizedRect.X * imageRect.Width),
+            imageRect.Y + (block.NormalizedRect.Y * imageRect.Height),
+            block.NormalizedRect.Width * imageRect.Width,
+            block.NormalizedRect.Height * imageRect.Height);
+
+    private static Cursor GetOverlayDragCursor(OverlayDragMode mode)
+        => mode switch
+        {
+            OverlayDragMode.Move => Cursors.SizeAll,
+            OverlayDragMode.ResizeLeft or OverlayDragMode.ResizeRight => Cursors.SizeWE,
+            OverlayDragMode.ResizeTop or OverlayDragMode.ResizeBottom => Cursors.SizeNS,
+            OverlayDragMode.ResizeTopLeft or OverlayDragMode.ResizeBottomRight => Cursors.SizeNWSE,
+            OverlayDragMode.ResizeTopRight or OverlayDragMode.ResizeBottomLeft => Cursors.SizeNESW,
+            _ => Cursors.Default
+        };
+
+    private void EditContextOverlayBlock()
+    {
+        if (_contextOverlayBlockIndex < 0 || _contextOverlayBlockIndex >= _overlayBlocks.Count)
+            return;
+
+        string? imagePath = GetCurrentImagePath();
+        if (string.IsNullOrWhiteSpace(imagePath))
+            return;
+
+        var block = _overlayBlocks[_contextOverlayBlockIndex];
+        int sourceIndex = block.SourceIndex;
+        string originalSourceText = block.SourceText;
+        string originalDisplayText = block.DisplayText;
+        RectangleF originalRect = block.NormalizedRect;
+        float originalFontSize = block.NormalizedFontSize;
+        bool originalHasUserOverride = block.HasUserOverride;
+        string translationText = block.SourceIndex >= 0 && block.SourceIndex < _lastTranslations.Count
+            ? _lastTranslations[block.SourceIndex]
+            : "";
+
+        using var dialog = new OverlayBlockEditDialog(
+            block.SourceText,
+            translationText,
+            block.NormalizedRect,
+            block.NormalizedFontSize);
+
+        dialog.PreviewChanged += (_, _) =>
+        {
+            PreviewOverlayBlockEdit(imagePath, sourceIndex, BuildOverlayBlockEditResult(dialog, trimText: false));
+        };
+
+        if (dialog.ShowDialog(this) != DialogResult.OK)
+        {
+            RestoreOverlayBlockPreview(
+                imagePath,
+                sourceIndex,
+                originalSourceText,
+                originalDisplayText,
+                originalRect,
+                originalFontSize,
+                originalHasUserOverride);
+            return;
+        }
+
+        ApplyOverlayBlockEdit(imagePath, sourceIndex, BuildOverlayBlockEditResult(dialog, trimText: true));
+    }
+
+    private static OverlayBlockEditResult BuildOverlayBlockEditResult(OverlayBlockEditDialog dialog, bool trimText)
+    {
+        string ocrText = trimText ? dialog.OcrText.Trim() : dialog.OcrText;
+        string translationText = trimText ? dialog.TranslationText.Trim() : dialog.TranslationText;
+        return new OverlayBlockEditResult
+        {
+            OcrText = ocrText,
+            TranslationText = translationText,
+            NormalizedRect = ClampNormalizedRect(
+                dialog.NormalizedRect.X,
+                dialog.NormalizedRect.Y,
+                dialog.NormalizedRect.Width,
+                dialog.NormalizedRect.Height),
+            NormalizedFontSize = Math.Clamp(dialog.NormalizedFontSize, 0f, 0.5f)
+        };
+    }
+
+    private void PreviewOverlayBlockEdit(string imagePath, int sourceIndex, OverlayBlockEditResult edit)
+    {
+        if (!string.Equals(GetCurrentImagePath(), imagePath, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        var block = _overlayBlocks.FirstOrDefault(b => b.SourceIndex == sourceIndex);
+        if (block == null)
+            return;
+
+        block.SourceText = edit.OcrText;
+        block.NormalizedRect = edit.NormalizedRect;
+        block.NormalizedFontSize = edit.NormalizedFontSize;
+        block.HasUserOverride = true;
+        string displayText =
+            _showSavedTranslationCheck.Checked &&
+            !string.IsNullOrWhiteSpace(edit.TranslationText)
+                ? edit.TranslationText
+                : edit.OcrText;
+        block.DisplayText = NormalizeOverlayDisplayText(displayText);
+        _pictureBox.Invalidate();
+    }
+
+    private void RestoreOverlayBlockPreview(
+        string imagePath,
+        int sourceIndex,
+        string sourceText,
+        string displayText,
+        RectangleF rect,
+        float fontSize,
+        bool hasUserOverride)
+    {
+        if (!string.Equals(GetCurrentImagePath(), imagePath, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        var block = _overlayBlocks.FirstOrDefault(b => b.SourceIndex == sourceIndex);
+        if (block == null)
+            return;
+
+        block.SourceText = sourceText;
+        block.DisplayText = displayText;
+        block.NormalizedRect = rect;
+        block.NormalizedFontSize = fontSize;
+        block.HasUserOverride = hasUserOverride;
+        _pictureBox.Invalidate();
+    }
+
+    private void ApplyOverlayBlockEdit(string imagePath, int sourceIndex, OverlayBlockEditResult edit)
+    {
+        if (sourceIndex < 0)
+            return;
+
+        if (!TryGetExistingOcrCachePath(imagePath, out string cachePath) && _lastOcrResult != null)
+        {
+            SaveOcrResultToCache(imagePath, _settings.LlmModelName, _lastOcrResult);
+            TryGetExistingOcrCachePath(imagePath, out cachePath);
+        }
+
+        if (string.IsNullOrWhiteSpace(cachePath) ||
+            !TryLoadSavedOcrEnvelope(imagePath, out var envelope) ||
+            envelope?.Result == null)
+        {
+            RefreshAiStatusLabel("No saved OCR cache to edit");
+            return;
+        }
+
+        envelope.OverlayOverrides ??= new List<OcrOverlayBlockOverride>();
+        envelope.Result.Blocks ??= new List<LlmImageTextBlock>();
+        if (sourceIndex >= envelope.Result.Blocks.Count)
+            return;
+
+        envelope.Result.Blocks[sourceIndex].Text = edit.OcrText;
+        envelope.Result.FullText = ComposeFullTextFromBlocks(envelope.Result.Blocks);
+
+        envelope.TranslationLines ??= new List<string>();
+        while (envelope.TranslationLines.Count <= sourceIndex)
+            envelope.TranslationLines.Add(string.Empty);
+        envelope.TranslationLines[sourceIndex] = edit.TranslationText;
+        envelope.TranslationFullText = string.Join(
+            Environment.NewLine,
+            envelope.TranslationLines.Where(t => !string.IsNullOrWhiteSpace(t)).Select(t => t.Trim()));
+
+        var existing = envelope.OverlayOverrides.FirstOrDefault(o => o.SourceIndex == sourceIndex);
+        if (existing == null)
+        {
+            existing = new OcrOverlayBlockOverride { SourceIndex = sourceIndex };
+            envelope.OverlayOverrides.Add(existing);
+        }
+
+        existing.Text = edit.OcrText;
+        existing.TranslationText = edit.TranslationText;
+        existing.X = edit.NormalizedRect.X;
+        existing.Y = edit.NormalizedRect.Y;
+        existing.W = edit.NormalizedRect.Width;
+        existing.H = edit.NormalizedRect.Height;
+        existing.FontSize = edit.NormalizedFontSize;
+
+        File.WriteAllText(cachePath, SerializeOcrCacheEnvelopeForDisk(envelope));
+
+        _lastOcrResult = CloneOcrResult(envelope.Result);
+        _savedTranslationForCurrentImage = TryBuildSavedTranslation(envelope, out var savedTranslation)
+            ? savedTranslation
+            : null;
+        _lastTranslations = _savedTranslationForCurrentImage?.Translations?.ToList() ?? new List<string>();
+
+        SetOverlayFromOcrResult(_lastOcrResult, _showSavedTranslationCheck.Checked ? _lastTranslations : null);
+        ApplyCachedOverlayOverridesForCurrentImage();
+        _aiOutputBox.Text = _savedTranslationForCurrentImage != null && _showSavedTranslationCheck.Checked
+            ? RenderTranslatedResult(_lastOcrResult, _savedTranslationForCurrentImage)
+            : RenderOcrResult(_lastOcrResult);
+        RefreshAiStatusLabel("Saved OCR box edit");
+        UpdateSavedCacheUiState();
+    }
+
+    private void SaveOverlayBlockDragEdit()
+    {
+        if (_overlayDragBlockIndex < 0 || _overlayDragBlockIndex >= _overlayBlocks.Count)
+            return;
+
+        string? imagePath = _overlayDragImagePath;
+        if (string.IsNullOrWhiteSpace(imagePath))
+            return;
+
+        if (!string.Equals(GetCurrentImagePath(), imagePath, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        var block = _overlayBlocks[_overlayDragBlockIndex];
+        string translationText = block.SourceIndex >= 0 && block.SourceIndex < _lastTranslations.Count
+            ? _lastTranslations[block.SourceIndex]
+            : "";
+
+        ApplyOverlayBlockEdit(imagePath, block.SourceIndex, new OverlayBlockEditResult
+        {
+            OcrText = block.SourceText,
+            TranslationText = translationText,
+            NormalizedRect = block.NormalizedRect,
+            NormalizedFontSize = block.NormalizedFontSize
+        });
+    }
+
+    private void CancelOverlayDrag(bool invalidate = true)
+    {
+        if (_overlayDragMode == OverlayDragMode.None &&
+            _overlayDragBlockIndex < 0 &&
+            string.IsNullOrWhiteSpace(_overlayDragImagePath))
+        {
+            return;
+        }
+
+        _overlayDragMode = OverlayDragMode.None;
+        _overlayDragBlockIndex = -1;
+        _overlayDragImagePath = null;
+        _overlayDragChanged = false;
+        _pictureBox.Cursor = Cursors.Default;
+        if (invalidate)
+            _pictureBox.Invalidate();
     }
 
     private void EditCurrentImageTags()
@@ -1264,11 +1738,18 @@ public class ImageViewerForm : Form
     private void ToggleAiPanel()
     {
         _aiPanel.Visible = !_aiPanel.Visible;
-        _aiToggleBtn.BackColor = _aiPanel.Visible ? Color.FromArgb(78, 78, 78) : Color.FromArgb(60, 60, 60);
-        _aiToggleBtn.ForeColor = _aiPanel.Visible ? Color.White : ForeColor_Dark;
+        _settings.ImageViewerAiPanelVisible = _aiPanel.Visible;
+        _settings.Save();
+        ApplyAiPanelToggleVisualState();
         _contentPanel.PerformLayout();
         LayoutControls();
         _pictureBox.Invalidate();
+    }
+
+    private void ApplyAiPanelToggleVisualState()
+    {
+        _aiToggleBtn.BackColor = _aiPanel.Visible ? Color.FromArgb(78, 78, 78) : Color.FromArgb(60, 60, 60);
+        _aiToggleBtn.ForeColor = _aiPanel.Visible ? Color.White : ForeColor_Dark;
     }
 
     private void ToggleManualOcrDrawMode()
@@ -1293,7 +1774,7 @@ public class ImageViewerForm : Form
 
     private void UpdateManualOcrUiState()
     {
-        bool canEdit = _currentImage != null;
+        bool canEdit = _currentImage != null && !IsCurrentImageActivelyProcessing();
         _drawOcrBoxBtn.Enabled = canEdit;
         _clearManualOcrBoxesBtn.Enabled = canEdit && _pendingManualOcrRegions.Count > 0;
         _drawOcrBoxBtn.BackColor = _manualOcrDrawMode ? Color.FromArgb(78, 78, 78) : Color.FromArgb(60, 60, 60);
@@ -1304,9 +1785,7 @@ public class ImageViewerForm : Form
     private void SetAiBusy(bool busy, string statusText)
     {
         _aiBusy = busy;
-        _ocrBtn.Enabled = _currentImage != null;
-        _translateBtn.Enabled = _currentImage != null;
-        _tagBtn.Enabled = !busy;
+        UpdateAiActionControlsState();
         _targetLanguageBox.Enabled = _currentImage != null;
         _sourceLanguageHintBox.Enabled = _currentImage != null;
         _ocrHintBox.Enabled = _currentImage != null;
@@ -1315,13 +1794,9 @@ public class ImageViewerForm : Form
         _translationReasoningCheck.Enabled = _currentImage != null;
         _abortBtn.Visible = busy;
         UpdateCancelCurrentJobButton();
-        _overlayToggle.Enabled = !busy;
-        _showSavedOcrCheck.Enabled = !busy;
-        _showSavedTranslationCheck.Enabled = !busy;
-        _clearOverlayBtn.Enabled = !busy;
-        _deleteSavedTranslationBtn.Enabled = !busy;
-        _openSavedOcrFileBtn.Enabled = !busy;
-        _copyResultBtn.Enabled = !busy;
+        _overlayToggle.Enabled = true;
+        _showSavedOcrCheck.Enabled = _currentImage != null;
+        _copyResultBtn.Enabled = true;
         _aiStatusLabel.Text = statusText;
         if (busy)
             _aiOutputBox.Cursor = Cursors.WaitCursor;
@@ -1340,6 +1815,30 @@ public class ImageViewerForm : Form
 
     private bool HasQueuedAiWork()
         => _activeAiJob != null || _queuedAiJobs.Count > 0;
+
+    private bool IsCurrentImageActivelyProcessing()
+    {
+        string? imagePath = GetCurrentImagePath();
+        if (string.IsNullOrWhiteSpace(imagePath))
+            return false;
+
+        if (_activeAiJob != null &&
+            string.Equals(_activeAiJob.ImagePath, imagePath, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return !string.IsNullOrWhiteSpace(_activeTagImagePath) &&
+            string.Equals(_activeTagImagePath, imagePath, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void UpdateAiActionControlsState()
+    {
+        bool currentImageActive = IsCurrentImageActivelyProcessing();
+        _ocrBtn.Enabled = _currentImage != null && !currentImageActive;
+        _translateBtn.Enabled = _currentImage != null && !currentImageActive;
+        _tagBtn.Enabled = _currentImage != null && !currentImageActive && !_aiBusy && _tagCts == null;
+    }
 
     private int GetQueuedAiJobsForImage(string imagePath)
         => _queuedAiJobCountsByImage.TryGetValue(imagePath, out int count) ? count : 0;
@@ -1652,6 +2151,7 @@ public class ImageViewerForm : Form
                 return null;
 
             envelope.TranslationLines ??= new List<string>();
+            envelope.OverlayOverrides ??= new List<OcrOverlayBlockOverride>();
             return envelope;
         }
         catch
@@ -1806,6 +2306,7 @@ public class ImageViewerForm : Form
         _lastOcrResult = ocr;
         _lastTranslations = new List<string>();
         SetOverlayFromOcrResult(ocr, null);
+        ApplyCachedOverlayOverridesForCurrentImage();
         _aiOutputBox.Text = RenderOcrResult(ocr);
         _currentOverlayFromSavedCache = fromSavedCache;
 
@@ -1901,7 +2402,11 @@ public class ImageViewerForm : Form
     private void SetShowSavedTranslationChecked(bool value, bool updatePreference = false)
     {
         if (updatePreference)
+        {
             _showSavedTranslationPreferred = value;
+            _settings.ImageViewerShowSavedTranslation = value;
+            _settings.Save();
+        }
 
         _suppressSavedTranslationToggleEvent = true;
         try
@@ -1928,17 +2433,23 @@ public class ImageViewerForm : Form
                 TryBuildSavedTranslation(envelope, out _);
         }
 
-        _openSavedOcrFileBtn.Enabled = !_aiBusy && hasSaved;
-        _clearOverlayBtn.Enabled = !_aiBusy && hasSaved;
-        _deleteSavedTranslationBtn.Enabled = !_aiBusy && hasSavedTranslation;
+        bool currentImageActive = IsCurrentImageActivelyProcessing();
+        _openSavedOcrFileBtn.Enabled = hasSaved;
+        _clearOverlayBtn.Enabled = hasSaved && !currentImageActive;
+        _deleteSavedTranslationBtn.Enabled = hasSavedTranslation && !currentImageActive;
+        _showSavedOcrCheck.Enabled = _currentImage != null;
 
-        _showSavedTranslationCheck.Enabled = !_aiBusy && _showSavedOcrCheck.Checked && _savedTranslationForCurrentImage != null;
+        _showSavedTranslationCheck.Enabled = _showSavedOcrCheck.Checked && _savedTranslationForCurrentImage != null;
     }
 
     private void OnShowSavedTranslationToggled()
     {
         if (!_suppressSavedTranslationToggleEvent)
+        {
             _showSavedTranslationPreferred = _showSavedTranslationCheck.Checked;
+            _settings.ImageViewerShowSavedTranslation = _showSavedTranslationCheck.Checked;
+            _settings.Save();
+        }
 
         ApplySavedTranslationToggleForCurrentImage();
     }
@@ -2251,7 +2762,7 @@ public class ImageViewerForm : Form
 
     private void ApplySavedTranslationToggleForCurrentImage()
     {
-        if (_suppressSavedTranslationToggleEvent || _aiBusy)
+        if (_suppressSavedTranslationToggleEvent)
             return;
         if (!_showSavedOcrCheck.Checked)
         {
@@ -2594,6 +3105,9 @@ public class ImageViewerForm : Form
 
     private async Task RunViewerOcrAsync(bool withTranslation)
     {
+        if (IsCurrentImageActivelyProcessing())
+            return;
+
         if (_tagCts != null)
         {
             RefreshAiStatusLabel("Wait for tagging to finish before queueing OCR or translation");
@@ -3007,6 +3521,8 @@ public class ImageViewerForm : Form
             return false;
         }
 
+        CancelOverlayDrag(invalidate: false);
+
         if (!string.IsNullOrWhiteSpace(result.ErrorText))
         {
             if (!string.IsNullOrWhiteSpace(result.ErrorText))
@@ -3055,6 +3571,7 @@ public class ImageViewerForm : Form
 
         try
         {
+            _activeTagImagePath = imagePath;
             SetAiBusy(true, "Resolving model...");
             string? model = await EnsureVisionModelAsync();
             if (string.IsNullOrWhiteSpace(model))
@@ -3103,6 +3620,10 @@ public class ImageViewerForm : Form
         {
             _tagCts?.Dispose();
             _tagCts = null;
+            _activeTagImagePath = null;
+            UpdateAiActionControlsState();
+            UpdateManualOcrUiState();
+            UpdateSavedCacheUiState();
         }
     }
 
@@ -3360,7 +3881,43 @@ public class ImageViewerForm : Form
                 _overlayBlocks[i].DisplayText = NormalizeOverlayDisplayText(StripOrderedPrefix(translatedLines[sourceIndex]));
         }
 
+        ApplyCachedOverlayOverridesForCurrentImage(invalidate: false);
         _pictureBox.Invalidate();
+    }
+
+    private void ApplyCachedOverlayOverridesForCurrentImage(bool invalidate = true)
+    {
+        string? imagePath = GetCurrentImagePath();
+        if (string.IsNullOrWhiteSpace(imagePath) ||
+            !TryLoadSavedOcrEnvelope(imagePath, out var envelope) ||
+            envelope?.OverlayOverrides == null ||
+            envelope.OverlayOverrides.Count == 0)
+        {
+            return;
+        }
+
+        bool showingTranslation = _showSavedTranslationCheck.Checked && _savedTranslationForCurrentImage != null;
+        foreach (var block in _overlayBlocks)
+        {
+            var ov = envelope.OverlayOverrides.LastOrDefault(o => o.SourceIndex == block.SourceIndex);
+            if (ov == null)
+                continue;
+
+            block.HasUserOverride = true;
+            if (ov.W > 0f && ov.H > 0f)
+                block.NormalizedRect = ClampNormalizedRect(ov.X, ov.Y, ov.W, ov.H);
+            if (ov.FontSize > 0f)
+                block.NormalizedFontSize = Math.Clamp(ov.FontSize, 0f, 0.5f);
+            if (!string.IsNullOrWhiteSpace(ov.Text))
+                block.SourceText = ov.Text!;
+
+            string? displayOverride = showingTranslation ? ov.TranslationText : ov.Text;
+            if (!string.IsNullOrWhiteSpace(displayOverride))
+                block.DisplayText = NormalizeOverlayDisplayText(displayOverride!);
+        }
+
+        if (invalidate)
+            _pictureBox.Invalidate();
     }
 
     private static List<OverlayTextBlock> ReduceOverlayBlocksConservatively(List<OverlayTextBlock> input)
@@ -3458,6 +4015,9 @@ public class ImageViewerForm : Form
             char marker = trimmed[i];
             if (marker == '.' || marker == ')' || marker == ':' || marker == '-')
             {
+                if (marker == ':' && i + 1 < trimmed.Length && !char.IsWhiteSpace(trimmed[i + 1]))
+                    return trimmed;
+
                 i++;
                 while (i < trimmed.Length && char.IsWhiteSpace(trimmed[i]))
                     i++;
@@ -3651,6 +4211,7 @@ public class ImageViewerForm : Form
     {
         if (_currentIndex < 0 || _currentIndex >= _imagePaths.Count) return;
 
+        CancelOverlayDrag(invalidate: false);
         var path = _imagePaths[_currentIndex];
         _rotationQuarterTurns = 0;
         if (!string.Equals(_ocrImagePath, path, StringComparison.OrdinalIgnoreCase))
@@ -3696,6 +4257,7 @@ public class ImageViewerForm : Form
             UpdateSavedCacheUiState();
             UpdateManualOcrUiState();
             UpdateCancelCurrentJobButton();
+            UpdateAiActionControlsState();
             RefreshAiStatusLabel();
         }
         catch (SixLabors.ImageSharp.UnknownImageFormatException)
@@ -3711,6 +4273,7 @@ public class ImageViewerForm : Form
         _pictureBox.Invalidate();
         UpdateManualOcrUiState();
         UpdateCancelCurrentJobButton();
+        UpdateAiActionControlsState();
     }
 
     private void EnsureImageFolderWatcher(string imagePath)
@@ -4082,6 +4645,7 @@ public class ImageViewerForm : Form
             const float textInsetX = 4f;
             const float textInsetY = 3f;
             const float minTextFontPx = 8f;
+            const float minExactTextFontPx = 4f;
             const float maxTextFontPx = 34f;
             const float modelFontScale = 1.25f;
             const float maxGrowWidthFactor = 2.40f;
@@ -4094,6 +4658,7 @@ public class ImageViewerForm : Form
             for (int i = 0; i < _overlayBlocks.Count; i++)
             {
                 var block = _overlayBlocks[i];
+                bool exactBox = block.HasUserOverride;
                 float x = imageRect.X + (block.NormalizedRect.X * imageRect.Width);
                 float y = imageRect.Y + (block.NormalizedRect.Y * imageRect.Height);
                 float w = block.NormalizedRect.Width * imageRect.Width;
@@ -4120,77 +4685,100 @@ public class ImageViewerForm : Form
                             : Math.Clamp(autoFontPx, minTextFontPx, maxTextFontPx);
                         textFontPx = Math.Min(baseFont, Math.Max(minTextFontPx, textRect.Height * 0.80f));
 
-                        SizeF measured = MeasureTextForOverlay(g, text, textFontPx, textRect.Width, textFormat);
-
-                        // If OCR gave a huge source box relative to text, shrink box to content first.
-                        float compactTextW = Math.Clamp(measured.Width + 4f, 8f, textRect.Width);
-                        float compactTextH = Math.Clamp(measured.Height + 4f, 8f, textRect.Height);
-                        bool sourceBoxTooWide = textRect.Width > compactTextW * 1.35f;
-                        bool sourceBoxTooTall = textRect.Height > compactTextH * 1.50f;
-                        if (sourceBoxTooWide || sourceBoxTooTall)
+                        if (exactBox)
                         {
-                            textRect = new RectangleF(
-                                textRect.X,
-                                textRect.Y,
-                                sourceBoxTooWide ? compactTextW : textRect.Width,
-                                sourceBoxTooTall ? compactTextH : textRect.Height);
-                            drawRect = RectangleF.Inflate(textRect, textInsetX, textInsetY);
-                            measured = MeasureTextForOverlay(g, text, textFontPx, textRect.Width, textFormat);
+                            textFontPx = FitTextFontInsideFixedOverlay(
+                                g,
+                                text,
+                                textFontPx,
+                                minExactTextFontPx,
+                                textRect,
+                                textFormat);
                         }
-
-                        // First shrink text toward min size.
-                        int shrinkSteps = 0;
-                        while (measured.Height > textRect.Height && textFontPx > minTextFontPx + 0.01f && shrinkSteps < maxShrinkSteps)
+                        else
                         {
-                            textFontPx = Math.Max(minTextFontPx, textFontPx - 0.75f);
-                            measured = MeasureTextForOverlay(g, text, textFontPx, textRect.Width, textFormat);
-                            shrinkSteps++;
-                        }
+                            float readableWidth = MeasureLongestTextTokenWidth(g, text, textFontPx) + 4f;
+                            if (readableWidth > textRect.Width)
+                            {
+                                float maxReadableWidth = Math.Max(
+                                    textRect.Width,
+                                    Math.Min(imageRect.Right - textRect.X - 1f, rect.Width * maxGrowWidthFactor));
+                                textRect.Width = Math.Min(readableWidth, maxReadableWidth);
+                                drawRect = RectangleF.Inflate(textRect, textInsetX, textInsetY);
+                            }
 
-                        // If still overflowing, widen text area to reduce wrapping.
-                        float sourceTextWidth = Math.Max(8f, rect.Width - (textInsetX * 2f));
-                        float maxTextWidth = Math.Min(
-                            imageRect.Right - (textRect.X + 1f),
-                            Math.Max(textRect.Width, sourceTextWidth * maxGrowWidthFactor));
-                        int widenSteps = 0;
-                        while (measured.Height > textRect.Height && textRect.Width < maxTextWidth - 0.5f && widenSteps < maxWidenSteps)
-                        {
-                            textRect.Width = Math.Min(maxTextWidth, textRect.Width * 1.20f);
-                            measured = MeasureTextForOverlay(g, text, textFontPx, textRect.Width, textFormat);
-                            widenSteps++;
-                        }
+                            SizeF measured = MeasureTextForOverlay(g, text, textFontPx, textRect.Width, textFormat);
 
-                        // If text still does not fit, expand the box height.
-                        if (measured.Height > textRect.Height)
-                        {
-                            float sourceTextHeight = Math.Max(8f, rect.Height - (textInsetY * 2f));
-                            float maxTextHeight = Math.Min(
-                                imageRect.Bottom - (textRect.Y + 1f),
-                                Math.Max(textRect.Height, sourceTextHeight * maxGrowHeightFactor));
-                            textRect.Height = Math.Min(maxTextHeight, measured.Height + 2f);
-                        }
+                            // If OCR gave a huge source box relative to text, shrink box to content first.
+                            float compactTextW = Math.Clamp(measured.Width + 4f, 8f, textRect.Width);
+                            float compactTextH = Math.Clamp(measured.Height + 4f, 8f, textRect.Height);
+                            bool sourceBoxTooWide = textRect.Width > compactTextW * 1.35f;
+                            bool sourceBoxTooTall = textRect.Height > compactTextH * 1.50f;
+                            if (sourceBoxTooWide || sourceBoxTooTall)
+                            {
+                                textRect = new RectangleF(
+                                    textRect.X,
+                                    textRect.Y,
+                                    sourceBoxTooWide ? compactTextW : textRect.Width,
+                                    sourceBoxTooTall ? compactTextH : textRect.Height);
+                                drawRect = RectangleF.Inflate(textRect, textInsetX, textInsetY);
+                                measured = MeasureTextForOverlay(g, text, textFontPx, textRect.Width, textFormat);
+                            }
 
-                        var desiredDrawRect = RectangleF.Union(drawRect, RectangleF.Inflate(textRect, textInsetX, textInsetY));
-                        drawRect = ShiftRectIntoBounds(desiredDrawRect, imageRect);
-                        textRect = RectangleF.Inflate(drawRect, -textInsetX, -textInsetY);
+                            // First shrink text toward min size.
+                            int shrinkSteps = 0;
+                            while (measured.Height > textRect.Height && textFontPx > minTextFontPx + 0.01f && shrinkSteps < maxShrinkSteps)
+                            {
+                                textFontPx = Math.Max(minTextFontPx, textFontPx - 0.75f);
+                                measured = MeasureTextForOverlay(g, text, textFontPx, textRect.Width, textFormat);
+                                shrinkSteps++;
+                            }
 
-                        // One more safety pass after potential clamping/shift.
-                        measured = MeasureTextForOverlay(g, text, textFontPx, Math.Max(1f, textRect.Width), textFormat);
-                        int finalShrinkSteps = 0;
-                        while (measured.Height > textRect.Height && textFontPx > minTextFontPx + 0.01f && finalShrinkSteps < maxFinalShrinkSteps)
-                        {
-                            textFontPx = Math.Max(minTextFontPx, textFontPx - 0.75f);
-                            measured = MeasureTextForOverlay(g, text, textFontPx, Math.Max(1f, textRect.Width), textFormat);
-                            finalShrinkSteps++;
-                        }
+                            // If still overflowing, widen text area to reduce wrapping.
+                            float sourceTextWidth = Math.Max(8f, rect.Width - (textInsetX * 2f));
+                            float maxTextWidth = Math.Min(
+                                imageRect.Right - (textRect.X + 1f),
+                                Math.Max(textRect.Width, sourceTextWidth * maxGrowWidthFactor));
+                            int widenSteps = 0;
+                            while (measured.Height > textRect.Height && textRect.Width < maxTextWidth - 0.5f && widenSteps < maxWidenSteps)
+                            {
+                                textRect.Width = Math.Min(maxTextWidth, textRect.Width * 1.20f);
+                                measured = MeasureTextForOverlay(g, text, textFontPx, textRect.Width, textFormat);
+                                widenSteps++;
+                            }
 
-                        if (measured.Height > textRect.Height)
-                        {
-                            float availableTextHeight = Math.Max(8f, imageRect.Bottom - textRect.Y - 1f);
-                            textRect.Height = Math.Min(availableTextHeight, measured.Height + 2f);
-                            var expandedRect = RectangleF.Inflate(textRect, textInsetX, textInsetY);
-                            drawRect = ShiftRectIntoBounds(expandedRect, imageRect);
+                            // If text still does not fit, expand the box height.
+                            if (measured.Height > textRect.Height)
+                            {
+                                float sourceTextHeight = Math.Max(8f, rect.Height - (textInsetY * 2f));
+                                float maxTextHeight = Math.Min(
+                                    imageRect.Bottom - (textRect.Y + 1f),
+                                    Math.Max(textRect.Height, sourceTextHeight * maxGrowHeightFactor));
+                                textRect.Height = Math.Min(maxTextHeight, measured.Height + 2f);
+                            }
+
+                            var desiredDrawRect = RectangleF.Union(drawRect, RectangleF.Inflate(textRect, textInsetX, textInsetY));
+                            drawRect = ShiftRectIntoBounds(desiredDrawRect, imageRect);
                             textRect = RectangleF.Inflate(drawRect, -textInsetX, -textInsetY);
+
+                            // One more safety pass after potential clamping/shift.
+                            measured = MeasureTextForOverlay(g, text, textFontPx, Math.Max(1f, textRect.Width), textFormat);
+                            int finalShrinkSteps = 0;
+                            while (measured.Height > textRect.Height && textFontPx > minTextFontPx + 0.01f && finalShrinkSteps < maxFinalShrinkSteps)
+                            {
+                                textFontPx = Math.Max(minTextFontPx, textFontPx - 0.75f);
+                                measured = MeasureTextForOverlay(g, text, textFontPx, Math.Max(1f, textRect.Width), textFormat);
+                                finalShrinkSteps++;
+                            }
+
+                            if (measured.Height > textRect.Height)
+                            {
+                                float availableTextHeight = Math.Max(8f, imageRect.Bottom - textRect.Y - 1f);
+                                textRect.Height = Math.Min(availableTextHeight, measured.Height + 2f);
+                                var expandedRect = RectangleF.Inflate(textRect, textInsetX, textInsetY);
+                                drawRect = ShiftRectIntoBounds(expandedRect, imageRect);
+                                textRect = RectangleF.Inflate(drawRect, -textInsetX, -textInsetY);
+                            }
                         }
                     }
                     else
@@ -4199,7 +4787,9 @@ public class ImageViewerForm : Form
                     }
                 }
 
-                drawRect = ResolveOverlayCollision(drawRect, imageRect, placedRects);
+                drawRect = exactBox
+                    ? ShiftRectIntoBounds(drawRect, imageRect)
+                    : ResolveOverlayCollision(drawRect, imageRect, placedRects);
                 if (!string.IsNullOrWhiteSpace(text))
                 {
                     textRect = RectangleF.Inflate(drawRect, -textInsetX, -textInsetY);
@@ -4335,6 +4925,54 @@ public class ImageViewerForm : Form
     {
         using var font = new Font("Segoe UI", fontPx, FontStyle.Bold, GraphicsUnit.Pixel);
         return g.MeasureString(text, font, new SizeF(Math.Max(1f, maxWidth), 10000f), format);
+    }
+
+    private static float MeasureLongestTextTokenWidth(Graphics g, string text, float fontPx)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return 0f;
+
+        using var font = new Font("Segoe UI", fontPx, FontStyle.Bold, GraphicsUnit.Pixel);
+        float width = 0f;
+        foreach (var token in text.Split(new[] { ' ', '\t', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+        {
+            var size = g.MeasureString(token, font);
+            if (size.Width > width)
+                width = size.Width;
+        }
+
+        return width;
+    }
+
+    private static float FitTextFontInsideFixedOverlay(
+        Graphics g,
+        string text,
+        float startFontPx,
+        float minFontPx,
+        RectangleF textRect,
+        StringFormat format)
+    {
+        if (string.IsNullOrWhiteSpace(text) || textRect.Width <= 1f || textRect.Height <= 1f)
+            return Math.Max(1f, minFontPx);
+
+        float fontPx = Math.Max(minFontPx, startFontPx);
+        for (int i = 0; i < 80; i++)
+        {
+            SizeF measured = MeasureTextForOverlay(g, text, fontPx, textRect.Width, format);
+            float longestTokenWidth = MeasureLongestTextTokenWidth(g, text, fontPx);
+            if (measured.Height <= textRect.Height + 0.5f &&
+                longestTokenWidth <= textRect.Width + 0.5f)
+            {
+                return fontPx;
+            }
+
+            if (fontPx <= minFontPx + 0.01f)
+                return minFontPx;
+
+            fontPx = Math.Max(minFontPx, fontPx - 0.75f);
+        }
+
+        return fontPx;
     }
 
     private static RectangleF ShiftRectIntoBounds(RectangleF rect, RectangleF bounds)
@@ -4488,6 +5126,14 @@ public class ImageViewerForm : Form
 
     private void PictureBox_MouseDown(object? sender, MouseEventArgs e)
     {
+        FocusViewerForHotkeys();
+
+        if (e.Button == MouseButtons.Right)
+        {
+            _contextOverlayBlockIndex = HitTestOverlayBlock(e.Location);
+            return;
+        }
+
         if (_manualOcrDrawMode && e.Button == MouseButtons.Left)
         {
             if (TryGetCurrentImageDisplayRect(out var imageRect) && imageRect.Contains(e.Location))
@@ -4503,6 +5149,19 @@ public class ImageViewerForm : Form
 
         if (e.Button == MouseButtons.Left)
         {
+            if (!IsCurrentImageActivelyProcessing() &&
+                TryHitTestOverlayManipulation(e.Location, out int blockIndex, out var dragMode))
+            {
+                _overlayDragMode = dragMode;
+                _overlayDragBlockIndex = blockIndex;
+                _overlayDragImagePath = GetCurrentImagePath();
+                _overlayDragStartPoint = e.Location;
+                _overlayDragStartRect = _overlayBlocks[blockIndex].NormalizedRect;
+                _overlayDragChanged = false;
+                _pictureBox.Cursor = GetOverlayDragCursor(dragMode);
+                return;
+            }
+
             _isPanning = true;
             _lastMousePos = e.Location;
             _pictureBox.Cursor = Cursors.SizeAll;
@@ -4511,6 +5170,12 @@ public class ImageViewerForm : Form
 
     private void PictureBox_MouseMove(object? sender, MouseEventArgs e)
     {
+        if (_overlayDragMode != OverlayDragMode.None)
+        {
+            UpdateOverlayDrag(e.Location);
+            return;
+        }
+
         if (_isDrawingManualOcrRegion)
         {
             _manualOcrDragCurrent = e.Location;
@@ -4529,10 +5194,36 @@ public class ImageViewerForm : Form
         {
             _pictureBox.Cursor = Cursors.Cross;
         }
+        else if (!IsCurrentImageActivelyProcessing() &&
+            TryHitTestOverlayManipulation(e.Location, out _, out var hoverMode))
+        {
+            _pictureBox.Cursor = GetOverlayDragCursor(hoverMode);
+        }
+        else
+        {
+            _pictureBox.Cursor = Cursors.Default;
+        }
     }
 
     private void PictureBox_MouseUp(object? sender, MouseEventArgs e)
     {
+        if (_overlayDragMode != OverlayDragMode.None && e.Button == MouseButtons.Left)
+        {
+            bool save = _overlayDragChanged;
+            string? dragImagePath = _overlayDragImagePath;
+            _overlayDragMode = OverlayDragMode.None;
+            _overlayDragChanged = false;
+            _pictureBox.Cursor = Cursors.Default;
+
+            if (save && string.Equals(GetCurrentImagePath(), dragImagePath, StringComparison.OrdinalIgnoreCase))
+                SaveOverlayBlockDragEdit();
+
+            _overlayDragBlockIndex = -1;
+            _overlayDragImagePath = null;
+            _pictureBox.Invalidate();
+            return;
+        }
+
         if (_isDrawingManualOcrRegion && e.Button == MouseButtons.Left)
         {
             _isDrawingManualOcrRegion = false;
@@ -4551,8 +5242,110 @@ public class ImageViewerForm : Form
         UpdateManualOcrUiState();
     }
 
+    private void UpdateOverlayDrag(Point currentPoint)
+    {
+        if (_overlayDragBlockIndex < 0 ||
+            _overlayDragBlockIndex >= _overlayBlocks.Count ||
+            !string.Equals(GetCurrentImagePath(), _overlayDragImagePath, StringComparison.OrdinalIgnoreCase) ||
+            !TryGetCurrentImageDisplayRect(out var imageRect) ||
+            imageRect.Width <= 1f ||
+            imageRect.Height <= 1f)
+        {
+            CancelOverlayDrag();
+            return;
+        }
+
+        float dx = (currentPoint.X - _overlayDragStartPoint.X) / imageRect.Width;
+        float dy = (currentPoint.Y - _overlayDragStartPoint.Y) / imageRect.Height;
+        var rect = _overlayDragStartRect;
+        float minW = Math.Max(0.005f, 8f / imageRect.Width);
+        float minH = Math.Max(0.005f, 8f / imageRect.Height);
+
+        switch (_overlayDragMode)
+        {
+            case OverlayDragMode.Move:
+                rect.X = Math.Clamp(rect.X + dx, 0f, Math.Max(0f, 1f - rect.Width));
+                rect.Y = Math.Clamp(rect.Y + dy, 0f, Math.Max(0f, 1f - rect.Height));
+                break;
+            case OverlayDragMode.ResizeLeft:
+                rect = ResizeOverlayRect(rect, left: dx, minW: minW, minH: minH);
+                break;
+            case OverlayDragMode.ResizeRight:
+                rect = ResizeOverlayRect(rect, right: dx, minW: minW, minH: minH);
+                break;
+            case OverlayDragMode.ResizeTop:
+                rect = ResizeOverlayRect(rect, top: dy, minW: minW, minH: minH);
+                break;
+            case OverlayDragMode.ResizeBottom:
+                rect = ResizeOverlayRect(rect, bottom: dy, minW: minW, minH: minH);
+                break;
+            case OverlayDragMode.ResizeTopLeft:
+                rect = ResizeOverlayRect(rect, left: dx, top: dy, minW: minW, minH: minH);
+                break;
+            case OverlayDragMode.ResizeTopRight:
+                rect = ResizeOverlayRect(rect, right: dx, top: dy, minW: minW, minH: minH);
+                break;
+            case OverlayDragMode.ResizeBottomLeft:
+                rect = ResizeOverlayRect(rect, left: dx, bottom: dy, minW: minW, minH: minH);
+                break;
+            case OverlayDragMode.ResizeBottomRight:
+                rect = ResizeOverlayRect(rect, right: dx, bottom: dy, minW: minW, minH: minH);
+                break;
+        }
+
+        rect = ClampNormalizedRect(rect.X, rect.Y, rect.Width, rect.Height);
+        if (rect.Width < minW || rect.Height < minH)
+            return;
+
+        _overlayBlocks[_overlayDragBlockIndex].NormalizedRect = rect;
+        _overlayBlocks[_overlayDragBlockIndex].HasUserOverride = true;
+        _overlayDragChanged = true;
+        _pictureBox.Invalidate();
+    }
+
+    private static RectangleF ResizeOverlayRect(
+        RectangleF rect,
+        float left = 0f,
+        float right = 0f,
+        float top = 0f,
+        float bottom = 0f,
+        float minW = 0.005f,
+        float minH = 0.005f)
+    {
+        float x1 = rect.Left + left;
+        float x2 = rect.Right + right;
+        float y1 = rect.Top + top;
+        float y2 = rect.Bottom + bottom;
+
+        x1 = Math.Clamp(x1, 0f, 1f);
+        x2 = Math.Clamp(x2, 0f, 1f);
+        y1 = Math.Clamp(y1, 0f, 1f);
+        y2 = Math.Clamp(y2, 0f, 1f);
+
+        if (x2 - x1 < minW)
+        {
+            if (Math.Abs(left) > 0f)
+                x1 = Math.Max(0f, x2 - minW);
+            else
+                x2 = Math.Min(1f, x1 + minW);
+        }
+
+        if (y2 - y1 < minH)
+        {
+            if (Math.Abs(top) > 0f)
+                y1 = Math.Max(0f, y2 - minH);
+            else
+                y2 = Math.Min(1f, y1 + minH);
+        }
+
+        return new RectangleF(x1, y1, Math.Max(minW, x2 - x1), Math.Max(minH, y2 - y1));
+    }
+
     private void PictureBox_MouseWheel(object? sender, MouseEventArgs e)
     {
+        if (_overlayDragMode != OverlayDragMode.None)
+            return;
+
         if ((ModifierKeys & Keys.Control) == Keys.Control)
         {
             AdjustZoom(e.Delta > 0 ? 0.1f : -0.1f, e.Location);
@@ -4674,6 +5467,9 @@ public class ImageViewerForm : Form
 
     private void ShowPrevious()
     {
+        if (_overlayDragMode != OverlayDragMode.None)
+            return;
+
         if (_currentIndex > 0)
         {
             _currentIndex--;
@@ -4683,6 +5479,9 @@ public class ImageViewerForm : Form
 
     private void ShowNext()
     {
+        if (_overlayDragMode != OverlayDragMode.None)
+            return;
+
         if (_currentIndex < _imagePaths.Count - 1)
         {
             _currentIndex++;
@@ -4786,10 +5585,13 @@ public class ImageViewerForm : Form
         }
 
         ApplyChromeVisibility();
-        if (_autoFitBySmallerDimension)
-            FitToWindowBySmallerDimension();
-        else
-            FitToWindow();
+        if (_autoFitEnabled)
+        {
+            if (_autoFitBySmallerDimension)
+                FitToWindowBySmallerDimension();
+            else
+                FitToWindow();
+        }
     }
 
     private void ApplyChromeVisibility()
@@ -4802,8 +5604,20 @@ public class ImageViewerForm : Form
 
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
+        SaveImageViewerAiSettings();
         SaveWindowState();
         base.OnFormClosing(e);
+    }
+
+    private void SaveImageViewerAiSettings()
+    {
+        _settings.ImageViewerAiPanelVisible = _aiPanel.Visible;
+        _settings.ImageViewerTargetLanguage = _targetLanguageBox.Text;
+        _settings.ImageViewerSourceLanguageHint = _sourceLanguageHintBox.Text;
+        _settings.ImageViewerOcrHint = _ocrHintBox.Text;
+        _settings.ImageViewerTranslationContextHint = _translationContextHintBox.Text;
+        _settings.ImageViewerManualMaxEffortTranslation = _manualMaxEffortCheck.Checked;
+        _settings.ImageViewerOverlayBoxesVisible = _overlayToggle.Checked;
     }
 
     protected override void OnFormClosed(FormClosedEventArgs e)

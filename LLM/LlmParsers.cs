@@ -145,36 +145,82 @@ public static class LlmParsers
     public static LlmTextTranslationResult? ParseTranslationResult(string rawContent, string targetLanguage)
     {
         string cleanJson = ExtractJsonObject(rawContent);
-        using var doc = JsonDocument.Parse(cleanJson);
-        var root = doc.RootElement;
+        if (!TryParseTranslationRoot(cleanJson, targetLanguage, out var result))
+        {
+            if (TryExtractLooseJsonStringProperty(rawContent, "content", out var embeddedContent) &&
+                TryParseTranslationRoot(ExtractJsonObject(embeddedContent), targetLanguage, out result))
+            {
+                return result;
+            }
 
-        var result = new LlmTextTranslationResult
+            LlmDebugLogger.LogError($"Fatal translation parse error. Cleaned JSON: {cleanJson}");
+            throw new JsonException("Failed to parse translation result JSON.");
+        }
+
+        return result;
+    }
+
+    private static bool TryParseTranslationRoot(string cleanJson, string targetLanguage, out LlmTextTranslationResult result)
+    {
+        result = new LlmTextTranslationResult
         {
             TargetLanguage = targetLanguage
         };
 
-        if (root.TryGetProperty("thought", out var thought) && thought.ValueKind == JsonValueKind.String)
-            LlmDebugLogger.LogResponse($"[Translation Thought]\n{thought.GetString()}\n");
-
-        if (root.TryGetProperty("translated_full_text", out var fullText))
-            result.TranslatedFullText = NormalizeTranslationText(fullText.GetString() ?? "");
-
-        if (root.TryGetProperty("translations", out var translations) && translations.ValueKind == JsonValueKind.Array)
+        try
         {
-            foreach (var item in translations.EnumerateArray())
+            using var doc = JsonDocument.Parse(cleanJson);
+            var root = doc.RootElement;
+
+            if (root.TryGetProperty("content", out var content) && content.ValueKind == JsonValueKind.String)
+                return TryParseTranslationRoot(ExtractJsonObject(content.GetString() ?? ""), targetLanguage, out result);
+
+            if (root.TryGetProperty("thought", out var thought) && thought.ValueKind == JsonValueKind.String)
+                LlmDebugLogger.LogResponse($"[Translation Thought]\n{thought.GetString()}\n");
+
+            if (root.TryGetProperty("translated_full_text", out var fullText))
+                result.TranslatedFullText = NormalizeTranslationText(ReadJsonStringValue(fullText));
+
+            if (root.TryGetProperty("translations", out var translations))
             {
-                if (item.ValueKind != JsonValueKind.String)
-                    continue;
-                var value = item.GetString();
-                if (!string.IsNullOrWhiteSpace(value))
-                    result.Translations.Add(NormalizeTranslationText(value));
+                if (translations.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var item in translations.EnumerateArray())
+                    {
+                        var value = ReadJsonStringValue(item);
+                        if (!string.IsNullOrWhiteSpace(value))
+                            result.Translations.Add(NormalizeTranslationText(value));
+                    }
+                }
+                else
+                {
+                    var value = ReadJsonStringValue(translations);
+                    if (!string.IsNullOrWhiteSpace(value))
+                        result.Translations.Add(NormalizeTranslationText(value));
+                }
             }
+
+            if (string.IsNullOrWhiteSpace(result.TranslatedFullText) && result.Translations.Count > 0)
+                result.TranslatedFullText = string.Join(Environment.NewLine, result.Translations);
+
+            return true;
         }
+        catch
+        {
+            return false;
+        }
+    }
 
-        if (string.IsNullOrWhiteSpace(result.TranslatedFullText) && result.Translations.Count > 0)
-            result.TranslatedFullText = string.Join(Environment.NewLine, result.Translations);
-
-        return result;
+    private static string ReadJsonStringValue(JsonElement value)
+    {
+        return value.ValueKind switch
+        {
+            JsonValueKind.String => value.GetString() ?? "",
+            JsonValueKind.Number => value.GetRawText(),
+            JsonValueKind.True => "true",
+            JsonValueKind.False => "false",
+            _ => ""
+        };
     }
 
     private static string NormalizeTranslationText(string text)
@@ -183,6 +229,58 @@ public static class LlmParsers
             return "";
 
         return text.Replace("\r\n", "\n").Replace('\r', '\n').Trim();
+    }
+
+    private static bool TryExtractLooseJsonStringProperty(string rawContent, string propertyName, out string value)
+    {
+        value = "";
+        if (string.IsNullOrWhiteSpace(rawContent) || string.IsNullOrWhiteSpace(propertyName))
+            return false;
+
+        string quotedName = "\"" + propertyName + "\"";
+        int nameIndex = rawContent.IndexOf(quotedName, StringComparison.OrdinalIgnoreCase);
+        if (nameIndex < 0)
+            return false;
+
+        int colonIndex = rawContent.IndexOf(':', nameIndex + quotedName.Length);
+        if (colonIndex < 0)
+            return false;
+
+        int quoteStart = rawContent.IndexOf('"', colonIndex + 1);
+        if (quoteStart < 0)
+            return false;
+
+        bool escaped = false;
+        for (int i = quoteStart + 1; i < rawContent.Length; i++)
+        {
+            char ch = rawContent[i];
+            if (escaped)
+            {
+                escaped = false;
+                continue;
+            }
+
+            if (ch == '\\')
+            {
+                escaped = true;
+                continue;
+            }
+
+            if (ch != '"')
+                continue;
+
+            try
+            {
+                value = JsonSerializer.Deserialize<string>(rawContent.Substring(quoteStart, i - quoteStart + 1)) ?? "";
+                return !string.IsNullOrWhiteSpace(value);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        return false;
     }
 
     public static LlmAgentChatDecision ParseAgentChatDecision(string json)

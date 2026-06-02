@@ -91,9 +91,17 @@ public class AppSettings
     public int ImageViewerWidth { get; set; } = 1200;
     public int ImageViewerHeight { get; set; } = 900;
     public bool ImageViewerMaximized { get; set; } = false;
+    public bool ImageViewerAiPanelVisible { get; set; } = false;
     public bool ImageViewerShowSavedOcr { get; set; } = true;
+    public bool ImageViewerShowSavedTranslation { get; set; } = false;
+    public bool ImageViewerOverlayBoxesVisible { get; set; } = true;
+    public bool ImageViewerManualMaxEffortTranslation { get; set; } = false;
     public bool ImageViewerOcrReasoningEnabled { get; set; } = false;
     public bool ImageViewerTranslationReasoningEnabled { get; set; } = true;
+    public string ImageViewerTargetLanguage { get; set; } = "English";
+    public string ImageViewerSourceLanguageHint { get; set; } = "";
+    public string ImageViewerOcrHint { get; set; } = "";
+    public string ImageViewerTranslationContextHint { get; set; } = "";
 
     public System.Collections.Generic.List<string> PinnedPaths { get; set; } = new();
     public System.Collections.Generic.List<string> SidebarBlockOrder { get; set; } = new()
@@ -161,7 +169,11 @@ public class AppSettings
         { "PrevTab", "Control, PageUp" },
         { "ToggleOcrBoxes", "OemOpenBrackets" },
         { "ToggleSavedTranslation", "OemCloseBrackets" },
-        { "FitSmallDimension", "D2" }
+        { "FitSmallDimension", "D2" },
+        { "ImageViewerToggleAI", "Control, I" },
+        { "ImageViewerStartTranslation", "Control, T" },
+        { "ImageViewerStartOcr", "Control, O" },
+        { "ImageViewerTag", "Control, G" }
     };
     
     // Future extensible
