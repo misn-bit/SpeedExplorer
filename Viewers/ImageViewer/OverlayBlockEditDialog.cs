@@ -121,7 +121,6 @@ internal sealed class OverlayBlockEditDialog : Form
         _translationTextBox.TextChanged += (_, _) => RaisePreviewChanged();
 
         Controls.Add(layout);
-        AcceptButton = ok;
         CancelButton = cancel;
     }
 
@@ -172,6 +171,8 @@ internal sealed class OverlayBlockEditDialog : Form
         {
             Dock = DockStyle.Fill,
             Multiline = true,
+            AcceptsReturn = true,
+            AcceptsTab = true,
             ScrollBars = ScrollBars.Vertical,
             Text = value,
             BackColor = Color.FromArgb(45, 45, 45),

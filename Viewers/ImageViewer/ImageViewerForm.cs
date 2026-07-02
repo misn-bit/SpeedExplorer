@@ -8,6 +8,7 @@ using System.Drawing.Text;
 using System.IO;
 using System.Linq;
 using System.Collections.Specialized;
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Encodings.Web;
@@ -1470,7 +1471,7 @@ public class ImageViewerForm : Form
             !string.IsNullOrWhiteSpace(edit.TranslationText)
                 ? edit.TranslationText
                 : edit.OcrText;
-        block.DisplayText = NormalizeOverlayDisplayText(displayText);
+        block.DisplayText = NormalizeEditedOverlayDisplayText(displayText);
         _pictureBox.Invalidate();
     }
 
@@ -3913,7 +3914,7 @@ public class ImageViewerForm : Form
 
             string? displayOverride = showingTranslation ? ov.TranslationText : ov.Text;
             if (!string.IsNullOrWhiteSpace(displayOverride))
-                block.DisplayText = NormalizeOverlayDisplayText(displayOverride!);
+                block.DisplayText = NormalizeEditedOverlayDisplayText(displayOverride!);
         }
 
         if (invalidate)
@@ -4081,6 +4082,17 @@ public class ImageViewerForm : Form
         }
 
         return sb.ToString().Trim();
+    }
+
+    private static string NormalizeEditedOverlayDisplayText(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return "";
+
+        return DecodeEscapedLineBreaks(text)
+            .Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Replace('\r', '\n')
+            .Trim();
     }
 
     private static string DecodeEscapedLineBreaks(string text)
@@ -4658,7 +4670,7 @@ public class ImageViewerForm : Form
             for (int i = 0; i < _overlayBlocks.Count; i++)
             {
                 var block = _overlayBlocks[i];
-                bool exactBox = block.HasUserOverride;
+                bool exactBox = true;
                 float x = imageRect.X + (block.NormalizedRect.X * imageRect.Width);
                 float y = imageRect.Y + (block.NormalizedRect.Y * imageRect.Height);
                 float w = block.NormalizedRect.Width * imageRect.Width;
@@ -4814,7 +4826,7 @@ public class ImageViewerForm : Form
                 {
                     g.FillRectangle(textBackBrush, textRect);
                     using var textFont = new Font("Segoe UI", textFontPx, FontStyle.Bold, GraphicsUnit.Pixel);
-                    g.DrawString(text, textFont, textBrush, textRect, textFormat);
+                    DrawOverlayText(g, text, textFont, textBrush, textRect);
                 }
 
                 placedRects.Add(drawRect);
@@ -4924,7 +4936,7 @@ public class ImageViewerForm : Form
     private static SizeF MeasureTextForOverlay(Graphics g, string text, float fontPx, float maxWidth, StringFormat format)
     {
         using var font = new Font("Segoe UI", fontPx, FontStyle.Bold, GraphicsUnit.Pixel);
-        return g.MeasureString(text, font, new SizeF(Math.Max(1f, maxWidth), 10000f), format);
+        return MeasureOverlayTextLayout(g, text, font, Math.Max(1f, maxWidth)).Size;
     }
 
     private static float MeasureLongestTextTokenWidth(Graphics g, string text, float fontPx)
@@ -4958,10 +4970,11 @@ public class ImageViewerForm : Form
         float fontPx = Math.Max(minFontPx, startFontPx);
         for (int i = 0; i < 80; i++)
         {
-            SizeF measured = MeasureTextForOverlay(g, text, fontPx, textRect.Width, format);
-            float longestTokenWidth = MeasureLongestTextTokenWidth(g, text, fontPx);
+            using var font = new Font("Segoe UI", fontPx, FontStyle.Bold, GraphicsUnit.Pixel);
+            var layout = MeasureOverlayTextLayout(g, text, font, textRect.Width);
+            SizeF measured = layout.Size;
             if (measured.Height <= textRect.Height + 0.5f &&
-                longestTokenWidth <= textRect.Width + 0.5f)
+                measured.Width <= textRect.Width + 0.5f)
             {
                 return fontPx;
             }
@@ -4973,6 +4986,266 @@ public class ImageViewerForm : Form
         }
 
         return fontPx;
+    }
+
+    private static void DrawOverlayText(Graphics g, string text, Font font, Brush brush, RectangleF textRect)
+    {
+        var layout = MeasureOverlayTextLayout(g, text, font, textRect.Width);
+        if (layout.Lines.Count == 0)
+            return;
+
+        var state = g.Save();
+        try
+        {
+            g.SetClip(textRect);
+            using var lineFormat = CreateOverlayLineFormat();
+            float y = textRect.Y;
+            foreach (string line in layout.Lines)
+            {
+                if (y > textRect.Bottom)
+                    break;
+
+                g.DrawString(line, font, brush, new RectangleF(textRect.X, y, textRect.Width, layout.LineHeight), lineFormat);
+                y += layout.LineHeight;
+            }
+        }
+        finally
+        {
+            g.Restore(state);
+        }
+    }
+
+    private static (List<string> Lines, SizeF Size, float LineHeight) MeasureOverlayTextLayout(
+        Graphics g,
+        string text,
+        Font font,
+        float maxWidth)
+    {
+        var lines = WrapOverlayText(g, text, font, maxWidth);
+        float lineHeight = Math.Max(1f, font.GetHeight(g) * 1.05f);
+        float width = 0f;
+        foreach (string line in lines)
+            width = Math.Max(width, MeasureOverlayLineWidth(g, font, line));
+
+        return (lines, new SizeF(width, lines.Count * lineHeight), lineHeight);
+    }
+
+    private static List<string> WrapOverlayText(Graphics g, string text, Font font, float maxWidth)
+    {
+        var lines = new List<string>();
+        if (string.IsNullOrWhiteSpace(text))
+            return lines;
+
+        maxWidth = Math.Max(1f, maxWidth);
+        string normalized = text.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
+        foreach (string rawParagraph in normalized.Split('\n'))
+        {
+            string paragraph = rawParagraph.Trim();
+            if (paragraph.Length == 0)
+            {
+                lines.Add("");
+                continue;
+            }
+
+            var tokens = TokenizeOverlayText(paragraph);
+            string current = "";
+            foreach (var token in tokens)
+            {
+                if (string.IsNullOrWhiteSpace(token.Text))
+                    continue;
+
+                string tokenText = !string.IsNullOrEmpty(current) && token.SpaceBefore
+                    ? " " + token.Text
+                    : token.Text;
+                string candidate = string.IsNullOrEmpty(current) ? token.Text : current + tokenText;
+
+                if (string.IsNullOrEmpty(current) || MeasureOverlayLineWidth(g, font, candidate) <= maxWidth + 0.5f)
+                {
+                    if (MeasureOverlayLineWidth(g, font, candidate) <= maxWidth + 0.5f || !CanHyphenateOverlayToken(token.Text))
+                    {
+                        current = candidate;
+                        continue;
+                    }
+
+                    var splitLines = SplitLongOverlayToken(g, font, token.Text, maxWidth);
+                    if (splitLines.Count == 0)
+                    {
+                        current = candidate;
+                        continue;
+                    }
+
+                    for (int i = 0; i < splitLines.Count - 1; i++)
+                        lines.Add(splitLines[i]);
+                    current = splitLines[^1];
+                    continue;
+                }
+
+                lines.Add(current);
+                if (MeasureOverlayLineWidth(g, font, token.Text) <= maxWidth + 0.5f || !CanHyphenateOverlayToken(token.Text))
+                {
+                    current = token.Text;
+                    continue;
+                }
+
+                var parts = SplitLongOverlayToken(g, font, token.Text, maxWidth);
+                if (parts.Count == 0)
+                {
+                    current = token.Text;
+                    continue;
+                }
+
+                for (int i = 0; i < parts.Count - 1; i++)
+                    lines.Add(parts[i]);
+                current = parts[^1];
+            }
+
+            if (!string.IsNullOrEmpty(current))
+                lines.Add(current);
+        }
+
+        return lines;
+    }
+
+    private readonly record struct OverlayTextToken(string Text, bool SpaceBefore);
+
+    private static List<OverlayTextToken> TokenizeOverlayText(string text)
+    {
+        var tokens = new List<OverlayTextToken>();
+        var word = new StringBuilder();
+        bool pendingSpace = false;
+        bool wordSpaceBefore = false;
+        TextElementEnumerator enumerator = StringInfo.GetTextElementEnumerator(text);
+        while (enumerator.MoveNext())
+        {
+            string element = enumerator.GetTextElement();
+            if (string.IsNullOrEmpty(element))
+                continue;
+
+            char ch = element[0];
+            if (char.IsWhiteSpace(ch))
+            {
+                FlushOverlayWordToken(tokens, word, wordSpaceBefore);
+                wordSpaceBefore = false;
+                pendingSpace = true;
+                continue;
+            }
+
+            if (IsCjkTextElement(element) || IsOverlayPunctuationToken(ch))
+            {
+                FlushOverlayWordToken(tokens, word, wordSpaceBefore);
+                wordSpaceBefore = false;
+                tokens.Add(new OverlayTextToken(element, pendingSpace));
+                pendingSpace = false;
+                continue;
+            }
+
+            if (word.Length == 0)
+            {
+                wordSpaceBefore = pendingSpace;
+                pendingSpace = false;
+            }
+            word.Append(element);
+        }
+
+        FlushOverlayWordToken(tokens, word, wordSpaceBefore);
+        return tokens;
+    }
+
+    private static void FlushOverlayWordToken(List<OverlayTextToken> tokens, StringBuilder word, bool spaceBefore)
+    {
+        if (word.Length == 0)
+            return;
+
+        tokens.Add(new OverlayTextToken(word.ToString(), spaceBefore));
+        word.Clear();
+    }
+
+    private static bool IsCjkTextElement(string textElement)
+        => textElement.Any(IsCjkChar);
+
+    private static bool IsOverlayPunctuationToken(char ch)
+        => IsCjkPunctuation(ch) ||
+            IsOverlayOpeningPunctuation(ch) ||
+            IsOverlayClosingPunctuation(ch) ||
+            ".,!?;:".IndexOf(ch) >= 0;
+
+    private static bool CanHyphenateOverlayToken(string token)
+    {
+        if (string.IsNullOrWhiteSpace(token) || token.Length < 6)
+            return false;
+
+        return token.Any(char.IsLetterOrDigit) && !token.Any(IsCjkChar);
+    }
+
+    private static List<string> SplitLongOverlayToken(Graphics g, Font font, string token, float maxWidth)
+    {
+        var result = new List<string>();
+        var elements = GetTextElements(token);
+        if (elements.Count <= 1)
+        {
+            result.Add(token);
+            return result;
+        }
+
+        var current = new StringBuilder();
+        for (int i = 0; i < elements.Count; i++)
+        {
+            string element = elements[i];
+            string candidate = current + element;
+            bool hasMore = i < elements.Count - 1;
+            string candidateForMeasure = hasMore ? candidate + "-" : candidate;
+
+            if (current.Length > 0 && MeasureOverlayLineWidth(g, font, candidateForMeasure) > maxWidth + 0.5f)
+            {
+                result.Add(current + "-");
+                current.Clear();
+                current.Append(element);
+                continue;
+            }
+
+            current.Append(element);
+        }
+
+        if (current.Length > 0)
+            result.Add(current.ToString());
+
+        return result;
+    }
+
+    private static List<string> GetTextElements(string text)
+    {
+        var elements = new List<string>();
+        TextElementEnumerator enumerator = StringInfo.GetTextElementEnumerator(text);
+        while (enumerator.MoveNext())
+            elements.Add(enumerator.GetTextElement());
+        return elements;
+    }
+
+    private static bool IsCjkPunctuation(char ch)
+        => ch is >= '\u3000' and <= '\u303F'
+            or >= '\uFF00' and <= '\uFFEF';
+
+    private static bool IsOverlayOpeningPunctuation(char ch)
+        => "([{（「『【〈《".IndexOf(ch) >= 0;
+
+    private static bool IsOverlayClosingPunctuation(char ch)
+        => ".,!?;:)]}、。！？）」』】〉》".IndexOf(ch) >= 0;
+
+    private static float MeasureOverlayLineWidth(Graphics g, Font font, string line)
+    {
+        if (string.IsNullOrEmpty(line))
+            return 0f;
+
+        using var format = CreateOverlayLineFormat();
+        return g.MeasureString(line, font, PointF.Empty, format).Width;
+    }
+
+    private static StringFormat CreateOverlayLineFormat()
+    {
+        var format = (StringFormat)StringFormat.GenericTypographic.Clone();
+        format.FormatFlags |= StringFormatFlags.MeasureTrailingSpaces | StringFormatFlags.NoWrap;
+        format.Trimming = StringTrimming.None;
+        return format;
     }
 
     private static RectangleF ShiftRectIntoBounds(RectangleF rect, RectangleF bounds)
