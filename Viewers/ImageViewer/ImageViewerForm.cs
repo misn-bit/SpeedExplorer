@@ -130,6 +130,9 @@ public class ImageViewerForm : Form
     private Point _panOffset = Point.Empty;
     private Point _lastMousePos;
     private bool _isPanning;
+    private DateTime _lastPictureBoxLeftMouseUpUtc = DateTime.MinValue;
+    private DateTime _pictureBoxSecondClickDownUtc = DateTime.MinValue;
+    private Point _lastPictureBoxLeftMouseUpPoint;
     private readonly AppSettings _settings = AppSettings.Current;
     private bool _isFullscreen;
     private FormWindowState _previousWindowState;
@@ -408,11 +411,7 @@ public class ImageViewerForm : Form
         _pictureBox.MouseDown += PictureBox_MouseDown;
         _pictureBox.MouseMove += PictureBox_MouseMove;
         _pictureBox.MouseUp += PictureBox_MouseUp;
-        _pictureBox.MouseDoubleClick += (s, e) =>
-        {
-            if (e.Button == MouseButtons.Left)
-                ToggleFullscreen();
-        };
+        _pictureBox.MouseDoubleClick += PictureBox_MouseDoubleClick;
         _pictureBox.MouseWheel += PictureBox_MouseWheel;
         _imageContextMenu = BuildImageContextMenu();
         _pictureBox.ContextMenuStrip = _imageContextMenu;
@@ -5433,6 +5432,18 @@ public class ImageViewerForm : Form
     {
         FocusViewerForHotkeys();
 
+        if (e.Button == MouseButtons.Left)
+        {
+            DateTime now = DateTime.UtcNow;
+            TimeSpan sinceLastRelease = now - _lastPictureBoxLeftMouseUpUtc;
+            bool isSecondClick =
+                sinceLastRelease.TotalMilliseconds >= 0 &&
+                sinceLastRelease.TotalMilliseconds <= SystemInformation.DoubleClickTime &&
+                Math.Abs(e.X - _lastPictureBoxLeftMouseUpPoint.X) <= SystemInformation.DoubleClickSize.Width &&
+                Math.Abs(e.Y - _lastPictureBoxLeftMouseUpPoint.Y) <= SystemInformation.DoubleClickSize.Height;
+            _pictureBoxSecondClickDownUtc = isSecondClick ? now : DateTime.MinValue;
+        }
+
         if (e.Button == MouseButtons.Right)
         {
             _contextOverlayBlockIndex = HitTestOverlayBlock(e.Location);
@@ -5513,6 +5524,12 @@ public class ImageViewerForm : Form
 
     private void PictureBox_MouseUp(object? sender, MouseEventArgs e)
     {
+        if (e.Button == MouseButtons.Left)
+        {
+            _lastPictureBoxLeftMouseUpUtc = DateTime.UtcNow;
+            _lastPictureBoxLeftMouseUpPoint = e.Location;
+        }
+
         if (_overlayDragMode != OverlayDragMode.None && e.Button == MouseButtons.Left)
         {
             bool save = _overlayDragChanged;
@@ -5547,6 +5564,20 @@ public class ImageViewerForm : Form
 
         _isPanning = false;
         UpdateManualOcrUiState();
+    }
+
+    private void PictureBox_MouseDoubleClick(object? sender, MouseEventArgs e)
+    {
+        DateTime secondClickDown = _pictureBoxSecondClickDownUtc;
+        _pictureBoxSecondClickDownUtc = DateTime.MinValue;
+
+        if (e.Button != MouseButtons.Left || secondClickDown == DateTime.MinValue)
+            return;
+
+        // MouseDoubleClick is delivered after MouseUp. Do not treat a long-held second
+        // press as a double-click just because Windows eventually raised the event.
+        if ((DateTime.UtcNow - secondClickDown).TotalMilliseconds <= SystemInformation.DoubleClickTime)
+            ToggleFullscreen();
     }
 
     private void UpdateOverlayDrag(Point currentPoint)
