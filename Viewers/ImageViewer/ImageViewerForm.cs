@@ -920,32 +920,32 @@ public class ImageViewerForm : Form
             return base.ProcessCmdKey(ref msg, keyData);
 
         // Handle specific keys and combinations
-        if (keyData == Keys.Left || keyData == Keys.A)
+        if (IsAnyHotkeyPressed(keyData, "ImageViewerPrevious", "ImageViewerPreviousAlt"))
         {
             ShowPrevious();
             return true;
         }
-        if (keyData == Keys.Right || keyData == Keys.D || keyData == Keys.Space)
+        if (IsAnyHotkeyPressed(keyData, "ImageViewerNext", "ImageViewerNextAlt", "ImageViewerNextSpace"))
         {
             ShowNext();
             return true;
         }
-        if (keyData == Keys.Escape)
+        if (IsHotkeyPressed("ImageViewerClose", keyData))
         {
             if (_isFullscreen) ToggleFullscreen(); else Close();
             return true;
         }
-        if (keyData == Keys.F || keyData == Keys.F11)
+        if (IsAnyHotkeyPressed(keyData, "ImageViewerToggleFullscreen", "ImageViewerToggleFullscreenAlt"))
         {
             ToggleFullscreen();
             return true;
         }
-        if (keyData == Keys.Add || keyData == Keys.Oemplus)
+        if (IsAnyHotkeyPressed(keyData, "ImageViewerZoomIn", "ImageViewerZoomInAlt"))
         {
             AdjustZoom(0.1f);
             return true;
         }
-        if (keyData == Keys.Subtract || keyData == Keys.OemMinus)
+        if (IsAnyHotkeyPressed(keyData, "ImageViewerZoomOut", "ImageViewerZoomOutAlt"))
         {
             AdjustZoom(-0.1f);
             return true;
@@ -991,44 +991,26 @@ public class ImageViewerForm : Form
             EditCurrentImageTags();
             return true;
         }
-        if (keyData == (Keys.Control | Keys.R))
+        if (IsHotkeyPressed("ImageViewerRotate", keyData))
         {
             RotateImageClockwise();
             return true;
         }
 
-        // Handle Ctrl+0 and Ctrl+1
-        // Note: Keys.Control is the modifier bit
-        if (keyData == (Keys.Control | Keys.D0) || keyData == (Keys.Control | Keys.NumPad0))
+        if (IsAnyHotkeyPressed(keyData, "ImageViewerFitWindow", "ImageViewerFitWindowNumpad", "ImageViewerFitWindowPlain", "ImageViewerFitWindowPlainNumpad"))
         {
             FitToWindow();
             return true;
         }
-        if (keyData == (Keys.Control | Keys.D1) || keyData == (Keys.Control | Keys.NumPad1))
+        if (IsAnyHotkeyPressed(keyData, "ImageViewerActualSize", "ImageViewerActualSizeNumpad", "ImageViewerActualSizePlain", "ImageViewerActualSizePlainNumpad"))
         {
             ActualSize();
             return true;
         }
-        if (keyData == (Keys.Control | Keys.D2) || keyData == (Keys.Control | Keys.NumPad2))
+        if (IsAnyHotkeyPressed(keyData, "ImageViewerFitSmallDimensionControl", "ImageViewerFitSmallDimensionControlNumpad", "FitSmallDimension", "ImageViewerFitSmallDimensionNumpad"))
         {
             FitToWindowBySmallerDimension();
             return true;
-        }
-        // Also support plain 0 and 1 as fallback/alternate (as per user request implicit)
-        if (keyData == Keys.D0 || keyData == Keys.NumPad0)
-        {
-             FitToWindow();
-             return true;
-        }
-        if (keyData == Keys.D1 || keyData == Keys.NumPad1)
-        {
-             ActualSize();
-             return true;
-        }
-        if (keyData == Keys.D2 || keyData == Keys.NumPad2)
-        {
-             FitToWindowBySmallerDimension();
-             return true;
         }
 
         return base.ProcessCmdKey(ref msg, keyData);
@@ -5917,6 +5899,16 @@ public class ImageViewerForm : Form
             else
                 FitToWindow();
         }
+    }
+
+    private static bool IsAnyHotkeyPressed(Keys keyData, params string[] actions)
+    {
+        foreach (var action in actions)
+        {
+            if (IsHotkeyPressed(action, keyData))
+                return true;
+        }
+        return false;
     }
 
     private void ApplyChromeVisibility()

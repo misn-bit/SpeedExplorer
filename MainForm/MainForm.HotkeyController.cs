@@ -59,6 +59,12 @@ public partial class MainForm
             return (keys & Keys.KeyCode) == keyCode;
         }
 
+        public bool IsActionKeyData(string action, Keys keyData)
+        {
+            if (!_actionToKeys.TryGetValue(action, out var keys)) return false;
+            return NormalizeBinding(keyData) == keys;
+        }
+
         public bool HandleProcessCmdKey(ref Message msg, Keys keyData)
         {
             // WinForms sometimes drops Alt in ProcessCmdKey. Prefer the real-time modifier state.
@@ -76,26 +82,13 @@ public partial class MainForm
                 }
             }
 
-            // Ctrl+1..9: direct tab switch (global).
-            if ((effective & Keys.Control) == Keys.Control && (effective & (Keys.Alt | Keys.Shift)) == 0)
+            // Tab switching and tab closing are configurable and must work even while typing.
+            if (TryMapAction(effective, out var earlyAction) &&
+                (earlyAction.StartsWith("SwitchTab", StringComparison.OrdinalIgnoreCase) ||
+                 earlyAction.Equals("CloseTab", StringComparison.OrdinalIgnoreCase)))
             {
-                var code = effective & Keys.KeyCode;
-                if (code >= Keys.D1 && code <= Keys.D9)
-                {
-                    int index = (int)(code - Keys.D1);
-                    if (index >= 0 && index < _owner._tabsController.Count)
-                    {
-                        _owner.SwitchToTab(index);
-                        return true;
-                    }
-                }
-
-                // Ctrl+W: close tab (close window if last).
-                if (effective == (Keys.Control | Keys.W))
-                {
-                    _owner.CloseTab(_owner._tabsController.ActiveIndex);
-                    return true;
-                }
+                ExecuteAction(earlyAction);
+                return true;
             }
 
             bool inInput =
@@ -111,11 +104,17 @@ public partial class MainForm
             // Global/focus hotkeys should work even while typing.
             if (TryMapAction(effective, out var action))
             {
+                // Image-viewer-only bindings are read by ImageViewerForm itself. Do not
+                // let the main form consume those keys while it has focus.
+                if (IsImageViewerOnlyAction(action) || IsListViewOnlyAction(action))
+                    return false;
+
                 bool isFocusOrGlobal =
                     action.StartsWith("Focus", StringComparison.OrdinalIgnoreCase) ||
                     action.StartsWith("Nav", StringComparison.OrdinalIgnoreCase) ||
                     action is "OpenSettings" or "CloseApp" or "ToggleFullscreen" or "Refresh" ||
-                    action is "NewTab" or "NextTab" or "PrevTab";
+                    action is "NewTab" or "NextTab" or "PrevTab" or "CloseTab" ||
+                    action.StartsWith("SwitchTab", StringComparison.OrdinalIgnoreCase);
 
                 if (inInput && !isFocusOrGlobal)
                     return false; // Let the focused input handle it.
@@ -124,26 +123,23 @@ public partial class MainForm
                 return true;
             }
 
-            if (!inInput && _owner._iconZoomController.HandleZoomHotkey(effective))
-                return true;
-
             if (inInput)
                 return false;
-
-            if (effective == Keys.Escape)
-            {
-                if (_owner._listView.SelectedIndices.Count > 0)
-                {
-                    _owner._listView.SelectedIndices.Clear();
-                    return true;
-                }
-            }
 
             return false;
         }
 
         public void ExecuteAction(string action)
         {
+            if (action.StartsWith("SwitchTab", StringComparison.OrdinalIgnoreCase) &&
+                int.TryParse(action["SwitchTab".Length..], out var tabNumber))
+            {
+                int index = tabNumber - 1;
+                if (index >= 0 && index < _owner._tabsController.Count)
+                    _owner.SwitchToTab(index);
+                return;
+            }
+
             switch (action)
             {
                 case "NavBack": _owner.GoBack(); break;
@@ -199,6 +195,9 @@ public partial class MainForm
                 case "NewTab":
                     _owner.AddNewTab();
                     break;
+                case "CloseTab":
+                    _owner.CloseTab(_owner._tabsController.ActiveIndex);
+                    break;
                 case "NextTab":
                     if (_owner._tabsController.Count > 0)
                         _owner.SwitchToTab((_owner._tabsController.ActiveIndex + 1) % _owner._tabsController.Count);
@@ -207,8 +206,28 @@ public partial class MainForm
                     if (_owner._tabsController.Count > 0)
                         _owner.SwitchToTab((_owner._tabsController.ActiveIndex - 1 + _owner._tabsController.Count) % _owner._tabsController.Count);
                     break;
+                case "ClearSelection":
+                    _owner._listView.SelectedIndices.Clear();
+                    break;
+                case "ZoomIconsIn":
+                case "ZoomIconsInNumpad":
+                    _owner._iconZoomController.HandleZoomHotkey(1);
+                    break;
+                case "ZoomIconsOut":
+                case "ZoomIconsOutNumpad":
+                    _owner._iconZoomController.HandleZoomHotkey(-1);
+                    break;
             }
         }
+
+        private static bool IsImageViewerOnlyAction(string action)
+        {
+            return action.StartsWith("ImageViewer", StringComparison.OrdinalIgnoreCase) ||
+                action is "ToggleOcrBoxes" or "ToggleSavedTranslation" or "FitSmallDimension";
+        }
+
+        private static bool IsListViewOnlyAction(string action)
+            => action is "OpenSelected" or "NavigateUp";
 
         private bool TryMapAction(Keys effectiveKeyData, out string action)
         {

@@ -48,7 +48,35 @@ public class SettingsForm : Form
     {
         "ToggleOcrBoxes",
         "ToggleSavedTranslation",
-        "FitSmallDimension"
+        "FitSmallDimension",
+        "ImageViewerToggleAI",
+        "ImageViewerStartTranslation",
+        "ImageViewerStartOcr",
+        "ImageViewerTag",
+        "ImageViewerPrevious",
+        "ImageViewerPreviousAlt",
+        "ImageViewerNext",
+        "ImageViewerNextAlt",
+        "ImageViewerNextSpace",
+        "ImageViewerClose",
+        "ImageViewerToggleFullscreen",
+        "ImageViewerToggleFullscreenAlt",
+        "ImageViewerZoomIn",
+        "ImageViewerZoomInAlt",
+        "ImageViewerZoomOut",
+        "ImageViewerZoomOutAlt",
+        "ImageViewerRotate",
+        "ImageViewerFitWindow",
+        "ImageViewerFitWindowNumpad",
+        "ImageViewerFitWindowPlain",
+        "ImageViewerFitWindowPlainNumpad",
+        "ImageViewerActualSize",
+        "ImageViewerActualSizeNumpad",
+        "ImageViewerActualSizePlain",
+        "ImageViewerActualSizePlainNumpad",
+        "ImageViewerFitSmallDimensionControl",
+        "ImageViewerFitSmallDimensionControlNumpad",
+        "ImageViewerFitSmallDimensionNumpad"
     };
 
     private int Scale(int pixels) => (int)(pixels * (this.DeviceDpi / 96.0));
@@ -520,9 +548,54 @@ public class SettingsForm : Form
         "NewTab" => Localization.T("hotkey_new_tab"),
         "NextTab" => Localization.T("hotkey_next_tab"),
         "PrevTab" => Localization.T("hotkey_prev_tab"),
+        "CloseTab" => Localization.T("hotkey_close_tab"),
+        "SwitchTab1" => $"{Localization.T("hotkey_switch_tab")} 1",
+        "SwitchTab2" => $"{Localization.T("hotkey_switch_tab")} 2",
+        "SwitchTab3" => $"{Localization.T("hotkey_switch_tab")} 3",
+        "SwitchTab4" => $"{Localization.T("hotkey_switch_tab")} 4",
+        "SwitchTab5" => $"{Localization.T("hotkey_switch_tab")} 5",
+        "SwitchTab6" => $"{Localization.T("hotkey_switch_tab")} 6",
+        "SwitchTab7" => $"{Localization.T("hotkey_switch_tab")} 7",
+        "SwitchTab8" => $"{Localization.T("hotkey_switch_tab")} 8",
+        "SwitchTab9" => $"{Localization.T("hotkey_switch_tab")} 9",
+        "ClearSelection" => Localization.T("hotkey_clear_selection"),
+        "OpenSelected" => Localization.T("hotkey_open_selected"),
+        "NavigateUp" => Localization.T("hotkey_navigate_up"),
+        "ZoomIconsIn" => Localization.T("hotkey_zoom_icons_in"),
+        "ZoomIconsInNumpad" => Localization.T("hotkey_zoom_icons_in_numpad"),
+        "ZoomIconsOut" => Localization.T("hotkey_zoom_icons_out"),
+        "ZoomIconsOutNumpad" => Localization.T("hotkey_zoom_icons_out_numpad"),
         "ToggleOcrBoxes" => Localization.T("hotkey_toggle_ocr_boxes"),
         "ToggleSavedTranslation" => Localization.T("hotkey_toggle_saved_translation"),
         "FitSmallDimension" => Localization.T("hotkey_fit_small_dimension"),
+        "ImageViewerToggleAI" => Localization.T("hotkey_image_viewer_toggle_ai"),
+        "ImageViewerStartTranslation" => Localization.T("hotkey_image_viewer_start_translation"),
+        "ImageViewerStartOcr" => Localization.T("hotkey_image_viewer_start_ocr"),
+        "ImageViewerTag" => Localization.T("hotkey_image_viewer_tag"),
+        "ImageViewerPrevious" => Localization.T("hotkey_image_viewer_previous"),
+        "ImageViewerPreviousAlt" => Localization.T("hotkey_image_viewer_previous_alt"),
+        "ImageViewerNext" => Localization.T("hotkey_image_viewer_next"),
+        "ImageViewerNextAlt" => Localization.T("hotkey_image_viewer_next_alt"),
+        "ImageViewerNextSpace" => Localization.T("hotkey_image_viewer_next_space"),
+        "ImageViewerClose" => Localization.T("hotkey_image_viewer_close"),
+        "ImageViewerToggleFullscreen" => Localization.T("hotkey_image_viewer_fullscreen"),
+        "ImageViewerToggleFullscreenAlt" => Localization.T("hotkey_image_viewer_fullscreen_alt"),
+        "ImageViewerZoomIn" => Localization.T("hotkey_image_viewer_zoom_in"),
+        "ImageViewerZoomInAlt" => Localization.T("hotkey_image_viewer_zoom_in_alt"),
+        "ImageViewerZoomOut" => Localization.T("hotkey_image_viewer_zoom_out"),
+        "ImageViewerZoomOutAlt" => Localization.T("hotkey_image_viewer_zoom_out_alt"),
+        "ImageViewerRotate" => Localization.T("hotkey_image_viewer_rotate"),
+        "ImageViewerFitWindow" => Localization.T("hotkey_image_viewer_fit_window"),
+        "ImageViewerFitWindowNumpad" => Localization.T("hotkey_image_viewer_fit_window_numpad"),
+        "ImageViewerFitWindowPlain" => Localization.T("hotkey_image_viewer_fit_window_plain"),
+        "ImageViewerFitWindowPlainNumpad" => Localization.T("hotkey_image_viewer_fit_window_plain_numpad"),
+        "ImageViewerActualSize" => Localization.T("hotkey_image_viewer_actual_size"),
+        "ImageViewerActualSizeNumpad" => Localization.T("hotkey_image_viewer_actual_size_numpad"),
+        "ImageViewerActualSizePlain" => Localization.T("hotkey_image_viewer_actual_size_plain"),
+        "ImageViewerActualSizePlainNumpad" => Localization.T("hotkey_image_viewer_actual_size_plain_numpad"),
+        "ImageViewerFitSmallDimensionControl" => Localization.T("hotkey_image_viewer_fit_small_control"),
+        "ImageViewerFitSmallDimensionControlNumpad" => Localization.T("hotkey_image_viewer_fit_small_control_numpad"),
+        "ImageViewerFitSmallDimensionNumpad" => Localization.T("hotkey_image_viewer_fit_small_numpad"),
         _ => action
     };
 
@@ -605,7 +678,8 @@ public class SettingsForm : Form
             // Overlap handling
             foreach (var kvp in _hotkeyEdits.ToList())
             {
-                if (kvp.Value == keyString && kvp.Key != action)
+                if (kvp.Value == keyString && kvp.Key != action &&
+                    IsImageViewerHotkey(kvp.Key) == IsImageViewerHotkey(action))
                 {
                     _hotkeyEdits[kvp.Key] = "None";
                     if (_hotkeyButtons.TryGetValue(kvp.Key, out var otherBtn))
@@ -626,6 +700,9 @@ public class SettingsForm : Form
             base.OnKeyDown(e);
         }
     }
+
+    private static bool IsImageViewerHotkey(string action)
+        => ImageViewerHotkeyActions.Contains(action);
 
     private void LoadSettings()
     {

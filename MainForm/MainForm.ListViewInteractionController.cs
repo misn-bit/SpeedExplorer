@@ -894,7 +894,7 @@ public partial class MainForm
         public void KeyDown(object? sender, KeyEventArgs e)
         {
             _ = sender;
-            if (_owner._hotkeyController.IsActionKeyCode("QuickLook", e.KeyCode))
+            if (_owner._hotkeyController.IsActionKeyData("QuickLook", e.KeyData))
             {
                 _owner.ShowQuickLook();
                 e.Handled = true;
@@ -912,13 +912,13 @@ public partial class MainForm
                 }
             }
 
-            if (e.KeyCode == Keys.Enter)
+            if (_owner._hotkeyController.IsActionKeyData("OpenSelected", e.KeyData))
             {
                 _owner.OpenSelectedItem();
                 e.Handled = true;
                 e.SuppressKeyPress = true;
             }
-            else if (e.KeyCode == Keys.Back && !e.Control && !e.Alt && !e.Shift)
+            else if (_owner._hotkeyController.IsActionKeyData("NavigateUp", e.KeyData))
             {
                 _owner.GoUp();
                 e.Handled = true;
@@ -936,7 +936,7 @@ public partial class MainForm
         public void KeyUp(object? sender, KeyEventArgs e)
         {
             _ = sender;
-            if (_owner._hotkeyController.IsActionKeyCode("QuickLook", e.KeyCode))
+            if (_owner._hotkeyController.IsActionKeyData("QuickLook", e.KeyData))
             {
                 _owner.HideQuickLook();
                 e.Handled = true;

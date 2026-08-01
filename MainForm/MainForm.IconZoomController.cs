@@ -61,26 +61,15 @@ public partial class MainForm
             QueueZoomDelta(Math.Sign(notches), Math.Abs(notches));
         }
 
-        public bool HandleZoomHotkey(Keys effective)
+        public void HandleZoomHotkey(int direction)
         {
-            if ((effective & Keys.Control) != Keys.Control || (effective & Keys.Alt) == Keys.Alt)
-                return false;
-
-            Keys code = effective & Keys.KeyCode;
-            int direction = code switch
-            {
-                Keys.Oemplus or Keys.Add => 1,
-                Keys.OemMinus or Keys.Subtract => -1,
-                _ => 0
-            };
             if (direction == 0)
-                return false;
+                return;
 
             if (_baseSize == 0)
                 _baseSize = _owner.GetEffectiveIconSize();
 
             QueueZoomDelta(direction, 1);
-            return true;
         }
 
         private void QueueZoomDelta(int direction, int count)
