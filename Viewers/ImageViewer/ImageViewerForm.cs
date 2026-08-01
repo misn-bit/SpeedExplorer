@@ -262,7 +262,9 @@ public class ImageViewerForm : Form
     private sealed class OverlayBlockEditResult
     {
         public string OcrText { get; set; } = "";
-        public string TranslationText { get; set; } = "";
+        // Null means the caller is changing only geometry/text and must preserve the
+        // existing translation. An empty string is an intentional clear from the editor.
+        public string? TranslationText { get; set; }
         public RectangleF NormalizedRect { get; set; }
         public float NormalizedFontSize { get; set; }
     }
@@ -1532,13 +1534,16 @@ public class ImageViewerForm : Form
         envelope.Result.Blocks[sourceIndex].Text = edit.OcrText;
         envelope.Result.FullText = ComposeFullTextFromBlocks(envelope.Result.Blocks);
 
-        envelope.TranslationLines ??= new List<string>();
-        while (envelope.TranslationLines.Count <= sourceIndex)
-            envelope.TranslationLines.Add(string.Empty);
-        envelope.TranslationLines[sourceIndex] = edit.TranslationText;
-        envelope.TranslationFullText = string.Join(
-            Environment.NewLine,
-            envelope.TranslationLines.Where(t => !string.IsNullOrWhiteSpace(t)).Select(t => t.Trim()));
+        if (edit.TranslationText != null)
+        {
+            envelope.TranslationLines ??= new List<string>();
+            while (envelope.TranslationLines.Count <= sourceIndex)
+                envelope.TranslationLines.Add(string.Empty);
+            envelope.TranslationLines[sourceIndex] = edit.TranslationText;
+            envelope.TranslationFullText = string.Join(
+                Environment.NewLine,
+                envelope.TranslationLines.Where(t => !string.IsNullOrWhiteSpace(t)).Select(t => t.Trim()));
+        }
 
         var existing = envelope.OverlayOverrides.FirstOrDefault(o => o.SourceIndex == sourceIndex);
         if (existing == null)
@@ -1548,7 +1553,8 @@ public class ImageViewerForm : Form
         }
 
         existing.Text = edit.OcrText;
-        existing.TranslationText = edit.TranslationText;
+        if (edit.TranslationText != null)
+            existing.TranslationText = edit.TranslationText;
         existing.X = edit.NormalizedRect.X;
         existing.Y = edit.NormalizedRect.Y;
         existing.W = edit.NormalizedRect.Width;
@@ -1585,9 +1591,26 @@ public class ImageViewerForm : Form
             return;
 
         var block = _overlayBlocks[_overlayDragBlockIndex];
-        string translationText = block.SourceIndex >= 0 && block.SourceIndex < _lastTranslations.Count
-            ? _lastTranslations[block.SourceIndex]
-            : "";
+        string? translationText = null;
+        if (block.SourceIndex >= 0 && block.SourceIndex < _lastTranslations.Count)
+        {
+            translationText = _lastTranslations[block.SourceIndex];
+        }
+        else if (TryLoadSavedOcrEnvelope(imagePath, out var savedEnvelope) &&
+                 savedEnvelope?.TranslationLines != null &&
+                 block.SourceIndex >= 0 &&
+                 block.SourceIndex < savedEnvelope.TranslationLines.Count)
+        {
+            // Dragging must not turn an incomplete in-memory translation list into an
+            // empty cache entry. This also protects against older caches created before
+            // translation placeholders were preserved.
+            translationText = savedEnvelope.TranslationLines[block.SourceIndex] ?? "";
+        }
+        else
+        {
+            // Leave it null so ApplyOverlayBlockEdit preserves the cache value when the
+            // in-memory translation list cannot identify this block.
+        }
 
         Func<string, string> normalizeForPersistence = _overlayDragStartHadUserOverride
             ? NormalizeEditedOverlayDisplayText
@@ -1596,7 +1619,9 @@ public class ImageViewerForm : Form
         ApplyOverlayBlockEdit(imagePath, block.SourceIndex, new OverlayBlockEditResult
         {
             OcrText = normalizeForPersistence(block.SourceText),
-            TranslationText = normalizeForPersistence(translationText),
+            TranslationText = translationText == null
+                ? null
+                : normalizeForPersistence(translationText),
             NormalizedRect = block.NormalizedRect,
             NormalizedFontSize = block.NormalizedFontSize
         });
@@ -2280,9 +2305,10 @@ public class ImageViewerForm : Form
         if (!hasLines && !hasFull)
             return false;
 
+        // Keep empty entries so translation index N continues to refer to OCR block N.
+        // Filtering them here shifts every following translation onto the wrong box.
         var normalized = lines
-            .Where(t => !string.IsNullOrWhiteSpace(t))
-            .Select(t => t.Trim())
+            .Select(t => t?.Trim() ?? "")
             .ToList();
 
         translation = new LlmTextTranslationResult
@@ -2394,9 +2420,10 @@ public class ImageViewerForm : Form
             envelope.TranslationTargetLanguage = translation.TargetLanguage ?? "";
             envelope.TranslationSourceLanguage = ocr.DetectedLanguage ?? "";
             envelope.TranslationFullText = translation.TranslatedFullText ?? "";
+            // TranslationLines is parallel to OCR blocks; empty translations must remain
+            // as placeholders instead of shifting later entries to earlier boxes.
             envelope.TranslationLines = translation.Translations?
-                .Where(t => !string.IsNullOrWhiteSpace(t))
-                .Select(t => t.Trim())
+                .Select(t => t?.Trim() ?? "")
                 .ToList() ?? new List<string>();
             envelope.TranslationSavedUtcTicks = DateTime.UtcNow.Ticks;
 
