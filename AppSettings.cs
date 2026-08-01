@@ -102,6 +102,15 @@ public class AppSettings
     public string ImageViewerSourceLanguageHint { get; set; } = "";
     public string ImageViewerOcrHint { get; set; } = "";
     public string ImageViewerTranslationContextHint { get; set; } = "";
+    public int? ImageViewerOverlayDefaultTextColorArgb { get; set; }
+    public int? ImageViewerOverlayDefaultTextOutlineColorArgb { get; set; }
+    public int? ImageViewerOverlayDefaultTextAlignment { get; set; }
+    public int? ImageViewerOverlayDefaultTextVerticalAlignment { get; set; }
+    public bool? ImageViewerOverlayDefaultTextOutlineVisible { get; set; }
+    public int? ImageViewerOverlayDefaultBoxFillColorArgb { get; set; }
+    public bool? ImageViewerOverlayDefaultBoxFillVisible { get; set; }
+    public int? ImageViewerOverlayDefaultBoxBorderColorArgb { get; set; }
+    public bool? ImageViewerOverlayDefaultBoxBorderVisible { get; set; }
 
     public System.Collections.Generic.List<string> PinnedPaths { get; set; } = new();
     public System.Collections.Generic.List<string> SidebarBlockOrder { get; set; } = new()

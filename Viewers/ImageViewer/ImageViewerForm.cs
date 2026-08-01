@@ -146,6 +146,7 @@ public class ImageViewerForm : Form
     private LlmTextTranslationResult? _savedTranslationForCurrentImage;
     private List<string> _lastTranslations = new();
     private readonly List<OverlayTextBlock> _overlayBlocks = new();
+    private OverlayStyleDefaults? _currentImageOverlayDefaults;
     private bool _currentOverlayFromSavedCache;
     private bool _suppressSavedTranslationToggleEvent;
     private bool _showSavedTranslationPreferred;
@@ -177,6 +178,15 @@ public class ImageViewerForm : Form
         public string DisplayText { get; set; } = "";
         public RectangleF NormalizedRect { get; set; }
         public float NormalizedFontSize { get; set; }
+        public int? TextColorArgb { get; set; }
+        public int? TextOutlineColorArgb { get; set; }
+        public StringAlignment? TextAlignment { get; set; }
+        public StringAlignment? TextVerticalAlignment { get; set; }
+        public bool? TextOutlineVisible { get; set; }
+        public int? BoxFillColorArgb { get; set; }
+        public int? BoxBorderColorArgb { get; set; }
+        public bool? BoxFillVisible { get; set; }
+        public bool? BoxBorderVisible { get; set; }
         public bool IsManualBox { get; set; }
         public bool IsPendingManualBox { get; set; }
         public bool HasUserOverride { get; set; }
@@ -247,6 +257,7 @@ public class ImageViewerForm : Form
         public string TranslationFullText { get; set; } = "";
         public List<string> TranslationLines { get; set; } = new();
         public long TranslationSavedUtcTicks { get; set; }
+        public OverlayStyleDefaults? OverlayDefaults { get; set; }
         public List<OcrOverlayBlockOverride> OverlayOverrides { get; set; } = new();
     }
 
@@ -260,6 +271,15 @@ public class ImageViewerForm : Form
         public float W { get; set; }
         public float H { get; set; }
         public float FontSize { get; set; }
+        public int? TextColorArgb { get; set; }
+        public int? TextOutlineColorArgb { get; set; }
+        public StringAlignment? TextAlignment { get; set; }
+        public StringAlignment? TextVerticalAlignment { get; set; }
+        public bool? TextOutlineVisible { get; set; }
+        public int? BoxFillColorArgb { get; set; }
+        public int? BoxBorderColorArgb { get; set; }
+        public bool? BoxFillVisible { get; set; }
+        public bool? BoxBorderVisible { get; set; }
     }
 
     private sealed class OverlayBlockEditResult
@@ -270,6 +290,16 @@ public class ImageViewerForm : Form
         public string? TranslationText { get; set; }
         public RectangleF NormalizedRect { get; set; }
         public float NormalizedFontSize { get; set; }
+        public int? TextColorArgb { get; set; }
+        public int? TextOutlineColorArgb { get; set; }
+        public StringAlignment? TextAlignment { get; set; }
+        public StringAlignment? TextVerticalAlignment { get; set; }
+        public bool? TextOutlineVisible { get; set; }
+        public int? BoxFillColorArgb { get; set; }
+        public int? BoxBorderColorArgb { get; set; }
+        public bool? BoxFillVisible { get; set; }
+        public bool? BoxBorderVisible { get; set; }
+        public bool StyleSettingsChanged { get; set; }
     }
 
     private const string OcrCacheJsonSeparator = "###__OCR_CACHE_JSON__###";
@@ -278,6 +308,10 @@ public class ImageViewerForm : Form
     private static readonly Color ControlPanelColor = Color.FromArgb(40, 40, 40);
     private static readonly Color ForeColor_Dark = Color.FromArgb(240, 240, 240);
     private static readonly Color TitleBarColor = Color.FromArgb(32, 32, 32);
+    private static readonly Color DefaultOverlayFillColor = Color.FromArgb(242, 7, 19, 36);
+    private static readonly Color DefaultOverlayBorderColor = Color.FromArgb(220, 125, 198, 255);
+    private static readonly Color DefaultOverlayTextColor = Color.FromArgb(250, 250, 250);
+    private static readonly Color DefaultOverlayTextOutlineColor = Color.FromArgb(255, 0, 0, 0);
 
     private int Scale(int pixels) => (int)(pixels * (this.DeviceDpi / 96.0));
     private Padding Scale(Padding p) => new Padding(Scale(p.Left), Scale(p.Top), Scale(p.Right), Scale(p.Bottom));
@@ -1276,6 +1310,8 @@ public class ImageViewerForm : Form
             Enabled = false
         };
         menu.Items.Add(_editOverlayBlockMenuItem);
+        menu.Items.Add("Set overlay defaults for this image", null, (s, e) => EditOverlayDefaults(perImage: true));
+        menu.Items.Add("Set global overlay defaults", null, (s, e) => EditOverlayDefaults(perImage: false));
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Draw OCR Box", null, (s, e) => ToggleManualOcrDrawMode());
         menu.Items.Add("Clear Pending OCR Boxes", null, (s, e) => ClearPendingManualOcrRegions());
@@ -1292,6 +1328,77 @@ public class ImageViewerForm : Form
             _editOverlayBlockMenuItem.Enabled = _contextOverlayBlockIndex >= 0;
         };
         return menu;
+    }
+
+    private void EditOverlayDefaults(bool perImage)
+    {
+        if (perImage && string.IsNullOrWhiteSpace(GetCurrentImagePath()))
+            return;
+
+        OverlayStyleDefaults current = perImage
+            ? _currentImageOverlayDefaults?.Clone() ?? new OverlayStyleDefaults()
+            : GetGlobalOverlayDefaults();
+        using var dialog = new OverlayStyleDefaultsDialog(
+            current,
+            perImage ? "Image Overlay Defaults" : "Global Overlay Defaults");
+        if (dialog.ShowDialog(this) != DialogResult.OK)
+            return;
+
+        OverlayStyleDefaults updated = dialog.Settings;
+        if (perImage)
+            SaveOverlayDefaultsForCurrentImage(updated);
+        else
+            SaveGlobalOverlayDefaults(updated);
+    }
+
+    private void SaveGlobalOverlayDefaults(OverlayStyleDefaults style)
+    {
+        _settings.ImageViewerOverlayDefaultTextColorArgb = style.TextColorArgb;
+        _settings.ImageViewerOverlayDefaultTextOutlineColorArgb = style.TextOutlineColorArgb;
+        _settings.ImageViewerOverlayDefaultTextAlignment = FromStringAlignment(style.TextAlignment);
+        _settings.ImageViewerOverlayDefaultTextVerticalAlignment = FromStringAlignment(style.TextVerticalAlignment);
+        _settings.ImageViewerOverlayDefaultTextOutlineVisible = style.TextOutlineVisible;
+        _settings.ImageViewerOverlayDefaultBoxFillColorArgb = style.BoxFillColorArgb;
+        _settings.ImageViewerOverlayDefaultBoxFillVisible = style.BoxFillVisible;
+        _settings.ImageViewerOverlayDefaultBoxBorderColorArgb = style.BoxBorderColorArgb;
+        _settings.ImageViewerOverlayDefaultBoxBorderVisible = style.BoxBorderVisible;
+        _settings.Save();
+        _pictureBox.Invalidate();
+    }
+
+    private void SaveOverlayDefaultsForCurrentImage(OverlayStyleDefaults style)
+    {
+        string? imagePath = GetCurrentImagePath();
+        if (string.IsNullOrWhiteSpace(imagePath))
+            return;
+
+        if (!TryGetExistingOcrCachePath(imagePath, out string cachePath))
+        {
+            if (_lastOcrResult == null)
+            {
+                RefreshAiStatusLabel("Run OCR before saving per-image overlay defaults");
+                return;
+            }
+
+            SaveOcrResultToCache(imagePath, _settings.LlmModelName, _lastOcrResult);
+            if (!TryGetExistingOcrCachePath(imagePath, out cachePath))
+            {
+                RefreshAiStatusLabel("Could not create the image OCR cache");
+                return;
+            }
+        }
+
+        if (!TryLoadSavedOcrEnvelope(imagePath, out var envelope) || envelope?.Result == null)
+        {
+            RefreshAiStatusLabel("Could not load the image OCR cache");
+            return;
+        }
+
+        envelope.OverlayDefaults = style.IsEmpty ? null : style.Clone();
+        File.WriteAllText(cachePath, SerializeOcrCacheEnvelopeForDisk(envelope));
+        _currentImageOverlayDefaults = envelope.OverlayDefaults?.Clone();
+        _pictureBox.Invalidate();
+        RefreshAiStatusLabel("Saved image overlay defaults");
     }
 
     private int HitTestOverlayBlock(Point point)
@@ -1388,6 +1495,15 @@ public class ImageViewerForm : Form
         string originalDisplayText = block.DisplayText;
         RectangleF originalRect = block.NormalizedRect;
         float originalFontSize = block.NormalizedFontSize;
+        int? originalTextColorArgb = block.TextColorArgb;
+        int? originalTextOutlineColorArgb = block.TextOutlineColorArgb;
+        StringAlignment? originalTextAlignment = block.TextAlignment;
+        StringAlignment? originalTextVerticalAlignment = block.TextVerticalAlignment;
+        bool? originalTextOutlineVisible = block.TextOutlineVisible;
+        int? originalBoxFillColorArgb = block.BoxFillColorArgb;
+        int? originalBoxBorderColorArgb = block.BoxBorderColorArgb;
+        bool? originalBoxFillVisible = block.BoxFillVisible;
+        bool? originalBoxBorderVisible = block.BoxBorderVisible;
         bool originalHasUserOverride = block.HasUserOverride;
         string translationText = block.SourceIndex >= 0 && block.SourceIndex < _lastTranslations.Count
             ? _lastTranslations[block.SourceIndex]
@@ -1402,7 +1518,16 @@ public class ImageViewerForm : Form
                 ? NormalizeEditedOverlayDisplayText(translationText)
                 : NormalizeOverlayDisplayText(translationText),
             block.NormalizedRect,
-            block.NormalizedFontSize);
+            block.NormalizedFontSize,
+            block.TextColorArgb,
+            block.TextOutlineColorArgb,
+            block.TextAlignment,
+            block.TextVerticalAlignment,
+            block.TextOutlineVisible,
+            block.BoxFillColorArgb,
+            block.BoxBorderColorArgb,
+            block.BoxFillVisible,
+            block.BoxBorderVisible);
 
         dialog.PreviewChanged += (_, _) =>
         {
@@ -1418,6 +1543,15 @@ public class ImageViewerForm : Form
                 originalDisplayText,
                 originalRect,
                 originalFontSize,
+                originalTextColorArgb,
+                originalTextOutlineColorArgb,
+                originalTextAlignment,
+                originalTextVerticalAlignment,
+                originalTextOutlineVisible,
+                originalBoxFillColorArgb,
+                originalBoxBorderColorArgb,
+                originalBoxFillVisible,
+                originalBoxBorderVisible,
                 originalHasUserOverride);
             return;
         }
@@ -1438,7 +1572,17 @@ public class ImageViewerForm : Form
                 dialog.NormalizedRect.Y,
                 dialog.NormalizedRect.Width,
                 dialog.NormalizedRect.Height),
-            NormalizedFontSize = Math.Clamp(dialog.NormalizedFontSize, 0f, 0.5f)
+            NormalizedFontSize = Math.Clamp(dialog.NormalizedFontSize, 0f, 0.5f),
+            TextColorArgb = dialog.TextColorArgb,
+            TextOutlineColorArgb = dialog.TextOutlineColorArgb,
+            TextAlignment = dialog.TextAlignment,
+            TextVerticalAlignment = dialog.TextVerticalAlignment,
+            TextOutlineVisible = dialog.TextOutlineVisible,
+            BoxFillColorArgb = dialog.BoxFillColorArgb,
+            BoxBorderColorArgb = dialog.BoxBorderColorArgb,
+            BoxFillVisible = dialog.BoxFillVisible,
+            BoxBorderVisible = dialog.BoxBorderVisible,
+            StyleSettingsChanged = dialog.StyleSettingsChanged
         };
     }
 
@@ -1454,6 +1598,18 @@ public class ImageViewerForm : Form
         block.SourceText = edit.OcrText;
         block.NormalizedRect = edit.NormalizedRect;
         block.NormalizedFontSize = edit.NormalizedFontSize;
+        if (edit.StyleSettingsChanged)
+        {
+            block.TextColorArgb = edit.TextColorArgb;
+            block.TextOutlineColorArgb = edit.TextOutlineColorArgb;
+            block.TextAlignment = edit.TextAlignment;
+            block.TextVerticalAlignment = edit.TextVerticalAlignment;
+            block.TextOutlineVisible = edit.TextOutlineVisible;
+            block.BoxFillColorArgb = edit.BoxFillColorArgb;
+            block.BoxBorderColorArgb = edit.BoxBorderColorArgb;
+            block.BoxFillVisible = edit.BoxFillVisible;
+            block.BoxBorderVisible = edit.BoxBorderVisible;
+        }
         block.HasUserOverride = true;
         string displayText =
             _showSavedTranslationCheck.Checked &&
@@ -1471,6 +1627,15 @@ public class ImageViewerForm : Form
         string displayText,
         RectangleF rect,
         float fontSize,
+        int? textColorArgb,
+        int? textOutlineColorArgb,
+        StringAlignment? textAlignment,
+        StringAlignment? textVerticalAlignment,
+        bool? textOutlineVisible,
+        int? boxFillColorArgb,
+        int? boxBorderColorArgb,
+        bool? boxFillVisible,
+        bool? boxBorderVisible,
         bool hasUserOverride)
     {
         if (!string.Equals(GetCurrentImagePath(), imagePath, StringComparison.OrdinalIgnoreCase))
@@ -1484,6 +1649,15 @@ public class ImageViewerForm : Form
         block.DisplayText = displayText;
         block.NormalizedRect = rect;
         block.NormalizedFontSize = fontSize;
+        block.TextColorArgb = textColorArgb;
+        block.TextOutlineColorArgb = textOutlineColorArgb;
+        block.TextAlignment = textAlignment;
+        block.TextVerticalAlignment = textVerticalAlignment;
+        block.TextOutlineVisible = textOutlineVisible;
+        block.BoxFillColorArgb = boxFillColorArgb;
+        block.BoxBorderColorArgb = boxBorderColorArgb;
+        block.BoxFillVisible = boxFillVisible;
+        block.BoxBorderVisible = boxBorderVisible;
         block.HasUserOverride = hasUserOverride;
         _pictureBox.Invalidate();
     }
@@ -1541,6 +1715,18 @@ public class ImageViewerForm : Form
         existing.W = edit.NormalizedRect.Width;
         existing.H = edit.NormalizedRect.Height;
         existing.FontSize = edit.NormalizedFontSize;
+        if (edit.StyleSettingsChanged)
+        {
+            existing.TextColorArgb = edit.TextColorArgb;
+            existing.TextOutlineColorArgb = edit.TextOutlineColorArgb;
+            existing.TextAlignment = edit.TextAlignment;
+            existing.TextVerticalAlignment = edit.TextVerticalAlignment;
+            existing.TextOutlineVisible = edit.TextOutlineVisible;
+            existing.BoxFillColorArgb = edit.BoxFillColorArgb;
+            existing.BoxBorderColorArgb = edit.BoxBorderColorArgb;
+            existing.BoxFillVisible = edit.BoxFillVisible;
+            existing.BoxBorderVisible = edit.BoxBorderVisible;
+        }
 
         File.WriteAllText(cachePath, SerializeOcrCacheEnvelopeForDisk(envelope));
 
@@ -1848,6 +2034,17 @@ public class ImageViewerForm : Form
 
         return !string.IsNullOrWhiteSpace(_activeTagImagePath) &&
             string.Equals(_activeTagImagePath, imagePath, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private bool IsCurrentImageOverlayJobPending()
+    {
+        string? imagePath = GetCurrentImagePath();
+        if (string.IsNullOrWhiteSpace(imagePath))
+            return false;
+
+        return (_activeAiJob != null &&
+                string.Equals(_activeAiJob.ImagePath, imagePath, StringComparison.OrdinalIgnoreCase)) ||
+            GetQueuedAiJobsForImage(imagePath) > 0;
     }
 
     private void UpdateAiActionControlsState()
@@ -3908,11 +4105,19 @@ public class ImageViewerForm : Form
     private void ApplyCachedOverlayOverridesForCurrentImage(bool invalidate = true)
     {
         string? imagePath = GetCurrentImagePath();
+        _currentImageOverlayDefaults = null;
         if (string.IsNullOrWhiteSpace(imagePath) ||
             !TryLoadSavedOcrEnvelope(imagePath, out var envelope) ||
-            envelope?.OverlayOverrides == null ||
-            envelope.OverlayOverrides.Count == 0)
+            envelope == null)
         {
+            return;
+        }
+
+        _currentImageOverlayDefaults = envelope.OverlayDefaults?.Clone();
+        if (envelope.OverlayOverrides == null || envelope.OverlayOverrides.Count == 0)
+        {
+            if (invalidate)
+                _pictureBox.Invalidate();
             return;
         }
 
@@ -3928,6 +4133,24 @@ public class ImageViewerForm : Form
                 block.NormalizedRect = ClampNormalizedRect(ov.X, ov.Y, ov.W, ov.H);
             if (ov.FontSize > 0f)
                 block.NormalizedFontSize = Math.Clamp(ov.FontSize, 0f, 0.5f);
+            if (ov.TextColorArgb != null)
+                block.TextColorArgb = ov.TextColorArgb;
+            if (ov.TextOutlineColorArgb != null)
+                block.TextOutlineColorArgb = ov.TextOutlineColorArgb;
+            if (ov.TextAlignment != null)
+                block.TextAlignment = ov.TextAlignment;
+            if (ov.TextVerticalAlignment != null)
+                block.TextVerticalAlignment = ov.TextVerticalAlignment;
+            if (ov.TextOutlineVisible != null)
+                block.TextOutlineVisible = ov.TextOutlineVisible;
+            if (ov.BoxFillColorArgb != null)
+                block.BoxFillColorArgb = ov.BoxFillColorArgb;
+            if (ov.BoxBorderColorArgb != null)
+                block.BoxBorderColorArgb = ov.BoxBorderColorArgb;
+            if (ov.BoxFillVisible != null)
+                block.BoxFillVisible = ov.BoxFillVisible;
+            if (ov.BoxBorderVisible != null)
+                block.BoxBorderVisible = ov.BoxBorderVisible;
             if (!string.IsNullOrWhiteSpace(ov.Text))
                 block.SourceText = ov.Text!;
 
@@ -3939,6 +4162,56 @@ public class ImageViewerForm : Form
         if (invalidate)
             _pictureBox.Invalidate();
     }
+
+    private OverlayStyleDefaults GetGlobalOverlayDefaults()
+        => new()
+        {
+            TextColorArgb = _settings.ImageViewerOverlayDefaultTextColorArgb,
+            TextOutlineColorArgb = _settings.ImageViewerOverlayDefaultTextOutlineColorArgb,
+            TextAlignment = ToStringAlignment(_settings.ImageViewerOverlayDefaultTextAlignment),
+            TextVerticalAlignment = ToStringAlignment(_settings.ImageViewerOverlayDefaultTextVerticalAlignment),
+            TextOutlineVisible = _settings.ImageViewerOverlayDefaultTextOutlineVisible,
+            BoxFillColorArgb = _settings.ImageViewerOverlayDefaultBoxFillColorArgb,
+            BoxFillVisible = _settings.ImageViewerOverlayDefaultBoxFillVisible,
+            BoxBorderColorArgb = _settings.ImageViewerOverlayDefaultBoxBorderColorArgb,
+            BoxBorderVisible = _settings.ImageViewerOverlayDefaultBoxBorderVisible
+        };
+
+    private OverlayStyleDefaults GetEffectiveOverlayStyle(OverlayTextBlock block)
+    {
+        OverlayStyleDefaults global = GetGlobalOverlayDefaults();
+        OverlayStyleDefaults? image = _currentImageOverlayDefaults;
+        return new OverlayStyleDefaults
+        {
+            TextColorArgb = block.TextColorArgb ?? image?.TextColorArgb ?? global.TextColorArgb,
+            TextOutlineColorArgb = block.TextOutlineColorArgb ?? image?.TextOutlineColorArgb ?? global.TextOutlineColorArgb,
+            TextAlignment = block.TextAlignment ?? image?.TextAlignment ?? global.TextAlignment,
+            TextVerticalAlignment = block.TextVerticalAlignment ?? image?.TextVerticalAlignment ?? global.TextVerticalAlignment,
+            TextOutlineVisible = block.TextOutlineVisible ?? image?.TextOutlineVisible ?? global.TextOutlineVisible,
+            BoxFillColorArgb = block.BoxFillColorArgb ?? image?.BoxFillColorArgb ?? global.BoxFillColorArgb,
+            BoxFillVisible = block.BoxFillVisible ?? image?.BoxFillVisible ?? global.BoxFillVisible,
+            BoxBorderColorArgb = block.BoxBorderColorArgb ?? image?.BoxBorderColorArgb ?? global.BoxBorderColorArgb,
+            BoxBorderVisible = block.BoxBorderVisible ?? image?.BoxBorderVisible ?? global.BoxBorderVisible
+        };
+    }
+
+    private static StringAlignment? ToStringAlignment(int? value)
+        => value switch
+        {
+            0 => StringAlignment.Near,
+            1 => StringAlignment.Center,
+            2 => StringAlignment.Far,
+            _ => null
+        };
+
+    private static int? FromStringAlignment(StringAlignment? value)
+        => value switch
+        {
+            StringAlignment.Near => 0,
+            StringAlignment.Center => 1,
+            StringAlignment.Far => 2,
+            _ => null
+        };
 
     private static List<OverlayTextBlock> ReduceOverlayBlocksConservatively(List<OverlayTextBlock> input)
     {
@@ -4251,6 +4524,7 @@ public class ImageViewerForm : Form
             _lastOcrResult = null;
             _savedTranslationForCurrentImage = null;
             _lastTranslations = new List<string>();
+            _currentImageOverlayDefaults = null;
             _overlayBlocks.Clear();
             _pendingManualOcrRegions.Clear();
             _manualOcrDrawMode = false;
@@ -4658,12 +4932,8 @@ public class ImageViewerForm : Form
         g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
         try
         {
-            using var fillBrush = new SolidBrush(Color.FromArgb(120, 7, 19, 36));
-            using var borderPen = new Pen(Color.FromArgb(220, 125, 198, 255), 1.2f);
             using var badgeBrush = new SolidBrush(Color.FromArgb(220, 20, 20, 20));
             using var badgeBorder = new Pen(Color.FromArgb(220, 125, 198, 255), 1f);
-            using var textBrush = new SolidBrush(Color.FromArgb(250, 250, 250));
-            using var textBackBrush = new SolidBrush(Color.FromArgb(185, 0, 0, 0));
             float badgeFontPx = Math.Clamp(9f * _zoomLevel, 8f, 16f);
             using var badgeFont = new Font("Segoe UI", badgeFontPx, FontStyle.Bold, GraphicsUnit.Pixel);
             using var textFormat = new StringFormat
@@ -4689,6 +4959,7 @@ public class ImageViewerForm : Form
             for (int i = 0; i < _overlayBlocks.Count; i++)
             {
                 var block = _overlayBlocks[i];
+                OverlayStyleDefaults style = GetEffectiveOverlayStyle(block);
                 bool exactBox = true;
                 float x = imageRect.X + (block.NormalizedRect.X * imageRect.Width);
                 float y = imageRect.Y + (block.NormalizedRect.Y * imageRect.Height);
@@ -4826,26 +5097,55 @@ public class ImageViewerForm : Form
                     textRect = RectangleF.Inflate(drawRect, -textInsetX, -textInsetY);
                 }
 
-                g.FillRectangle(fillBrush, drawRect);
-                g.DrawRectangle(borderPen, drawRect.X, drawRect.Y, drawRect.Width, drawRect.Height);
+                Color fillColor = style.BoxFillColorArgb.HasValue
+                    ? Color.FromArgb(style.BoxFillColorArgb.Value)
+                    : DefaultOverlayFillColor;
+                Color borderColor = style.BoxBorderColorArgb.HasValue
+                    ? Color.FromArgb(style.BoxBorderColorArgb.Value)
+                    : DefaultOverlayBorderColor;
+                Color textColor = style.TextColorArgb.HasValue
+                    ? Color.FromArgb(style.TextColorArgb.Value)
+                    : DefaultOverlayTextColor;
+                Color textOutlineColor = style.TextOutlineColorArgb.HasValue
+                    ? Color.FromArgb(style.TextOutlineColorArgb.Value)
+                    : DefaultOverlayTextOutlineColor;
+                using var fillBrush = style.BoxFillVisible == false ? null : new SolidBrush(fillColor);
+                using var borderPen = style.BoxBorderVisible == false ? null : new Pen(borderColor, 1.2f);
+                using var textBrush = new SolidBrush(textColor);
 
-                string badgeText = (i + 1).ToString();
-                var badgeSize = g.MeasureString(badgeText, badgeFont);
-                var badgeRect = new RectangleF(
-                    drawRect.X,
-                    Math.Max(imageRect.Top, drawRect.Y - badgeSize.Height - 2f),
-                    badgeSize.Width + 6f,
-                    badgeSize.Height + 2f);
+                if (fillBrush != null)
+                    g.FillRectangle(fillBrush, drawRect);
+                if (borderPen != null)
+                    g.DrawRectangle(borderPen, drawRect.X, drawRect.Y, drawRect.Width, drawRect.Height);
 
-                g.FillRectangle(badgeBrush, badgeRect);
-                g.DrawRectangle(badgeBorder, badgeRect.X, badgeRect.Y, badgeRect.Width, badgeRect.Height);
-                g.DrawString(badgeText, badgeFont, textBrush, badgeRect.X + 3f, badgeRect.Y + 1f);
+                if (IsCurrentImageOverlayJobPending())
+                {
+                    string badgeText = (i + 1).ToString();
+                    var badgeSize = g.MeasureString(badgeText, badgeFont);
+                    var badgeRect = new RectangleF(
+                        drawRect.X,
+                        Math.Max(imageRect.Top, drawRect.Y - badgeSize.Height - 2f),
+                        badgeSize.Width + 6f,
+                        badgeSize.Height + 2f);
+
+                    g.FillRectangle(badgeBrush, badgeRect);
+                    g.DrawRectangle(badgeBorder, badgeRect.X, badgeRect.Y, badgeRect.Width, badgeRect.Height);
+                    g.DrawString(badgeText, badgeFont, textBrush, badgeRect.X + 3f, badgeRect.Y + 1f);
+                }
 
                 if (!string.IsNullOrWhiteSpace(text) && textRect.Width > 4f && textRect.Height > 4f)
                 {
-                    g.FillRectangle(textBackBrush, textRect);
                     using var textFont = new Font("Segoe UI", textFontPx, FontStyle.Bold, GraphicsUnit.Pixel);
-                    DrawOverlayText(g, text, textFont, textBrush, textRect);
+                    DrawOverlayText(
+                        g,
+                        text,
+                        textFont,
+                        textBrush,
+                        textRect,
+                        style.TextAlignment ?? StringAlignment.Near,
+                        style.TextVerticalAlignment ?? StringAlignment.Near,
+                        style.TextOutlineVisible == true,
+                        textOutlineColor);
                 }
 
                 placedRects.Add(drawRect);
@@ -5007,7 +5307,16 @@ public class ImageViewerForm : Form
         return fontPx;
     }
 
-    private static void DrawOverlayText(Graphics g, string text, Font font, Brush brush, RectangleF textRect)
+    private static void DrawOverlayText(
+        Graphics g,
+        string text,
+        Font font,
+        Brush brush,
+        RectangleF textRect,
+        StringAlignment alignment,
+        StringAlignment verticalAlignment,
+        bool outlineVisible,
+        Color outlineColor)
     {
         var layout = MeasureOverlayTextLayout(g, text, font, textRect.Width);
         if (layout.Lines.Count == 0)
@@ -5017,14 +5326,35 @@ public class ImageViewerForm : Form
         try
         {
             g.SetClip(textRect);
-            using var lineFormat = CreateOverlayLineFormat();
-            float y = textRect.Y;
+            using var lineFormat = CreateOverlayLineFormat(alignment);
+            float extraHeight = Math.Max(0f, textRect.Height - layout.Size.Height);
+            float y = verticalAlignment switch
+            {
+                StringAlignment.Center => textRect.Y + (extraHeight / 2f),
+                StringAlignment.Far => textRect.Y + extraHeight,
+                _ => textRect.Y
+            };
             foreach (string line in layout.Lines)
             {
                 if (y > textRect.Bottom)
                     break;
 
-                g.DrawString(line, font, brush, new RectangleF(textRect.X, y, textRect.Width, layout.LineHeight), lineFormat);
+                var lineRect = new RectangleF(textRect.X, y, textRect.Width, layout.LineHeight);
+                if (outlineVisible)
+                {
+                    using var path = new GraphicsPath();
+                    path.AddString(line, font.FontFamily, (int)font.Style, font.Size, lineRect, lineFormat);
+                    using var outlinePen = new Pen(outlineColor, Math.Max(1f, font.Size * 0.075f))
+                    {
+                        LineJoin = LineJoin.Round
+                    };
+                    g.DrawPath(outlinePen, path);
+                    g.FillPath(brush, path);
+                }
+                else
+                {
+                    g.DrawString(line, font, brush, lineRect, lineFormat);
+                }
                 y += layout.LineHeight;
             }
         }
@@ -5271,9 +5601,10 @@ public class ImageViewerForm : Form
         return g.MeasureString(line, font, PointF.Empty, format).Width;
     }
 
-    private static StringFormat CreateOverlayLineFormat()
+    private static StringFormat CreateOverlayLineFormat(StringAlignment alignment = StringAlignment.Near)
     {
         var format = (StringFormat)StringFormat.GenericTypographic.Clone();
+        format.Alignment = alignment;
         format.FormatFlags |= StringFormatFlags.MeasureTrailingSpaces | StringFormatFlags.NoWrap;
         format.Trimming = StringTrimming.None;
         return format;
