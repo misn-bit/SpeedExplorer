@@ -24,6 +24,7 @@ internal sealed class TabState
     public int TopItemIndex { get; set; } = -1;
     public bool HasCachedSnapshot { get; set; }
     public string CachedPath { get; set; } = "";
+    public DateTime? CachedDirectoryWriteTimeUtc { get; set; }
     public List<FileItem>? CachedItems { get; set; }
     public List<FileItem>? CachedAllItems { get; set; }
     public bool IsPreloading { get; set; }

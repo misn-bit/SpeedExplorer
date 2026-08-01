@@ -185,13 +185,11 @@ public partial class MainForm
 
                 case "Undo":
                     if (_owner._currentPath == ThisPcPath) return;
-                    FileSystemService.PerformUndo();
-                    _owner.RequestWatcherRefresh();
+                    _owner.Undo();
                     break;
                 case "Redo":
                     if (_owner._currentPath == ThisPcPath) return;
-                    FileSystemService.PerformRedo();
-                    _owner.RequestWatcherRefresh();
+                    _owner.Redo();
                     break;
                 case "ToggleSidebar":
                     _owner.ToggleSidebar();

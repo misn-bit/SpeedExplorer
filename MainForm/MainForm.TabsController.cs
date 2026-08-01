@@ -336,6 +336,7 @@ public partial class MainForm
             tab.CurrentShellId = ShellNavigationController.IsShellIdPath(_owner._currentPath) ? _owner._currentPath : "";
             tab.Title = GetTabTitleForPath(_owner._currentPath, tab.IsSearchMode);
             tab.CachedPath = _owner._currentPath;
+            tab.CachedDirectoryWriteTimeUtc = GetDirectoryWriteTimeUtc(_owner._currentPath);
             tab.CachedItems = new List<FileItem>(_owner._items);
             tab.CachedAllItems = new List<FileItem>(_owner._allItems);
             tab.HasCachedSnapshot = true;
@@ -368,6 +369,7 @@ public partial class MainForm
                 tab.HasCachedSnapshot &&
                 !string.IsNullOrWhiteSpace(tab.CachedPath) &&
                 string.Equals(tab.CachedPath, tab.CurrentPath, StringComparison.OrdinalIgnoreCase) &&
+                IsCachedDirectoryCurrent(tab) &&
                 tab.CachedItems != null &&
                 tab.CachedAllItems != null;
 
@@ -816,6 +818,7 @@ public partial class MainForm
                             return;
 
                         tab.CachedPath = path;
+                        tab.CachedDirectoryWriteTimeUtc = GetDirectoryWriteTimeUtc(path);
                         tab.CachedAllItems = allItems;
                         tab.CachedItems = items;
                         tab.HasCachedSnapshot = true;
@@ -829,6 +832,7 @@ public partial class MainForm
                         string.Equals(tab.CurrentPath, path, StringComparison.OrdinalIgnoreCase))
                     {
                         tab.CachedPath = path;
+                        tab.CachedDirectoryWriteTimeUtc = GetDirectoryWriteTimeUtc(path);
                         tab.CachedAllItems = allItems;
                         tab.CachedItems = items;
                         tab.HasCachedSnapshot = true;
@@ -979,6 +983,7 @@ public partial class MainForm
                     continue;
 
                 tab.CachedPath = path;
+                tab.CachedDirectoryWriteTimeUtc = GetDirectoryWriteTimeUtc(path);
                 tab.CachedAllItems = new List<FileItem>(allItems);
                 tab.HasCachedSnapshot = true;
 
@@ -993,6 +998,213 @@ public partial class MainForm
                 var sorted = new List<FileItem>(tab.CachedAllItems);
                 FileSystemService.SortItems(sorted, tab.SortColumn, tab.SortDirection, tab.TaggedFilesOnTop);
                 tab.CachedItems = sorted;
+            }
+        }
+
+        public void ApplyMoveToCachedSnapshots(IEnumerable<string> sourcePaths, IEnumerable<string>? destinationPaths = null)
+        {
+            if (sourcePaths == null)
+                return;
+
+            ApplyCachedPathDelta(sourcePaths, destinationPaths ?? Array.Empty<string>());
+        }
+
+        public void ApplyUndoRedoToCachedSnapshots(FileOperation operation, bool undo)
+        {
+            switch (operation)
+            {
+                case MoveOperation move:
+                    ApplyCachedPathDelta(
+                        undo ? move.DestinationPaths : move.SourcePaths,
+                        undo ? move.SourcePaths : move.DestinationPaths);
+                    break;
+
+                case CopyOperation copy:
+                    ApplyCachedPathDelta(
+                        undo ? copy.CreatedPaths : Array.Empty<string>(),
+                        undo ? Array.Empty<string>() : copy.CreatedPaths);
+                    break;
+
+                case DeleteOperation delete:
+                    ApplyCachedPathDelta(
+                        undo ? Array.Empty<string>() : delete.DeletedPaths,
+                        undo ? delete.DeletedPaths : Array.Empty<string>());
+                    break;
+
+                case RenameOperation rename:
+                    string oldPath = Path.Combine(rename.Directory, rename.OldName);
+                    string newPath = Path.Combine(rename.Directory, rename.NewName);
+                    ApplyCachedPathDelta(
+                        undo ? new[] { newPath } : new[] { oldPath },
+                        undo ? new[] { oldPath } : new[] { newPath });
+                    break;
+
+                case BatchOperation batch:
+                    var operations = undo ? batch.Operations.AsEnumerable().Reverse() : batch.Operations;
+                    foreach (var child in operations)
+                        ApplyUndoRedoToCachedSnapshots(child, undo);
+                    break;
+            }
+        }
+
+        private void ApplyCachedPathDelta(IEnumerable<string> removedPaths, IEnumerable<string> addedPaths)
+        {
+            var removed = removedPaths
+                .Where(path => !string.IsNullOrWhiteSpace(path))
+                .Select(NormalizePathForComparison)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var added = addedPaths
+                .Where(path => !string.IsNullOrWhiteSpace(path))
+                .Select(NormalizePathForComparison)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            if (removed.Count == 0 && added.Count == 0)
+                return;
+
+            var affectedPaths = removed.Concat(added).ToList();
+            var affectedDirectories = affectedPaths
+                .Select(path =>
+                {
+                    try { return Path.GetDirectoryName(path); }
+                    catch { return null; }
+                })
+                .Where(path => !string.IsNullOrWhiteSpace(path))
+                .Select(path => Path.TrimEndingDirectorySeparator(path!))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var tab in _tabs)
+            {
+                if (!tab.HasCachedSnapshot ||
+                    string.IsNullOrWhiteSpace(tab.CachedPath) ||
+                    tab.CachedAllItems == null ||
+                    tab.CachedItems == null)
+                    continue;
+
+                var cachedPath = Path.TrimEndingDirectorySeparator(tab.CachedPath);
+                if (!affectedDirectories.Contains(cachedPath))
+                    continue;
+
+                tab.CachedAllItems = tab.CachedAllItems
+                    .Where(item => !removed.Contains(NormalizePathForComparison(item.FullPath)))
+                    .ToList();
+
+                bool addedAllItems = true;
+                foreach (var path in added)
+                {
+                    if (!string.Equals(
+                            Path.TrimEndingDirectorySeparator(Path.GetDirectoryName(path) ?? string.Empty),
+                            cachedPath,
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    if (tab.CachedAllItems.Any(item =>
+                            string.Equals(NormalizePathForComparison(item.FullPath), path, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        continue;
+                    }
+
+                    if (!TryCreateCachedFileItem(path, out var item))
+                    {
+                        addedAllItems = false;
+                        continue;
+                    }
+
+                    tab.CachedAllItems.Add(item);
+                }
+
+                if (!addedAllItems)
+                {
+                    tab.HasCachedSnapshot = false;
+                    tab.CachedDirectoryWriteTimeUtc = null;
+                    continue;
+                }
+
+                var sorted = new List<FileItem>(tab.CachedAllItems);
+                FileSystemService.SortItems(sorted, tab.SortColumn, tab.SortDirection, tab.TaggedFilesOnTop);
+                tab.CachedItems = sorted;
+                tab.CachedDirectoryWriteTimeUtc = GetDirectoryWriteTimeUtc(tab.CachedPath);
+            }
+        }
+
+        private static bool TryCreateCachedFileItem(string fullPath, out FileItem item)
+        {
+            item = new FileItem();
+            try
+            {
+                if (Directory.Exists(fullPath))
+                {
+                    var directory = new DirectoryInfo(fullPath);
+                    item = new FileItem
+                    {
+                        FullPath = directory.FullName,
+                        Name = directory.Name,
+                        IsDirectory = true,
+                        Size = 0,
+                        DateModified = directory.LastWriteTime,
+                        DateCreated = directory.CreationTime,
+                        Extension = string.Empty
+                    };
+                    return true;
+                }
+
+                if (File.Exists(fullPath))
+                {
+                    var file = new FileInfo(fullPath);
+                    item = new FileItem
+                    {
+                        FullPath = file.FullName,
+                        Name = file.Name,
+                        IsDirectory = false,
+                        Size = file.Length,
+                        DateModified = file.LastWriteTime,
+                        DateCreated = file.CreationTime,
+                        Extension = file.Extension
+                    };
+                    return true;
+                }
+            }
+            catch (Exception __ex)
+            {
+                System.Diagnostics.Debug.WriteLine(__ex);
+            }
+
+            return false;
+        }
+
+        private static string NormalizePathForComparison(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+                return string.Empty;
+
+            try { return Path.TrimEndingDirectorySeparator(Path.GetFullPath(path)); }
+            catch { return Path.TrimEndingDirectorySeparator(path); }
+        }
+
+        private static bool IsCachedDirectoryCurrent(TabState tab)
+        {
+            if (!tab.CachedDirectoryWriteTimeUtc.HasValue)
+                return false;
+
+            var currentWriteTimeUtc = GetDirectoryWriteTimeUtc(tab.CurrentPath);
+            return currentWriteTimeUtc.HasValue &&
+                   currentWriteTimeUtc.Value == tab.CachedDirectoryWriteTimeUtc.Value;
+        }
+
+        private static DateTime? GetDirectoryWriteTimeUtc(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path) || IsShellPath(path) || path == ThisPcPath)
+                return null;
+
+            try
+            {
+                return Directory.Exists(path) ? Directory.GetLastWriteTimeUtc(path) : null;
+            }
+            catch (Exception __ex)
+            {
+                System.Diagnostics.Debug.WriteLine(__ex);
+                return null;
             }
         }
 

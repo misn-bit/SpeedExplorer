@@ -44,6 +44,26 @@ public partial class MainForm
     private void DeleteSelected(bool permanent)
         => _fileOperationsController.DeleteSelected(permanent);
 
+    private void Undo()
+    {
+        var operation = FileSystemService.PerformUndo();
+        if (operation == null)
+            return;
+
+        _tabsController.ApplyUndoRedoToCachedSnapshots(operation, undo: true);
+        RequestWatcherRefresh();
+    }
+
+    private void Redo()
+    {
+        var operation = FileSystemService.PerformRedo();
+        if (operation == null)
+            return;
+
+        _tabsController.ApplyUndoRedoToCachedSnapshots(operation, undo: false);
+        RequestWatcherRefresh();
+    }
+
     private void ShowStatusMessage(string msg)
         => _fileOperationsController.ShowStatusMessage(msg);
 

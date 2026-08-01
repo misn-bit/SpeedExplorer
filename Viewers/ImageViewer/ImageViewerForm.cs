@@ -155,6 +155,7 @@ public class ImageViewerForm : Form
     private string? _overlayDragImagePath;
     private Point _overlayDragStartPoint;
     private RectangleF _overlayDragStartRect;
+    private bool _overlayDragStartHadUserOverride;
     private bool _overlayDragChanged;
     private Point _manualOcrDragStart;
     private Point _manualOcrDragCurrent;
@@ -1408,10 +1409,15 @@ public class ImageViewerForm : Form
         string translationText = block.SourceIndex >= 0 && block.SourceIndex < _lastTranslations.Count
             ? _lastTranslations[block.SourceIndex]
             : "";
+        bool preserveExplicitLineBreaks = block.HasUserOverride;
 
         using var dialog = new OverlayBlockEditDialog(
-            block.SourceText,
-            translationText,
+            preserveExplicitLineBreaks
+                ? NormalizeEditedOverlayDisplayText(block.SourceText)
+                : NormalizeOverlayDisplayText(block.SourceText),
+            preserveExplicitLineBreaks
+                ? NormalizeEditedOverlayDisplayText(translationText)
+                : NormalizeOverlayDisplayText(translationText),
             block.NormalizedRect,
             block.NormalizedFontSize);
 
@@ -1583,10 +1589,14 @@ public class ImageViewerForm : Form
             ? _lastTranslations[block.SourceIndex]
             : "";
 
+        Func<string, string> normalizeForPersistence = _overlayDragStartHadUserOverride
+            ? NormalizeEditedOverlayDisplayText
+            : NormalizeOverlayDisplayText;
+
         ApplyOverlayBlockEdit(imagePath, block.SourceIndex, new OverlayBlockEditResult
         {
-            OcrText = block.SourceText,
-            TranslationText = translationText,
+            OcrText = normalizeForPersistence(block.SourceText),
+            TranslationText = normalizeForPersistence(translationText),
             NormalizedRect = block.NormalizedRect,
             NormalizedFontSize = block.NormalizedFontSize
         });
@@ -1604,6 +1614,7 @@ public class ImageViewerForm : Form
         _overlayDragMode = OverlayDragMode.None;
         _overlayDragBlockIndex = -1;
         _overlayDragImagePath = null;
+        _overlayDragStartHadUserOverride = false;
         _overlayDragChanged = false;
         _pictureBox.Cursor = Cursors.Default;
         if (invalidate)
@@ -5059,6 +5070,15 @@ public class ImageViewerForm : Form
                     : token.Text;
                 string candidate = string.IsNullOrEmpty(current) ? token.Text : current + tokenText;
 
+                // Keep closing punctuation with the preceding text instead of starting a
+                // visually awkward line on its own. Fixed-box font fitting accounts for the
+                // small amount of extra width when the punctuation pushes the line over.
+                if (!string.IsNullOrEmpty(current) && IsOverlayClosingPunctuationToken(token.Text))
+                {
+                    current = candidate;
+                    continue;
+                }
+
                 if (string.IsNullOrEmpty(current) || MeasureOverlayLineWidth(g, font, candidate) <= maxWidth + 0.5f)
                 {
                     if (MeasureOverlayLineWidth(g, font, candidate) <= maxWidth + 0.5f || !CanHyphenateOverlayToken(token.Text))
@@ -5230,6 +5250,9 @@ public class ImageViewerForm : Form
 
     private static bool IsOverlayClosingPunctuation(char ch)
         => ".,!?;:)]}、。！？）」』】〉》".IndexOf(ch) >= 0;
+
+    private static bool IsOverlayClosingPunctuationToken(string token)
+        => token.Length == 1 && IsOverlayClosingPunctuation(token[0]);
 
     private static float MeasureOverlayLineWidth(Graphics g, Font font, string line)
     {
@@ -5430,6 +5453,7 @@ public class ImageViewerForm : Form
                 _overlayDragImagePath = GetCurrentImagePath();
                 _overlayDragStartPoint = e.Location;
                 _overlayDragStartRect = _overlayBlocks[blockIndex].NormalizedRect;
+                _overlayDragStartHadUserOverride = _overlayBlocks[blockIndex].HasUserOverride;
                 _overlayDragChanged = false;
                 _pictureBox.Cursor = GetOverlayDragCursor(dragMode);
                 return;
@@ -5493,6 +5517,7 @@ public class ImageViewerForm : Form
 
             _overlayDragBlockIndex = -1;
             _overlayDragImagePath = null;
+            _overlayDragStartHadUserOverride = false;
             _pictureBox.Invalidate();
             return;
         }

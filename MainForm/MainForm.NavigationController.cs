@@ -100,6 +100,7 @@ public partial class MainForm
             _loadCts?.Cancel();
             return;
         }
+        bool shouldFocusListView = ShouldFocusListView();
         NavigationDebugLogger.Log($"NAV#{navTraceId} ENTER");
         _nav.IsNavigating = true;
         BeginNavigationFreezeVisual();
@@ -268,7 +269,7 @@ public partial class MainForm
             {
                 bool preserveAiPanelFocus = _llmChatPanel != null && _llmChatPanel.IsExpanded;
                 bool isRenaming = _renameTextBox != null && !_renameTextBox.IsDisposed;
-                if (!preserveAiPanelFocus && !isRenaming && _listView.Visible && _listView.CanFocus)
+                if (shouldFocusListView && !preserveAiPanelFocus && !isRenaming && _listView.Visible && _listView.CanFocus)
                     _listView.Focus();
             }
             catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
@@ -425,7 +426,7 @@ public partial class MainForm
                 {
                     bool preserveAiPanelFocus = _llmChatPanel != null && _llmChatPanel.IsExpanded;
                     bool isRenaming = _renameTextBox != null && !_renameTextBox.IsDisposed;
-                    if (!preserveAiPanelFocus && !isRenaming &&
+                    if (shouldFocusListView && !preserveAiPanelFocus && !isRenaming &&
                         _listView.Visible && _listView.CanFocus)
                     {
                         _listView.Focus();
@@ -436,7 +437,8 @@ public partial class MainForm
                             {
                                 try
                                 {
-                                    if (!IsDisposed && !Disposing &&
+                                    if (ShouldFocusListView() &&
+                                        !IsDisposed && !Disposing &&
                                         _listView != null && !_listView.IsDisposed &&
                                         _listView.Visible && _listView.CanFocus &&
                                         (_renameTextBox == null || _renameTextBox.IsDisposed))
@@ -470,6 +472,18 @@ public partial class MainForm
         if (!string.IsNullOrEmpty(pendingPath))
         {
             ObserveTask(NavigateTo(pendingPath, pendingSelect), "NAV queue-next");
+        }
+    }
+
+    private bool ShouldFocusListView()
+    {
+        try
+        {
+            return Form.ActiveForm == this || ContainsFocus;
+        }
+        catch
+        {
+            return false;
         }
     }
 
@@ -651,7 +665,7 @@ public partial class MainForm
 
         bool preserveAiPanelFocus = _llmChatPanel != null && _llmChatPanel.IsExpanded;
         bool isRenaming = _renameTextBox != null && !_renameTextBox.IsDisposed;
-        if (!preserveAiPanelFocus && !isRenaming)
+        if (ShouldFocusListView() && !preserveAiPanelFocus && !isRenaming)
             _listView.Focus();
         LogListViewState($"{scope}#{navTraceId}", "post-bind-pre-reset");
         swBind.Stop();

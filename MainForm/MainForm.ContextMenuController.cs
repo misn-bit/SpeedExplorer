@@ -82,8 +82,8 @@ public partial class MainForm
             _pasteItem = new ToolStripMenuItem(Localization.T("paste"), null, (s, e) => _owner.Paste());
             _deleteItem = new ToolStripMenuItem(Localization.T("delete"), null, (s, e) => _owner.DeleteSelected(permanent: false));
             _renameItem = new ToolStripMenuItem(Localization.T("rename"), null, (s, e) => _owner.StartRename());
-            _undoItem = new ToolStripMenuItem(Localization.T("undo"), null, (s, e) => FileSystemService.PerformUndo());
-            _redoItem = new ToolStripMenuItem(Localization.T("redo"), null, (s, e) => FileSystemService.PerformRedo());
+            _undoItem = new ToolStripMenuItem(Localization.T("undo"), null, (s, e) => _owner.Undo());
+            _redoItem = new ToolStripMenuItem(Localization.T("redo"), null, (s, e) => _owner.Redo());
 
             _pinItem = new ToolStripMenuItem(Localization.T("pin_sidebar"), null, (s, e) => _owner.TogglePinSelected());
             _editTagsItem = new ToolStripMenuItem(Localization.T("edit_tags"), null, (s, e) => _owner.EditTags());

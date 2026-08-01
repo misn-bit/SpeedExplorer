@@ -847,14 +847,14 @@ public class FileSystemService
             System.Windows.Forms.MessageBoxIcon.Information);
     }
 
-    public static void PerformUndo()
+    public static FileOperation? PerformUndo()
     {
-        UndoRedoManager.Instance.Undo();
+        return UndoRedoManager.Instance.Undo();
     }
 
-    public static void PerformRedo()
+    public static FileOperation? PerformRedo()
     {
-        UndoRedoManager.Instance.Redo();
+        return UndoRedoManager.Instance.Redo();
     }
 
     // Diagnostic method - can be removed later

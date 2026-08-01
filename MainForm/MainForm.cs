@@ -73,6 +73,10 @@ public partial class MainForm : Form
     private readonly FileOperationsController _fileOperationsController;
     private readonly ShellActionsController _shellActionsController;
     private readonly HeaderTailController _headerTailController;
+    // Prevent startup/layout changes from persisting the SplitContainer's transient distance
+    // before the saved sidebar position has been restored.
+    private bool _restoringSidebarSplit;
+    private bool _sidebarSplitRestorePending;
     private readonly SettingsLauncherController _settingsLauncherController;
     private readonly ThemeController _themeController;
     private readonly WindowChromeController _windowChromeController;
@@ -334,23 +338,34 @@ public partial class MainForm : Form
     private void ApplySidebarSplit()
     {
         if (_splitContainer == null || _splitContainer.Width <= 0) return;
-        if (AppSettings.Current.SidebarSplitAtMinimum)
+        var previousState = _restoringSidebarSplit;
+        _restoringSidebarSplit = true;
+        try
         {
-            _splitContainer.SplitterDistance = _splitContainer.Panel1MinSize;
-            return;
+            if (AppSettings.Current.SidebarSplitAtMinimum)
+            {
+                _splitContainer.SplitterDistance = _splitContainer.Panel1MinSize;
+                return;
+            }
+            var ratio = AppSettings.Current.SidebarSplitRatio;
+            int distance;
+            if (ratio > 0.0 && ratio < 0.9)
+            {
+                distance = (int)Math.Round(_splitContainer.Width * ratio);
+            }
+            else
+            {
+                distance = Scale(AppSettings.Current.SidebarSplitDistance);
+            }
+            var maxDistance = Math.Max(_splitContainer.Panel1MinSize,
+                _splitContainer.Width - _splitContainer.Panel2MinSize);
+            distance = Math.Max(_splitContainer.Panel1MinSize, Math.Min(maxDistance, distance));
+            _splitContainer.SplitterDistance = distance;
         }
-        var ratio = AppSettings.Current.SidebarSplitRatio;
-        int distance;
-        if (ratio > 0.0 && ratio < 0.9)
+        finally
         {
-            distance = (int)Math.Round(_splitContainer.Width * ratio);
+            _restoringSidebarSplit = previousState;
         }
-        else
-        {
-            distance = Scale(AppSettings.Current.SidebarSplitDistance);
-        }
-        distance = Math.Max(_splitContainer.Panel1MinSize, distance);
-        _splitContainer.SplitterDistance = distance;
     }
     private Padding Scale(Padding p) => new Padding(Scale(p.Left), Scale(p.Top), Scale(p.Right), Scale(p.Bottom));
 
@@ -526,7 +541,6 @@ public partial class MainForm : Form
         _statusLabel = (ToolStripStatusLabel)_statusBar.Items[1];
 
         _hotkeyController.Reload();
-        ApplySettings();   
         this.KeyUp += (s, e) => { if (_hotkeyController.IsActionKeyCode("QuickLook", e.KeyCode)) HideQuickLook(); };
 
         CaptureStartupImageCandidate(initialPath);

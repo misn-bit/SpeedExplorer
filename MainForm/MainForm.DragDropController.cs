@@ -130,6 +130,7 @@ public partial class MainForm
                 else
                 {
                     await FileSystemService.ShellMoveAsync(paths, destination, _owner.Handle, renameOnCollision: true);
+                    _owner._tabsController.ApplyMoveToCachedSnapshots(paths);
                 }
 
                 await _owner.RefreshCurrentAsync();

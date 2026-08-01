@@ -73,8 +73,10 @@ public partial class MainForm
 
                 _watcher = new FileSystemWatcher(path)
                 {
-                    NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.LastWrite,
-                    EnableRaisingEvents = true
+                    NotifyFilter = NotifyFilters.FileName |
+                                   NotifyFilters.DirectoryName |
+                                   NotifyFilters.LastWrite |
+                                   NotifyFilters.Size
                 };
                 _watcher.InternalBufferSize = 64 * 1024;
 
@@ -87,6 +89,7 @@ public partial class MainForm
                     EnqueueChange(new PendingChange(ChangeKind.Renamed, e.FullPath, e.OldFullPath));
                 };
                 _watcher.Error += (s, e) => RequestWatcherRefresh();
+                _watcher.EnableRaisingEvents = true;
             }
             catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
         }
@@ -223,9 +226,13 @@ public partial class MainForm
                             map[change.Path] = renamedItem;
                             changedCount++;
                         }
-                        else if (map.Remove(change.Path))
+                        else
                         {
-                            changedCount++;
+                            // A rename can be reported before the destination is
+                            // readable (for example while a copy is completing).
+                            // The old entry was removed from the local patch map,
+                            // but the authoritative refresh must rebuild the list.
+                            return false;
                         }
                         break;
 
@@ -235,6 +242,14 @@ public partial class MainForm
                         {
                             map[change.Path] = updatedItem;
                             changedCount++;
+                        }
+                        else if (change.Kind == ChangeKind.Created)
+                        {
+                            // Created can arrive before a copied/downloaded file is
+                            // visible to FileInfo. Do not consume the event as a
+                            // successful no-op; force a full enumeration after the
+                            // debounce period so the new item cannot be lost.
+                            return false;
                         }
                         else if (change.Kind == ChangeKind.Changed && map.Remove(change.Path))
                         {

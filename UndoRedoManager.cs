@@ -57,13 +57,13 @@ public class UndoRedoManager
     /// <summary>
     /// Undoes the most recent operation
     /// </summary>
-    public void Undo()
+    public FileOperation? Undo()
     {
         FileOperation? operation;
         lock (_lock)
         {
             if (_undoStack.Count == 0)
-                return;
+                return null;
             operation = _undoStack.Pop();
         }
 
@@ -71,6 +71,7 @@ public class UndoRedoManager
         {
             operation.Undo();
             lock (_lock) { _redoStack.Push(operation); }
+            return operation;
         }
         catch (Exception ex)
         {
@@ -80,19 +81,20 @@ public class UndoRedoManager
                 "Undo Error",
                 System.Windows.Forms.MessageBoxButtons.OK,
                 System.Windows.Forms.MessageBoxIcon.Warning);
+            return null;
         }
     }
 
     /// <summary>
     /// Redoes the most recently undone operation
     /// </summary>
-    public void Redo()
+    public FileOperation? Redo()
     {
         FileOperation? operation;
         lock (_lock)
         {
             if (_redoStack.Count == 0)
-                return;
+                return null;
             operation = _redoStack.Pop();
         }
 
@@ -100,6 +102,7 @@ public class UndoRedoManager
         {
             operation.Redo();
             lock (_lock) { _undoStack.Push(operation); }
+            return operation;
         }
         catch (Exception ex)
         {
@@ -109,6 +112,7 @@ public class UndoRedoManager
                 "Redo Error",
                 System.Windows.Forms.MessageBoxButtons.OK,
                 System.Windows.Forms.MessageBoxIcon.Warning);
+            return null;
         }
     }
 

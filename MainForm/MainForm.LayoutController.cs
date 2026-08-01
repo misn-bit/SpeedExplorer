@@ -23,6 +23,16 @@ public partial class MainForm
             TrySetAppIcon();
             _owner.LoadFolderSettings();
             InitializeUiServices();
+            _owner._sidebarSplitRestorePending = true;
+            _owner._restoringSidebarSplit = true;
+            try
+            {
+                ApplyInitialWindowState();
+            }
+            finally
+            {
+                _owner._restoringSidebarSplit = false;
+            }
         }
 
         public Button CreateNavButton(string text, string tooltip)
@@ -315,7 +325,7 @@ public partial class MainForm
             _owner._navPanel.Controls.Add(new Panel { Dock = DockStyle.Right, Width = _owner.Scale(10), BackColor = _owner.BackColor_Dark });
             _owner._navPanel.Controls.Add(_owner._searchControl);
 
-            _owner.ApplySettings();
+            _owner.ApplySettings(refreshCurrent: false);
 
             _owner._splitContainer = new SplitContainer
             {
@@ -366,7 +376,7 @@ public partial class MainForm
 
             _owner._splitContainer.SplitterMoved += (s, e) =>
             {
-                if (_owner._splitContainer.Panel1Collapsed)
+                if (_owner._restoringSidebarSplit || _owner._sidebarSplitRestorePending || _owner._splitContainer.Panel1Collapsed)
                     return;
                 AppSettings.Current.SidebarSplitDistance = _owner.Unscale(_owner._splitContainer.SplitterDistance);
                 if (_owner._splitContainer.Width > 0)
@@ -391,16 +401,6 @@ public partial class MainForm
                 {
                     _owner.ApplySidebarSplit();
 
-                    if (AppSettings.Current.MainWindowFullscreen)
-                    {
-                        _owner.MaximizedBounds = Rectangle.Empty;
-                        _owner.WindowState = FormWindowState.Maximized;
-                    }
-                    else if (AppSettings.Current.MainWindowMaximized)
-                    {
-                        _owner.MaximizedBounds = Screen.FromControl(_owner).WorkingArea;
-                        _owner.WindowState = FormWindowState.Maximized;
-                    }
                 }
                 finally
                 {
@@ -513,6 +513,43 @@ public partial class MainForm
                 _owner.Invalidate();
             };
 
+            _owner.Shown += (s, e) =>
+            {
+                // A maximized borderless form gets its final client width only after the
+                // first show/layout pass. Restore the saved split after that pass so an
+                // early transient ratio cannot be carried into the visible layout.
+                try
+                {
+                    _owner.BeginInvoke((Action)(() =>
+                    {
+                        try
+                        {
+                            _owner.BeginInvoke((Action)(() =>
+                            {
+                                try
+                                {
+                                    _owner.ApplySidebarSplit();
+                                }
+                                finally
+                                {
+                                    _owner._sidebarSplitRestorePending = false;
+                                }
+                            }));
+                        }
+                        catch (Exception __ex)
+                        {
+                            _owner._sidebarSplitRestorePending = false;
+                            System.Diagnostics.Debug.WriteLine(__ex);
+                        }
+                    }));
+                }
+                catch (Exception __ex)
+                {
+                    _owner._sidebarSplitRestorePending = false;
+                    System.Diagnostics.Debug.WriteLine(__ex);
+                }
+            };
+
             _owner.FormClosing += (s, e) =>
             {
                 bool isMaximized = _owner.WindowState == FormWindowState.Maximized;
@@ -534,6 +571,20 @@ public partial class MainForm
                 try { _owner._headerTailController.Dispose(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                 try { _owner._iconLoadService?.Dispose(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
             };
+        }
+
+        private void ApplyInitialWindowState()
+        {
+            if (AppSettings.Current.MainWindowFullscreen)
+            {
+                _owner.MaximizedBounds = Rectangle.Empty;
+                _owner.WindowState = FormWindowState.Maximized;
+            }
+            else if (AppSettings.Current.MainWindowMaximized)
+            {
+                _owner.MaximizedBounds = Screen.FromControl(_owner).WorkingArea;
+                _owner.WindowState = FormWindowState.Maximized;
+            }
         }
 
         private void TrySetAppIcon()

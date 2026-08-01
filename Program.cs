@@ -74,13 +74,6 @@ static class Program
         bool hasStartupFlag = args.Any(a => a.Equals("--startup", StringComparison.OrdinalIgnoreCase));
         bool hasPathLikeArg = args.Any(a => !string.IsNullOrWhiteSpace(a) && !a.StartsWith("--", StringComparison.Ordinal));
 
-        // Delay startup only for explicit startup launches (no path payload).
-        // Do this before single-instance lock so manual launches are not blocked during the wait window.
-        if (hasStartupFlag && !hasPathLikeArg)
-        {
-            Thread.Sleep(15000);
-        }
-
         if (!_mutex.WaitOne(TimeSpan.Zero, true))
         {
             // Already running, send arguments to the existing instance
@@ -189,7 +182,7 @@ static class Program
             StartPipeListener(context);
 
             StartupService.SyncWithSettings();
-            WindowsRecentService.RefreshTaskbarJumpList();
+            _ = Task.Run(WindowsRecentService.RefreshTaskbarJumpList);
 
             string? startPath = ExtractStartPathFromArgs(args);
             bool startMinimized = args.Any(a => a.Equals("--minimized", StringComparison.OrdinalIgnoreCase));

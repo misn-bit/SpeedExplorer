@@ -189,6 +189,7 @@ public partial class MainForm
                     {
                         addedPaths = await FileSystemService.ShellMoveAsync(paths, _owner._currentPath, _owner.Handle, isSameFolder);
                         _owner._cutPaths.Clear();
+                        _owner._tabsController.ApplyMoveToCachedSnapshots(paths);
                     }
                     else
                     {
