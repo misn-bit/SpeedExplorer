@@ -189,7 +189,13 @@ public partial class MainForm
 
             btn.MouseEnter += (s, e) => btn.ForeColor = _owner.AccentColor;
             btn.MouseLeave += (s, e) => btn.ForeColor = _owner.SecondaryForeColor;
-            btn.Click += (s, e) => _owner.ObserveTask(_owner.NavigateTo(targetPath), "AddressBar.BreadcrumbNavigate");
+            btn.MouseUp += (s, e) =>
+            {
+                if (e.Button == MouseButtons.Left)
+                    _owner.ObserveTask(_owner.NavigateTo(targetPath), "AddressBar.BreadcrumbNavigate");
+                else if (e.Button == MouseButtons.Middle)
+                    _owner.OpenPathInNewTab(targetPath, activate: false);
+            };
 
             _owner._breadcrumbPanel.Controls.Add(btn);
         }
