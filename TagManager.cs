@@ -13,7 +13,7 @@ public class TagManager
     public static TagManager Instance => _instance ??= new TagManager();
 
     private Dictionary<string, HashSet<string>> _tags = new(StringComparer.OrdinalIgnoreCase);
-    private readonly string _tagsFilePath;
+    private string _tagsFilePath;
     private bool _isDirty = false;
     private readonly object _lock = new object();
     private System.Threading.Timer? _saveTimer;
@@ -22,7 +22,7 @@ public class TagManager
     private TagManager()
     {
         // Store in the same folder as the executable
-         _tagsFilePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "tags.json");
+        _tagsFilePath = AppStorage.GetPath("tags.json");
         LoadTags();
     }
 
@@ -401,22 +401,23 @@ public class TagManager
 
     private void SaveTagsNow()
     {
-        try
+        lock (_lock)
         {
-            string json;
-            lock (_lock)
+            if (!_isDirty)
+                return;
+
+            try
             {
-                if (!_isDirty) return;
                 // Pretty print for user readability since they might edit it manually
                 var options = new JsonSerializerOptions { WriteIndented = true };
-                json = JsonSerializer.Serialize(_tags, options);
+                string json = JsonSerializer.Serialize(_tags, options);
+                _tagsFilePath = AppStorage.WriteText(_tagsFilePath, "tags.json", json);
                 _isDirty = false;
             }
-            File.WriteAllText(_tagsFilePath, json);
-        }
-        catch
-        {
-            // Ignore save errors
+            catch
+            {
+                // Keep the dirty flag set so a later timer tick or Flush can retry.
+            }
         }
     }
 

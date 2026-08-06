@@ -56,6 +56,12 @@ public class FileItem
 
 public class FileSystemService
 {
+    private sealed record ShellOperationResult(
+        bool Succeeded,
+        bool Aborted,
+        int ErrorCode,
+        List<string> ResultingPaths);
+
     private static readonly HashSet<string> ImageExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".ico", ".tiff", ".tif"
@@ -656,9 +662,15 @@ public class FileSystemService
 
     public static List<string> ShellCopy(string[] sourcePaths, string destinationFolder, IntPtr ownerHandle, bool renameOnCollision = false, bool recordOperation = true)
     {
-        var actualPaths = ExecuteShellOp(FO_COPY, sourcePaths, destinationFolder, ownerHandle, renameOnCollision);
+        return ExecuteCopyOperation(sourcePaths, destinationFolder, ownerHandle, renameOnCollision, recordOperation).ResultingPaths;
+    }
+
+    private static ShellOperationResult ExecuteCopyOperation(string[] sourcePaths, string destinationFolder, IntPtr ownerHandle, bool renameOnCollision, bool recordOperation)
+    {
+        var result = ExecuteShellOp(FO_COPY, sourcePaths, destinationFolder, ownerHandle, renameOnCollision);
+        var actualPaths = result.ResultingPaths;
         
-        if (recordOperation && actualPaths.Any())
+        if (recordOperation && sourcePaths.Length > 0 && actualPaths.Count == sourcePaths.Length)
         {
             var operation = new CopyOperation(sourcePaths, destinationFolder, actualPaths, ownerHandle, renameOnCollision);
             UndoRedoManager.Instance.RecordOperation(operation);
@@ -673,14 +685,20 @@ public class FileSystemService
             }
         }
 
-        return actualPaths;
+        return result;
     }
 
     public static List<string> ShellMove(string[] sourcePaths, string destinationFolder, IntPtr ownerHandle, bool renameOnCollision = false, bool recordOperation = true)
     {
-        var actualPaths = ExecuteShellOp(FO_MOVE, sourcePaths, destinationFolder, ownerHandle, renameOnCollision);
+        return ExecuteMoveOperation(sourcePaths, destinationFolder, ownerHandle, renameOnCollision, recordOperation).ResultingPaths;
+    }
+
+    private static ShellOperationResult ExecuteMoveOperation(string[] sourcePaths, string destinationFolder, IntPtr ownerHandle, bool renameOnCollision, bool recordOperation)
+    {
+        var result = ExecuteShellOp(FO_MOVE, sourcePaths, destinationFolder, ownerHandle, renameOnCollision);
+        var actualPaths = result.ResultingPaths;
         
-        if (recordOperation && actualPaths.Any())
+        if (recordOperation && sourcePaths.Length > 0 && actualPaths.Count == sourcePaths.Length)
         {
             var operation = new MoveOperation(sourcePaths, destinationFolder, actualPaths, ownerHandle);
             UndoRedoManager.Instance.RecordOperation(operation);
@@ -695,56 +713,99 @@ public class FileSystemService
             }
         }
 
-        return actualPaths;
+        return result;
     }
 
-    public static void ShellRename(string sourcePath, string newName, IntPtr ownerHandle, bool recordOperation = true)
+    public static bool ShellRename(string sourcePath, string newName, IntPtr ownerHandle, bool recordOperation = true)
     {
+        if (string.IsNullOrWhiteSpace(sourcePath) ||
+            string.IsNullOrWhiteSpace(newName) ||
+            !string.Equals(Path.GetFileName(newName), newName, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
         string dir = Path.GetDirectoryName(sourcePath) ?? "";
         string oldName = Path.GetFileName(sourcePath) ?? "";
         string targetPath = Path.Combine(dir, newName);
         
-        ExecuteShellOp(FO_RENAME, new[] { sourcePath }, targetPath, ownerHandle, false);
+        var result = ExecuteShellOp(FO_RENAME, new[] { sourcePath }, targetPath, ownerHandle, false);
+        if (!result.Succeeded)
+            return false;
 
         if (recordOperation)
         {
             var operation = new RenameOperation(dir, oldName, newName, ownerHandle);
             UndoRedoManager.Instance.RecordOperation(operation);
         }
+
+        return true;
     }
 
-    public static void ShellDelete(string[] sourcePaths, IntPtr ownerHandle, bool recordOperation = true, bool permanent = false)
+    public static bool ShellDelete(string[] sourcePaths, IntPtr ownerHandle, bool recordOperation = true, bool permanent = false)
     {
-        ExecuteShellOp(FO_DELETE, sourcePaths, null, ownerHandle, false, permanent);
+        return ExecuteDeleteOperation(sourcePaths, ownerHandle, recordOperation, permanent).Succeeded;
+    }
+
+    private static ShellOperationResult ExecuteDeleteOperation(string[] sourcePaths, IntPtr ownerHandle, bool recordOperation, bool permanent)
+    {
+        var result = ExecuteShellOp(FO_DELETE, sourcePaths, null, ownerHandle, false, permanent);
+        if (!result.Succeeded)
+            return result;
 
         if (recordOperation)
         {
             // If permanent, we can't really undo it easily (data loss), so ideally we shouldn't record it as an undoable op.
             // However, the standard UndoRedoManager expects operations. 
             // For now, if permanent, we skip recording because we can't undo it.
-            if (!permanent)
+            if (!permanent && sourcePaths.Length > 0)
             {
                 var operation = new DeleteOperation(sourcePaths, ownerHandle);
                 UndoRedoManager.Instance.RecordOperation(operation);
             }
         }
+
+        return result;
     }
 
     public static Task<List<string>> ShellCopyAsync(string[] sourcePaths, string destinationFolder, IntPtr ownerHandle, bool renameOnCollision = false, bool recordOperation = true)
     {
-        return RunShellOperationAsync(() => ShellCopy(sourcePaths, destinationFolder, ownerHandle, renameOnCollision, recordOperation), IntPtr.Zero);
+        return RunShellOperationAsync(() =>
+        {
+            var result = ExecuteCopyOperation(sourcePaths, destinationFolder, ownerHandle, renameOnCollision, recordOperation);
+            if (result.Aborted)
+                return result.ResultingPaths;
+
+            if (sourcePaths.Length > 0 && result.ResultingPaths.Count != sourcePaths.Length)
+                throw new IOException("The copy operation did not complete successfully.");
+            return result.ResultingPaths;
+        }, IntPtr.Zero);
     }
 
     public static Task<List<string>> ShellMoveAsync(string[] sourcePaths, string destinationFolder, IntPtr ownerHandle, bool renameOnCollision = false, bool recordOperation = true)
     {
-        return RunShellOperationAsync(() => ShellMove(sourcePaths, destinationFolder, ownerHandle, renameOnCollision, recordOperation), IntPtr.Zero);
+        return RunShellOperationAsync(() =>
+        {
+            var result = ExecuteMoveOperation(sourcePaths, destinationFolder, ownerHandle, renameOnCollision, recordOperation);
+            if (result.Aborted)
+                return result.ResultingPaths;
+
+            if (sourcePaths.Length > 0 && result.ResultingPaths.Count != sourcePaths.Length)
+                throw new IOException("The move operation did not complete successfully.");
+            return result.ResultingPaths;
+        }, IntPtr.Zero);
     }
 
     public static Task ShellDeleteAsync(string[] sourcePaths, IntPtr ownerHandle, bool recordOperation = true, bool permanent = false)
     {
         return RunShellOperationAsync(() =>
         {
-            ShellDelete(sourcePaths, ownerHandle, recordOperation, permanent);
+            var result = ExecuteDeleteOperation(sourcePaths, ownerHandle, recordOperation, permanent);
+            if (result.Aborted)
+                return true;
+
+            if (!result.Succeeded)
+                throw new IOException("The delete operation did not complete successfully.");
             return true;
         }, IntPtr.Zero);
     }
@@ -752,11 +813,14 @@ public class FileSystemService
     /// <summary>
     /// Restores files from the Recycle Bin to their original locations
     /// </summary>
-    public static void RestoreFromRecycleBin(string[] originalPaths, IntPtr ownerHandle)
+    public static bool RestoreFromRecycleBin(string[] originalPaths, IntPtr ownerHandle, bool showFailureMessage = true)
     {
         try
         {
-            var pathsToRestore = new HashSet<string>(originalPaths, StringComparer.OrdinalIgnoreCase);
+            var pathsToRestore = originalPaths
+                .Where(path => !string.IsNullOrWhiteSpace(path))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
             var restoredPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             Type? shellType = Type.GetTypeFromProgID("Shell.Application");
@@ -785,31 +849,39 @@ public class FileSystemService
 
             if (originalLocationIndex == -1) originalLocationIndex = 1; // Common fallback
 
-            // We iterate through items and find matches
-            // Using a list to avoid collection modification issues if any
+            // "Original Location" is the parent directory, not the complete
+            // original path. Match it with the deleted item's name and consume
+            // each requested path once.
             var items = recycleBin.Items();
-            var matches = new List<dynamic>();
+            var matches = new List<(dynamic Item, string OriginalPath)>();
 
             foreach (dynamic item in items)
             {
-                string path = recycleBin.GetDetailsOf(item, originalLocationIndex);
-                if (pathsToRestore.Contains(path))
-                {
-                    matches.Add(item);
-                }
+                string location = NormalizeDirectoryForComparison(
+                    Convert.ToString(recycleBin.GetDetailsOf(item, originalLocationIndex)) ?? "");
+                string itemName = Convert.ToString(item.Name) ?? "";
+                string? matchedPath = pathsToRestore.FirstOrDefault(path =>
+                    !restoredPaths.Contains(path) &&
+                    string.Equals(Path.GetFileName(path), itemName, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(
+                        NormalizeDirectoryForComparison(Path.GetDirectoryName(path) ?? ""),
+                        location,
+                        StringComparison.OrdinalIgnoreCase));
+
+                if (matchedPath != null)
+                    matches.Add((item, matchedPath));
             }
 
-            foreach (dynamic item in matches)
+            foreach (var match in matches)
             {
-                string path = recycleBin.GetDetailsOf(item, originalLocationIndex);
-                foreach (dynamic verb in item.Verbs())
+                foreach (dynamic verb in match.Item.Verbs())
                 {
                     string verbName = verb.Name.Replace("&", "");
                     if (verbName.Equals("Restore", StringComparison.OrdinalIgnoreCase) ||
                         verbName.Equals("Восстановить", StringComparison.OrdinalIgnoreCase))
                     {
                         verb.DoIt();
-                        restoredPaths.Add(path);
+                        restoredPaths.Add(match.OriginalPath);
                         break;
                     }
                 }
@@ -817,15 +889,35 @@ public class FileSystemService
 
             // Check what failed
             var failed = pathsToRestore.Where(p => !restoredPaths.Contains(p)).ToList();
-            if (failed.Any())
+            if (failed.Any() && showFailureMessage)
             {
                 ShowManualRestoreMessage(failed.ToArray());
             }
+
+            return failed.Count == 0;
         }
         catch (Exception ex)
         {
             System.Diagnostics.Debug.WriteLine($"Restore error: {ex.Message}");
-            ShowManualRestoreMessage(originalPaths);
+            if (showFailureMessage)
+                ShowManualRestoreMessage(originalPaths);
+            return false;
+        }
+    }
+
+    private static string NormalizeDirectoryForComparison(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return "";
+
+        try
+        {
+            return Path.GetFullPath(path)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        }
+        catch
+        {
+            return path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         }
     }
 
@@ -866,7 +958,7 @@ public class FileSystemService
     /// <summary>
     /// Executes shell operation and returns list of actual destination paths
     /// </summary>
-    private static List<string> ExecuteShellOp(uint func, string[] sourcePaths, string? destFolder, IntPtr ownerHandle, bool renameOnCollision, bool permanent = false)
+    private static ShellOperationResult ExecuteShellOp(uint func, string[] sourcePaths, string? destFolder, IntPtr ownerHandle, bool renameOnCollision, bool permanent = false)
     {
         // Marshalling strings manually to ensure double-null termination
         // pFrom and pTo must be list of strings, each null-terminated, ending with an extra null
@@ -886,6 +978,9 @@ public class FileSystemService
                 resultingPaths.Add(Path.Combine(destFolder, Path.GetFileName(src)));
             }
         }
+
+        int resultCode = -1;
+        bool wasAborted = false;
 
         try
         {
@@ -917,6 +1012,8 @@ public class FileSystemService
                 op.fFlags |= FOF_RENAMEONCOLLISION;
 
             int result = SHFileOperation(ref op);
+            resultCode = result;
+            wasAborted = op.fAnyOperationsAborted;
             
             // If success (0), notify the system to refresh caches
             if (result == 0 && !op.fAnyOperationsAborted)
@@ -973,7 +1070,11 @@ public class FileSystemService
             if (pTo != IntPtr.Zero) Marshal.FreeHGlobal(pTo);
         }
 
-        return resultingPaths;
+        return new ShellOperationResult(
+            Succeeded: resultCode == 0 && !wasAborted,
+            Aborted: wasAborted,
+            ErrorCode: resultCode,
+            ResultingPaths: resultingPaths);
     }
 
     private static Task<T> RunShellOperationAsync<T>(Func<T> operation, IntPtr shellUiOwnerHandleOverride)

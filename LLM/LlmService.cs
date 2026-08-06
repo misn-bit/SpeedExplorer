@@ -6,6 +6,7 @@ using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Collections.Generic;
 using System.Windows.Forms;
@@ -1252,7 +1253,7 @@ public class LlmService
     /// Sends a prompt to the LLM and returns the raw response content.
     /// Supports optional images for Vision models.
     /// </summary>
-    public async Task<string> SendPromptAsync(string userPrompt, string currentDir, bool fullContext, bool taggingEnabled, bool searchEnabled, bool thinkingEnabled, List<string>? imagePaths = null, string? modelOverride = null)
+    public async Task<string> SendPromptAsync(string userPrompt, string currentDir, bool fullContext, bool taggingEnabled, bool searchEnabled, bool thinkingEnabled, List<string>? imagePaths = null, string? modelOverride = null, CancellationToken cancellationToken = default)
     {
         string dirContext = fullContext ? LlmPromptBuilder.BuildFullDirectoryContext(currentDir) : LlmPromptBuilder.BuildExtensionContext(currentDir);
         var enrichedPrompt = $"{userPrompt}\n\nContext items in directory:\n{dirContext}";
@@ -1357,7 +1358,7 @@ public class LlmService
         {
             LlmDebugLogger.LogExecution($"SendPrompt endpoint: {requestUrl} | model: {model} | vision: {isVisionRequest}");
             var content = new StringContent(requestJson, Encoding.UTF8, "application/json");
-            var response = await _httpClient.PostAsync(requestUrl, content);
+            var response = await _httpClient.PostAsync(requestUrl, content, cancellationToken);
             var responseText = await response.Content.ReadAsStringAsync();
 
             if (!response.IsSuccessStatusCode &&
@@ -1367,7 +1368,7 @@ public class LlmService
                 if (await TryRecoverVisionModelAsync(requestUrl, model, "SendPrompt primary model-unloaded"))
                 {
                     using var recoveryContent = new StringContent(requestJson, Encoding.UTF8, "application/json");
-                    response = await _httpClient.PostAsync(requestUrl, recoveryContent);
+                    response = await _httpClient.PostAsync(requestUrl, recoveryContent, cancellationToken);
                     responseText = await response.Content.ReadAsStringAsync();
                 }
             }
@@ -1381,7 +1382,7 @@ public class LlmService
                 LlmDebugLogger.LogRequest(currentDir, userPrompt, systemPrompt, retryJson, imagePaths, retryStats);
 
                 using var retryContent = new StringContent(retryJson, Encoding.UTF8, "application/json");
-                response = await _httpClient.PostAsync(requestUrl, retryContent);
+                response = await _httpClient.PostAsync(requestUrl, retryContent, cancellationToken);
                 responseText = await response.Content.ReadAsStringAsync();
 
                 if (!response.IsSuccessStatusCode &&
@@ -1390,7 +1391,7 @@ public class LlmService
                     if (await TryRecoverVisionModelAsync(requestUrl, model, "SendPrompt retry model-unloaded"))
                     {
                         using var retryRecoveryContent = new StringContent(retryJson, Encoding.UTF8, "application/json");
-                        response = await _httpClient.PostAsync(requestUrl, retryRecoveryContent);
+                        response = await _httpClient.PostAsync(requestUrl, retryRecoveryContent, cancellationToken);
                         responseText = await response.Content.ReadAsStringAsync();
                     }
                 }

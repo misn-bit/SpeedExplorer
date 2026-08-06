@@ -7,15 +7,18 @@ using System.Threading.Tasks;
 
 namespace SpeedExplorer;
 
-internal sealed class ShellNavigationController
+internal sealed class ShellNavigationController : IDisposable
 {
     private const string ShellPrefix = "SHELL::";
     private const string ShellCompositeSeparator = "|#|";
     private const string ShellIdPrefix = "SHELLID::";
+    private const int MaxCachedShellItems = 4096;
 
     private readonly string _thisPcPath;
+    private readonly object _shellMapGate = new();
     private readonly Dictionary<string, object> _shellItemMap = new();
     private readonly Dictionary<string, string> _shellParentMap = new();
+    private readonly LinkedList<string> _shellItemOrder = new();
 
     public ShellNavigationController(string thisPcPath)
     {
@@ -37,11 +40,23 @@ internal sealed class ShellNavigationController
     private string RegisterShellItemInternal(object item, string? parentShellId)
     {
         var id = $"{ShellIdPrefix}{Guid.NewGuid():N}";
-        _shellItemMap[id] = item;
-        if (!string.IsNullOrEmpty(parentShellId))
-            _shellParentMap[id] = parentShellId;
-        else
-            _shellParentMap[id] = _thisPcPath;
+        lock (_shellMapGate)
+        {
+            _shellItemMap[id] = item;
+            _shellItemOrder.AddLast(id);
+            if (!string.IsNullOrEmpty(parentShellId))
+                _shellParentMap[id] = parentShellId;
+            else
+                _shellParentMap[id] = _thisPcPath;
+
+            while (_shellItemOrder.Count > MaxCachedShellItems)
+            {
+                var oldestId = _shellItemOrder.First!.Value;
+                _shellItemOrder.RemoveFirst();
+                _shellItemMap.Remove(oldestId);
+                _shellParentMap.Remove(oldestId);
+            }
+        }
         return id;
     }
 
@@ -52,7 +67,8 @@ internal sealed class ShellNavigationController
 
     private bool TryGetShellItem(string shellId, out object? item)
     {
-        return _shellItemMap.TryGetValue(shellId, out item);
+        lock (_shellMapGate)
+            return _shellItemMap.TryGetValue(shellId, out item);
     }
 
     private static bool IsCompositeShellPath(string shellPath)
@@ -150,8 +166,14 @@ internal sealed class ShellNavigationController
     {
         try
         {
-            if (IsShellIdPath(shellPath) && _shellParentMap.TryGetValue(shellPath, out var parentId))
-                return parentId;
+            if (IsShellIdPath(shellPath))
+            {
+                lock (_shellMapGate)
+                {
+                    if (_shellParentMap.TryGetValue(shellPath, out var parentId))
+                        return parentId;
+                }
+            }
             if (IsShellIdPath(shellPath))
                 return _thisPcPath;
 
@@ -271,117 +293,11 @@ internal sealed class ShellNavigationController
         }
     }
 
-    private List<FileItem> EnumerateShellItemsOnCurrentThread(string shellPath, CancellationToken ct, string displayPath, bool debugShell, string debugShellLog)
-    {
-        var items = new List<FileItem>();
-        try
-        {
-            ct.ThrowIfCancellationRequested();
-
-            if (!IsShellIdPath(shellPath) || !TryGetShellItem(shellPath, out var shellObj))
-                return items;
-
-            dynamic? folder = null;
-            try
-            {
-                if (shellObj == null) return items;
-                dynamic d = shellObj;
-                try { folder = d.Folder; } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
-                if (folder == null)
-                {
-                    try { folder = d.GetFolder; } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
-                }
-            }
-            catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
-
-            if (folder == null)
-            {
-                if (debugShell)
-                {
-                    var msg = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] [Shell] Folder null for {shellPath}";
-                    Debug.WriteLine(msg);
-                    try { File.AppendAllText(debugShellLog, msg + Environment.NewLine); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
-                }
-                return items;
-            }
-
-            int count = 0;
-            foreach (var item in folder.Items())
-            {
-                ct.ThrowIfCancellationRequested();
-                try
-                {
-                    string itemName = item.Name;
-                    string path = item.Path;
-                    if (debugShell && count < 5)
-                    {
-                        var msg = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] [Shell] Item: {itemName} Path: {path} IsFolder: {item.IsFolder}";
-                        Debug.WriteLine(msg);
-                        try { File.AppendAllText(debugShellLog, msg + Environment.NewLine); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
-                    }
-                    if (string.IsNullOrEmpty(itemName)) continue;
-
-                    if (string.IsNullOrEmpty(path))
-                        path = itemName;
-
-                    bool isFolder = item.IsFolder;
-                    string fullPath = RegisterShellItemInternal(item, shellPath);
-
-                    items.Add(new FileItem
-                    {
-                        FullPath = fullPath,
-                        Name = itemName,
-                        IsDirectory = isFolder,
-                        Extension = Path.GetExtension(itemName),
-                        IsShellItem = true,
-                        ShellParentId = shellPath,
-                        DisplayPath = displayPath,
-                        DateModified = DateTime.MinValue,
-                        DateCreated = DateTime.MinValue
-                    });
-                    count++;
-                }
-                catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
-            }
-
-            if (debugShell)
-            {
-                var msg = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] [Shell] Items count: {items.Count}";
-                Debug.WriteLine(msg);
-                try { File.AppendAllText(debugShellLog, msg + Environment.NewLine); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            return new List<FileItem>();
-        }
-        catch
-        {
-            return new List<FileItem>();
-        }
-
-        return items;
-    }
-
     public Task<List<FileItem>> GetShellItemsAsync(string shellPath, CancellationToken ct, string displayPath)
     {
-        var tcs = new TaskCompletionSource<List<FileItem>>();
+        var tcs = new TaskCompletionSource<List<FileItem>>(TaskCreationOptions.RunContinuationsAsynchronously);
         var debugShell = AppSettings.Current.DebugShellLogging;
         var debugShellLog = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "debug_shell.log");
-
-        if (IsShellIdPath(shellPath))
-        {
-            if (debugShell)
-            {
-                var msg = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] [Shell] Navigate: {shellPath}";
-                Debug.WriteLine(msg);
-                try { File.AppendAllText(debugShellLog, msg + Environment.NewLine); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
-            }
-
-            var result = EnumerateShellItemsOnCurrentThread(shellPath, ct, displayPath, debugShell, debugShellLog);
-            tcs.SetResult(result);
-            return tcs.Task;
-        }
 
         var thread = new Thread(() =>
         {
@@ -599,5 +515,15 @@ internal sealed class ShellNavigationController
             }
         }
         catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+    }
+
+    public void Dispose()
+    {
+        lock (_shellMapGate)
+        {
+            _shellItemMap.Clear();
+            _shellParentMap.Clear();
+            _shellItemOrder.Clear();
+        }
     }
 }

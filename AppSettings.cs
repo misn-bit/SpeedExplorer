@@ -8,7 +8,7 @@ namespace SpeedExplorer;
 
 public class AppSettings
 {
-    private static readonly string SettingsPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "settings.json");
+    private static string SettingsPath = AppStorage.GetPath("settings.json");
     private static AppSettings? _instance;
 
     public static AppSettings Current => _instance ??= Load();
@@ -235,7 +235,7 @@ public class AppSettings
         try
         {
             var json = JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true });
-            File.WriteAllText(SettingsPath, json);
+            SettingsPath = AppStorage.WriteText(SettingsPath, "settings.json", json);
         }
         catch (Exception ex)
         {
@@ -247,6 +247,7 @@ public class AppSettings
     {
         try
         {
+            SettingsPath = AppStorage.GetPath("settings.json");
             if (File.Exists(SettingsPath))
             {
                 var json = File.ReadAllText(SettingsPath);

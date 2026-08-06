@@ -14,6 +14,7 @@ public class UndoRedoManager
 
     private Stack<FileOperation> _undoStack;
     private Stack<FileOperation> _redoStack;
+    private readonly object _operationGate = new();
 
     public static UndoRedoManager Instance
     {
@@ -47,10 +48,13 @@ public class UndoRedoManager
     /// </summary>
     public void RecordOperation(FileOperation operation)
     {
-        lock (_lock)
+        lock (_operationGate)
         {
-            _undoStack.Push(operation);
-            _redoStack.Clear(); // New action invalidates redo history
+            lock (_lock)
+            {
+                _undoStack.Push(operation);
+                _redoStack.Clear(); // New action invalidates redo history
+            }
         }
     }
 
@@ -59,29 +63,32 @@ public class UndoRedoManager
     /// </summary>
     public FileOperation? Undo()
     {
-        FileOperation? operation;
-        lock (_lock)
+        lock (_operationGate)
         {
-            if (_undoStack.Count == 0)
-                return null;
-            operation = _undoStack.Pop();
-        }
+            FileOperation? operation;
+            lock (_lock)
+            {
+                if (_undoStack.Count == 0)
+                    return null;
+                operation = _undoStack.Pop();
+            }
 
-        try
-        {
-            operation.Undo();
-            lock (_lock) { _redoStack.Push(operation); }
-            return operation;
-        }
-        catch (Exception ex)
-        {
-            // If undo fails, don't push to redo stack
-            System.Windows.Forms.MessageBox.Show(
-                $"Undo failed: {ex.Message}\n\nOperation: {operation.GetDescription()}",
-                "Undo Error",
-                System.Windows.Forms.MessageBoxButtons.OK,
-                System.Windows.Forms.MessageBoxIcon.Warning);
-            return null;
+            try
+            {
+                operation.Undo();
+                lock (_lock) { _redoStack.Push(operation); }
+                return operation;
+            }
+            catch (Exception ex)
+            {
+                // If undo fails, don't push to redo stack
+                System.Windows.Forms.MessageBox.Show(
+                    $"Undo failed: {ex.Message}\n\nOperation: {operation.GetDescription()}",
+                    "Undo Error",
+                    System.Windows.Forms.MessageBoxButtons.OK,
+                    System.Windows.Forms.MessageBoxIcon.Warning);
+                return null;
+            }
         }
     }
 
@@ -90,29 +97,32 @@ public class UndoRedoManager
     /// </summary>
     public FileOperation? Redo()
     {
-        FileOperation? operation;
-        lock (_lock)
+        lock (_operationGate)
         {
-            if (_redoStack.Count == 0)
-                return null;
-            operation = _redoStack.Pop();
-        }
+            FileOperation? operation;
+            lock (_lock)
+            {
+                if (_redoStack.Count == 0)
+                    return null;
+                operation = _redoStack.Pop();
+            }
 
-        try
-        {
-            operation.Redo();
-            lock (_lock) { _undoStack.Push(operation); }
-            return operation;
-        }
-        catch (Exception ex)
-        {
-            // If redo fails, don't push back to undo stack
-            System.Windows.Forms.MessageBox.Show(
-                $"Redo failed: {ex.Message}\n\nOperation: {operation.GetDescription()}",
-                "Redo Error",
-                System.Windows.Forms.MessageBoxButtons.OK,
-                System.Windows.Forms.MessageBoxIcon.Warning);
-            return null;
+            try
+            {
+                operation.Redo();
+                lock (_lock) { _undoStack.Push(operation); }
+                return operation;
+            }
+            catch (Exception ex)
+            {
+                // If redo fails, don't push back to undo stack
+                System.Windows.Forms.MessageBox.Show(
+                    $"Redo failed: {ex.Message}\n\nOperation: {operation.GetDescription()}",
+                    "Redo Error",
+                    System.Windows.Forms.MessageBoxButtons.OK,
+                    System.Windows.Forms.MessageBoxIcon.Warning);
+                return null;
+            }
         }
     }
 

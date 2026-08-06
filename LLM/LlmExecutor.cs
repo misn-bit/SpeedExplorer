@@ -55,8 +55,10 @@ public class LlmExecutor
                 case "rename":
                     if (!string.IsNullOrEmpty(cmd.File))
                     {
-                        var fullPath = Path.Combine(_baseDirectory, Path.GetFileName(cmd.File));
-                        fileActions[fullPath] = cmd;
+                        if (TryResolveFileReference(cmd.File, out var fullPath))
+                            fileActions[fullPath] = cmd;
+                        else
+                            LlmDebugLogger.LogExecution($"File not found or out of scope: {cmd.File}", false);
                     }
                     break;
 
@@ -304,6 +306,8 @@ public class LlmExecutor
     private string ExecuteListDir(LlmCommand cmd)
     {
         string path = ResolvePath(cmd.Path);
+        if (!IsWithinBaseDirectory(path))
+            return $"[list_dir] Path is outside the current directory: {path}";
         if (!Directory.Exists(path)) return $"[list_dir] Path not found: {path}";
         var items = new DirectoryInfo(path).GetFileSystemInfos("*", SearchOption.TopDirectoryOnly);
         var sb = new System.Text.StringBuilder();
@@ -329,6 +333,8 @@ public class LlmExecutor
     private string ExecuteSearch(LlmCommand cmd)
     {
         string root = ResolvePath(cmd.Root);
+        if (!IsWithinBaseDirectory(root))
+            return $"[search] Root is outside the current directory: {root}";
         if (!Directory.Exists(root)) return $"[search] Root not found: {root}";
         if (string.IsNullOrWhiteSpace(cmd.Pattern)) return "[search] Missing pattern";
         string pattern = cmd.Pattern.Trim();
@@ -431,7 +437,11 @@ public class LlmExecutor
             // Preferred: honor subfolder-relative references under base directory.
             candidates.Add(Path.Combine(_baseDirectory, trimmed));
             // Backward compatibility: plain basename in current directory.
-            candidates.Add(Path.Combine(_baseDirectory, Path.GetFileName(trimmed)));
+            if (!trimmed.Contains(Path.DirectorySeparatorChar) &&
+                !trimmed.Contains(Path.AltDirectorySeparatorChar))
+            {
+                candidates.Add(Path.Combine(_baseDirectory, Path.GetFileName(trimmed)));
+            }
         }
 
         foreach (var candidate in candidates)
@@ -439,7 +449,7 @@ public class LlmExecutor
             try
             {
                 string normalized = Path.GetFullPath(candidate);
-                if (!normalized.StartsWith(_baseDirectory, StringComparison.OrdinalIgnoreCase))
+                if (!IsWithinBaseDirectory(normalized))
                     continue;
                 if (!File.Exists(normalized))
                     continue;
@@ -488,6 +498,25 @@ public class LlmExecutor
         return Path.GetFullPath(Path.Combine(_baseDirectory, trimmed));
     }
 
+    private bool IsWithinBaseDirectory(string path)
+    {
+        try
+        {
+            string basePath = Path.GetFullPath(_baseDirectory);
+            string candidatePath = Path.GetFullPath(path);
+            string relative = Path.GetRelativePath(basePath, candidatePath);
+
+            return !Path.IsPathRooted(relative) &&
+                   relative != ".." &&
+                   !relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal) &&
+                   !relative.StartsWith(".." + Path.AltDirectorySeparatorChar, StringComparison.Ordinal);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     private void ExecuteCreateFolder(string? path)
     {
         if (string.IsNullOrWhiteSpace(path))
@@ -497,6 +526,12 @@ public class LlmExecutor
         }
 
         string fullPath = ResolvePath(path);
+
+        if (!IsWithinBaseDirectory(fullPath))
+        {
+            LlmDebugLogger.LogExecution($"create_folder: rejected path outside current directory '{path}'", false);
+            return;
+        }
 
         // Skip if exists
         if (Directory.Exists(fullPath))
@@ -527,6 +562,15 @@ public class LlmExecutor
         if (string.IsNullOrEmpty(cmd.Name)) return;
 
         string fileName = cmd.Name;
+        if (Path.IsPathRooted(fileName) ||
+            fileName.Contains(Path.DirectorySeparatorChar) ||
+            fileName.Contains(Path.AltDirectorySeparatorChar) ||
+            fileName is "." or "..")
+        {
+            LlmDebugLogger.LogExecution($"create_file: rejected path-like name '{cmd.Name}'", false);
+            return;
+        }
+
         // Clean filename
         foreach (char c in Path.GetInvalidFileNameChars())
             fileName = fileName.Replace(c, '_');
@@ -560,7 +604,9 @@ public class LlmExecutor
 
     private void ExecuteRename(string sourcePath, string newName)
     {
-        if (string.IsNullOrEmpty(newName))
+        newName = newName?.Trim() ?? "";
+        if (string.IsNullOrEmpty(newName) || newName is "." or ".." ||
+            !string.Equals(Path.GetFileName(newName), newName, StringComparison.Ordinal))
         {
             LlmDebugLogger.LogExecution("rename: missing newName", false);
             return;
@@ -573,7 +619,7 @@ public class LlmExecutor
         }
 
         // Validate source is in base directory
-        if (!sourcePath.StartsWith(_baseDirectory, StringComparison.OrdinalIgnoreCase))
+        if (!IsWithinBaseDirectory(sourcePath))
         {
             LlmDebugLogger.LogExecution($"rename: file not in current directory", false);
             return;
@@ -631,7 +677,7 @@ public class LlmExecutor
         foreach (var file in files)
         {
             // Validate source is in base directory
-            if (!file.StartsWith(_baseDirectory, StringComparison.OrdinalIgnoreCase))
+            if (!IsWithinBaseDirectory(file))
             {
                 LlmDebugLogger.LogExecution($"move: skipped '{Path.GetFileName(file)}' (not in current directory)", false);
                 continue;
@@ -682,9 +728,7 @@ public class LlmExecutor
         {
             foreach (var fileName in cmd.Files)
             {
-                var cleanName = Path.GetFileName(fileName);
-                var fullPath = Path.Combine(_baseDirectory, cleanName);
-                if (File.Exists(fullPath))
+                if (TryResolveFileReference(fileName, out var fullPath))
                     files.Add(fullPath);
             }
         }

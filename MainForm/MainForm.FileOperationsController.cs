@@ -120,9 +120,11 @@ public partial class MainForm
                     {
                         string oldPath = item.FullPath;
                         string newPath = Path.Combine(Path.GetDirectoryName(oldPath)!, newName);
-                        FileSystemService.ShellRename(oldPath, newPath, _owner.Handle);
-                        TagManager.Instance.HandleRename(oldPath, newPath);
-                        _ = _owner.RefreshCurrentAsync();
+                        if (FileSystemService.ShellRename(oldPath, newName, _owner.Handle))
+                        {
+                            TagManager.Instance.HandleRename(oldPath, newPath);
+                            _ = _owner.RefreshCurrentAsync();
+                        }
                     }
                 }
             }

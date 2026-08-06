@@ -8,7 +8,7 @@ namespace SpeedExplorer;
 
 public class PromptManager
 {
-    private static readonly string _settingsPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "prompts.json");
+    private static string _settingsPath = AppStorage.GetPath("prompts.json");
     private static PromptManager? _instance;
     public static PromptManager Instance => _instance ??= new PromptManager();
 
@@ -50,7 +50,7 @@ public class PromptManager
         {
             var data = new PromptData { BatchPrompts = BatchPrompts };
             var json = JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true });
-            File.WriteAllText(_settingsPath, json);
+            _settingsPath = AppStorage.WriteText(_settingsPath, "prompts.json", json);
         }
         catch (Exception ex)
         {

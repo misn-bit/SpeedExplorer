@@ -570,6 +570,7 @@ public partial class MainForm
                 try { _owner._iconZoomController.Dispose(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                 try { _owner._headerTailController.Dispose(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                 try { _owner._iconLoadService?.Dispose(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+                try { _owner._shellNav.Dispose(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
             };
         }
 

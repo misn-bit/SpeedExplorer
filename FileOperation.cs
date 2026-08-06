@@ -45,13 +45,15 @@ public class DeleteOperation : FileOperation
     public override void Redo()
     {
         // Delete again (send to Recycle Bin)
-        FileSystemService.ShellDelete(DeletedPaths.ToArray(), _ownerHandle, recordOperation: false);
+        if (!FileSystemService.ShellDelete(DeletedPaths.ToArray(), _ownerHandle, recordOperation: false))
+            throw new IOException("The deleted items could not be sent to the Recycle Bin again.");
     }
 
     public override void Undo()
     {
         // Restore from Recycle Bin
-        FileSystemService.RestoreFromRecycleBin(DeletedPaths.ToArray(), _ownerHandle);
+        if (!FileSystemService.RestoreFromRecycleBin(DeletedPaths.ToArray(), _ownerHandle, showFailureMessage: false))
+            throw new IOException("The deleted items could not be restored from the Recycle Bin.");
     }
 }
 
@@ -85,7 +87,11 @@ public class MoveOperation : FileOperation
         // Move from source to destination
         // Note: Redo might be bit tricky if original collision scenarios re-occur
         // For simplicity, we try to move back to the specific paths we knew
-        FileSystemService.ShellMove(SourcePaths.ToArray(), DestinationFolder, _ownerHandle, recordOperation: false);
+        var actualPaths = FileSystemService.ShellMove(SourcePaths.ToArray(), DestinationFolder, _ownerHandle, recordOperation: false);
+        if (actualPaths.Count != SourcePaths.Count)
+            throw new IOException("The move could not be redone completely.");
+
+        DestinationPaths = actualPaths;
     }
 
     public override void Undo()
@@ -99,7 +105,9 @@ public class MoveOperation : FileOperation
         {
             string sourceDir = group.Key;
             var destPaths = group.Select(x => x.Dest).ToArray();
-            FileSystemService.ShellMove(destPaths, sourceDir, _ownerHandle, recordOperation: false);
+            var restoredPaths = FileSystemService.ShellMove(destPaths, sourceDir, _ownerHandle, recordOperation: false);
+            if (restoredPaths.Count != destPaths.Length)
+                throw new IOException("The move could not be undone completely.");
         }
     }
 }
@@ -134,13 +142,18 @@ public class CopyOperation : FileOperation
     public override void Redo()
     {
         // Copy from source to destination
-        FileSystemService.ShellCopy(SourcePaths.ToArray(), DestinationFolder, _ownerHandle, _renameOnCollision, recordOperation: false);
+        var actualPaths = FileSystemService.ShellCopy(SourcePaths.ToArray(), DestinationFolder, _ownerHandle, _renameOnCollision, recordOperation: false);
+        if (actualPaths.Count != SourcePaths.Count)
+            throw new IOException("The copy could not be redone completely.");
+
+        CreatedPaths = actualPaths;
     }
 
     public override void Undo()
     {
         // Delete the copied files (using the actual recorded paths)
-        FileSystemService.ShellDelete(CreatedPaths.ToArray(), _ownerHandle, recordOperation: false);
+        if (!FileSystemService.ShellDelete(CreatedPaths.ToArray(), _ownerHandle, recordOperation: false))
+            throw new IOException("The copied items could not be removed during undo.");
     }
 }
 
@@ -171,14 +184,16 @@ public class RenameOperation : FileOperation
     {
         // Rename from old to new
         string oldPath = Path.Combine(Directory, OldName);
-        FileSystemService.ShellRename(oldPath, NewName, _ownerHandle, recordOperation: false);
+        if (!FileSystemService.ShellRename(oldPath, NewName, _ownerHandle, recordOperation: false))
+            throw new IOException("The rename could not be redone.");
     }
 
     public override void Undo()
     {
         // Rename from new back to old
         string newPath = Path.Combine(Directory, NewName);
-        FileSystemService.ShellRename(newPath, OldName, _ownerHandle, recordOperation: false);
+        if (!FileSystemService.ShellRename(newPath, OldName, _ownerHandle, recordOperation: false))
+            throw new IOException("The rename could not be undone.");
     }
 }
 
@@ -216,8 +231,7 @@ public class CreateFileOperation : FileOperation
         // Try to restore it from there first.
         try
         {
-            FileSystemService.RestoreFromRecycleBin(new[] { FilePath }, IntPtr.Zero);
-            if (File.Exists(FilePath))
+            if (FileSystemService.RestoreFromRecycleBin(new[] { FilePath }, IntPtr.Zero, showFailureMessage: false) && File.Exists(FilePath))
                 return;
         }
         catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
@@ -225,6 +239,9 @@ public class CreateFileOperation : FileOperation
         // Fallback: re-create the file with the cached content.
         try
         {
+            if (File.Exists(FilePath) || Directory.Exists(FilePath))
+                throw new IOException("The original path is occupied by another item.");
+
             var dir = Path.GetDirectoryName(FilePath);
             if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
                 Directory.CreateDirectory(dir);
@@ -232,11 +249,7 @@ public class CreateFileOperation : FileOperation
         }
         catch (Exception ex)
         {
-            System.Windows.Forms.MessageBox.Show(
-                $"Could not re-create file: {ex.Message}",
-                "Redo Error",
-                System.Windows.Forms.MessageBoxButtons.OK,
-                System.Windows.Forms.MessageBoxIcon.Warning);
+            throw new IOException($"Could not re-create file: {ex.Message}", ex);
         }
     }
 
@@ -245,7 +258,8 @@ public class CreateFileOperation : FileOperation
         // Delete the created file (sends to Recycle Bin)
         if (File.Exists(FilePath))
         {
-            FileSystemService.ShellDelete(new[] { FilePath }, IntPtr.Zero, recordOperation: false);
+            if (!FileSystemService.ShellDelete(new[] { FilePath }, IntPtr.Zero, recordOperation: false))
+                throw new IOException("The created file could not be removed.");
         }
     }
 }

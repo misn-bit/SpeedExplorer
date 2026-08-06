@@ -11,8 +11,7 @@ public partial class MainForm
     private sealed class StartupNavigationController
     {
         private readonly MainForm _owner;
-        private static readonly string FolderSettingsPath =
-            Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "folder_settings.json");
+        private static string FolderSettingsPath = AppStorage.GetPath("folder_settings.json");
 
         public StartupNavigationController(MainForm owner)
         {
@@ -146,7 +145,7 @@ public partial class MainForm
                 }
 
                 var json = System.Text.Json.JsonSerializer.Serialize(settings);
-                File.WriteAllText(FolderSettingsPath, json);
+                FolderSettingsPath = AppStorage.WriteText(FolderSettingsPath, "folder_settings.json", json);
             }
             catch
             {

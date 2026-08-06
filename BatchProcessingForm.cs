@@ -395,7 +395,8 @@ public class BatchProcessingForm : Form
                                 settings.LlmSearchEnabled, 
                                 settings.LlmThinkingEnabled,
                                 imagePaths,
-                                selectedModel
+                                selectedModel,
+                                _cts.Token
                             );
 
                             var commands = LlmParsers.ParseCommands(response);

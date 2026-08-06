@@ -6374,8 +6374,16 @@ public class ImageViewerForm : Form
     {
         _animationTimer.Stop();
         _animationFrameIndex = 0;
+        if (_currentAnimation != null)
+        {
+            _currentAnimation.Dispose();
+        }
+        else
+        {
+            _currentImage?.Dispose();
+        }
+
         _currentImage = null;
-        _currentAnimation?.Dispose();
         _currentAnimation = null;
     }
 }
