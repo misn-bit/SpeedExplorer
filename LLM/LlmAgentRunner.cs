@@ -6,6 +6,7 @@ using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace SpeedExplorer;
@@ -36,7 +37,8 @@ public class LlmAgentRunner
         LlmExecutor executor,
         IProgress<string>? progress,
         string apiUrl,
-        string? modelOverride = null)
+        string? modelOverride = null,
+        CancellationToken cancellationToken = default)
     {
         var settings = AppSettings.Current;
         int maxLoops = Math.Clamp(settings.LlmAgentMaxLoops, 1, 100);
@@ -78,6 +80,7 @@ public class LlmAgentRunner
 
         while (loopCount < maxLoops)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             loopCount++;
             progress?.Report($"[Loop {loopCount}/{maxLoops}] Thinking...");
 
@@ -141,8 +144,8 @@ public class LlmAgentRunner
             string responseString;
             try
             {
-                var response = await LlmModelManager.HttpClient.PostAsync(requestUrl, content);
-                responseString = await response.Content.ReadAsStringAsync();
+                var response = await LlmModelManager.HttpClient.PostAsync(requestUrl, content, cancellationToken);
+                responseString = await response.Content.ReadAsStringAsync(cancellationToken);
                 
                 if (!response.IsSuccessStatusCode)
                 {
@@ -163,8 +166,8 @@ public class LlmAgentRunner
                         LlmDebugLogger.LogRequest("", $"Agent Loop {loopCount} Retry(text)", "", retryJson);
 
                         using var retryContent = new StringContent(retryJson, Encoding.UTF8, "application/json");
-                        var retryResponse = await LlmModelManager.HttpClient.PostAsync(requestUrl, retryContent);
-                        responseString = await retryResponse.Content.ReadAsStringAsync();
+                        var retryResponse = await LlmModelManager.HttpClient.PostAsync(requestUrl, retryContent, cancellationToken);
+                        responseString = await retryResponse.Content.ReadAsStringAsync(cancellationToken);
                         if (retryResponse.IsSuccessStatusCode)
                         {
                             retried = true;
@@ -184,8 +187,8 @@ public class LlmAgentRunner
                             LlmDebugLogger.LogRequest("", $"Agent Loop {loopCount} Retry(no_schema)", "", retry2Json);
 
                             using var retry2Content = new StringContent(retry2Json, Encoding.UTF8, "application/json");
-                            var retry2Response = await LlmModelManager.HttpClient.PostAsync(requestUrl, retry2Content);
-                            responseString = await retry2Response.Content.ReadAsStringAsync();
+                            var retry2Response = await LlmModelManager.HttpClient.PostAsync(requestUrl, retry2Content, cancellationToken);
+                            responseString = await retry2Response.Content.ReadAsStringAsync(cancellationToken);
                             if (retry2Response.IsSuccessStatusCode)
                             {
                                 retried = true;
@@ -205,6 +208,10 @@ public class LlmAgentRunner
                         break;
                     }
                 }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception ex)
             {
@@ -232,7 +239,8 @@ public class LlmAgentRunner
                     taggingEnabled,
                     searchEnabled,
                     agentTemperature,
-                    Math.Max(256, Math.Min(agentMaxTokens, 1400)));
+                    Math.Max(256, Math.Min(agentMaxTokens, 1400)),
+                    cancellationToken);
                 if (repaired != null)
                 {
                     agentResp = repaired;
@@ -483,8 +491,8 @@ public class LlmAgentRunner
             try
             {
                 using var closureContent = new StringContent(closureJson, Encoding.UTF8, "application/json");
-                var closureResponse = await LlmModelManager.HttpClient.PostAsync(requestUrl, closureContent);
-                var closureResponseString = await closureResponse.Content.ReadAsStringAsync();
+                var closureResponse = await LlmModelManager.HttpClient.PostAsync(requestUrl, closureContent, cancellationToken);
+                var closureResponseString = await closureResponse.Content.ReadAsStringAsync(cancellationToken);
 
                 if (closureResponse.IsSuccessStatusCode)
                 {
@@ -545,6 +553,10 @@ public class LlmAgentRunner
                     }
                 }
             }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
                 LlmDebugLogger.LogError($"Closure verification failed: {ex.Message}");
@@ -564,7 +576,8 @@ public class LlmAgentRunner
             completed,
             stopReason,
             model,
-            requestUrl);
+            requestUrl,
+            cancellationToken);
         LastAgentFinalResponse = string.IsNullOrWhiteSpace(finalResponse)
             ? BuildAgentFallbackResponse(allOps.Count, completed, stopReason)
             : finalResponse;
@@ -598,7 +611,8 @@ public class LlmAgentRunner
         bool completed,
         string stopReason,
         string model,
-        string requestUrl)
+        string requestUrl,
+        CancellationToken cancellationToken)
     {
         try
         {
@@ -657,8 +671,8 @@ public class LlmAgentRunner
             LlmDebugLogger.LogRequest("", "Agent Final Response", systemPrompt, json);
 
             using var content = new StringContent(json, Encoding.UTF8, "application/json");
-            var response = await LlmModelManager.HttpClient.PostAsync(requestUrl, content);
-            var responseString = await response.Content.ReadAsStringAsync();
+            var response = await LlmModelManager.HttpClient.PostAsync(requestUrl, content, cancellationToken);
+            var responseString = await response.Content.ReadAsStringAsync(cancellationToken);
             if (!response.IsSuccessStatusCode)
             {
                 LlmDebugLogger.LogError($"Agent final response API failed: {response.StatusCode} - {responseString}");
@@ -698,6 +712,10 @@ public class LlmAgentRunner
             }
 
             return "";
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -1378,7 +1396,8 @@ public class LlmAgentRunner
         bool taggingEnabled,
         bool searchEnabled,
         double temperature,
-        int maxTokens)
+        int maxTokens,
+        CancellationToken cancellationToken)
     {
         try
         {
@@ -1404,8 +1423,8 @@ public class LlmAgentRunner
 
             string json = JsonSerializer.Serialize(requestData, new JsonSerializerOptions { WriteIndented = true });
             using var content = new StringContent(json, Encoding.UTF8, "application/json");
-            var response = await LlmModelManager.HttpClient.PostAsync(requestUrl, content);
-            string responseString = await response.Content.ReadAsStringAsync();
+            var response = await LlmModelManager.HttpClient.PostAsync(requestUrl, content, cancellationToken);
+            string responseString = await response.Content.ReadAsStringAsync(cancellationToken);
             if (!response.IsSuccessStatusCode)
                 return null;
 
@@ -1414,6 +1433,10 @@ public class LlmAgentRunner
                 repairedContent = responseString;
 
             return LlmParsers.ParseAgenticResponse(repairedContent);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {

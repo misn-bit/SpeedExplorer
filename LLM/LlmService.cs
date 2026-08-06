@@ -778,7 +778,7 @@ public class LlmService
     /// Supports both standard OpenAI /v1/chat/completions and LM Studio native /api/v1/chat.
     /// Mirrors command mode features (system prompt, schema, toggles).
     /// </summary>
-    public async Task<string> SendChatAsync(List<ChatMessage> history, bool taggingEnabled, bool searchEnabled, bool fullContext, bool thinkingEnabled, string? currentContext = null, string? currentDirectory = null, string? modelOverride = null)
+    public async Task<string> SendChatAsync(List<ChatMessage> history, bool taggingEnabled, bool searchEnabled, bool fullContext, bool thinkingEnabled, string? currentContext = null, string? currentDirectory = null, string? modelOverride = null, CancellationToken cancellationToken = default)
     {
         var settings = AppSettings.Current;
         string apiUrl = settings.ChatModeEnabled ? settings.LlmChatApiUrl : settings.LlmApiUrl;
@@ -865,8 +865,8 @@ public class LlmService
         try
         {
             LastReasoning = "";
-            var response = await _httpClient.PostAsync(requestUrl, content);
-            var responseString = await response.Content.ReadAsStringAsync();
+            var response = await _httpClient.PostAsync(requestUrl, content, cancellationToken);
+            var responseString = await response.Content.ReadAsStringAsync(cancellationToken);
 
             if (!response.IsSuccessStatusCode)
             {
@@ -919,6 +919,10 @@ public class LlmService
             }
             return "";
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             LlmDebugLogger.LogError($"Chat Exception: {ex.Message}");
@@ -933,7 +937,8 @@ public class LlmService
         bool taggingEnabled,
         bool searchEnabled,
         bool forceReplyOnly,
-        string? modelOverride = null)
+        string? modelOverride = null,
+        CancellationToken cancellationToken = default)
     {
         var settings = AppSettings.Current;
         string model = string.IsNullOrWhiteSpace(modelOverride) ? settings.LlmModelName : modelOverride;
@@ -982,8 +987,8 @@ public class LlmService
         try
         {
             using var content = new StringContent(json, Encoding.UTF8, "application/json");
-            var response = await _httpClient.PostAsync(requestUrl, content);
-            string responseString = await response.Content.ReadAsStringAsync();
+            var response = await _httpClient.PostAsync(requestUrl, content, cancellationToken);
+            string responseString = await response.Content.ReadAsStringAsync(cancellationToken);
 
             if (!response.IsSuccessStatusCode)
             {
@@ -1003,8 +1008,8 @@ public class LlmService
                     LlmDebugLogger.LogRequest(currentDirectory ?? "", "Agent Chat Decision Retry(text)", systemPrompt, retryJson);
 
                     using var retryContent = new StringContent(retryJson, Encoding.UTF8, "application/json");
-                    var retryResponse = await _httpClient.PostAsync(requestUrl, retryContent);
-                    responseString = await retryResponse.Content.ReadAsStringAsync();
+                    var retryResponse = await _httpClient.PostAsync(requestUrl, retryContent, cancellationToken);
+                    responseString = await retryResponse.Content.ReadAsStringAsync(cancellationToken);
                     retried = retryResponse.IsSuccessStatusCode;
                 }
 
@@ -1049,6 +1054,10 @@ public class LlmService
                 decision.Message = "I can help with that.";
 
             return decision;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -1096,7 +1105,8 @@ public class LlmService
         bool searchEnabled,
         LlmExecutor executor,
         IProgress<string>? progress,
-        string? modelOverride = null)
+        string? modelOverride = null,
+        CancellationToken cancellationToken = default)
     {
         return AgentRunner.RunAgenticTaskAsync(
             history,
@@ -1106,7 +1116,8 @@ public class LlmService
             executor,
             progress,
             ApiUrl,
-            modelOverride);
+            modelOverride,
+            cancellationToken);
     }
 
     public string LastAgentFinalResponse => AgentRunner.LastAgentFinalResponse;
@@ -1359,7 +1370,7 @@ public class LlmService
             LlmDebugLogger.LogExecution($"SendPrompt endpoint: {requestUrl} | model: {model} | vision: {isVisionRequest}");
             var content = new StringContent(requestJson, Encoding.UTF8, "application/json");
             var response = await _httpClient.PostAsync(requestUrl, content, cancellationToken);
-            var responseText = await response.Content.ReadAsStringAsync();
+            var responseText = await response.Content.ReadAsStringAsync(cancellationToken);
 
             if (!response.IsSuccessStatusCode &&
                 isVisionRequest &&
@@ -1369,7 +1380,7 @@ public class LlmService
                 {
                     using var recoveryContent = new StringContent(requestJson, Encoding.UTF8, "application/json");
                     response = await _httpClient.PostAsync(requestUrl, recoveryContent, cancellationToken);
-                    responseText = await response.Content.ReadAsStringAsync();
+                    responseText = await response.Content.ReadAsStringAsync(cancellationToken);
                 }
             }
 
@@ -1383,7 +1394,7 @@ public class LlmService
 
                 using var retryContent = new StringContent(retryJson, Encoding.UTF8, "application/json");
                 response = await _httpClient.PostAsync(requestUrl, retryContent, cancellationToken);
-                responseText = await response.Content.ReadAsStringAsync();
+                responseText = await response.Content.ReadAsStringAsync(cancellationToken);
 
                 if (!response.IsSuccessStatusCode &&
                     IsModelUnloadedError(responseText))
@@ -1392,7 +1403,7 @@ public class LlmService
                     {
                         using var retryRecoveryContent = new StringContent(retryJson, Encoding.UTF8, "application/json");
                         response = await _httpClient.PostAsync(requestUrl, retryRecoveryContent, cancellationToken);
-                        responseText = await response.Content.ReadAsStringAsync();
+                        responseText = await response.Content.ReadAsStringAsync(cancellationToken);
                     }
                 }
             }

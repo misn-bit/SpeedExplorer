@@ -5,6 +5,7 @@ using System.Windows.Forms;
 using System.Collections.Generic;
 using System.Text.Json;
 using System.ComponentModel;
+using System.Threading;
 
 namespace SpeedExplorer;
 
@@ -116,6 +117,8 @@ public class LlmChatPanel : Panel
     private Button _clearHistoryBtn;
     private bool _allowExpandOnFocus;
     private bool _isExpanded;
+    private int _sendInProgress;
+    private CancellationTokenSource? _requestCts;
     private Control? _overlayParent;
     private DateTime _autoCollapseBlockedUntilUtc = DateTime.MinValue;
 
@@ -286,6 +289,7 @@ public class LlmChatPanel : Panel
         this.ParentChanged += (s, e) => HookOverlayParent();
         this.Disposed += (s, e) =>
         {
+            _requestCts?.Cancel();
             if (_overlayParent != null)
                 _overlayParent.Resize -= OverlayParent_Resize;
         };
@@ -590,6 +594,50 @@ public class LlmChatPanel : Panel
 
     private async void SendPrompt()
     {
+        if (Interlocked.Exchange(ref _sendInProgress, 1) != 0)
+            return;
+
+        _inputBox.Enabled = false;
+        _sendButton.Enabled = false;
+        using var requestCts = new CancellationTokenSource();
+        _requestCts = requestCts;
+
+        try
+        {
+            await SendPromptCoreAsync(requestCts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            if (!IsDisposed)
+            {
+                _statusLabel.Text = "Request cancelled";
+                _statusLabel.ForeColor = Color.Orange;
+            }
+        }
+        catch (Exception ex)
+        {
+            LlmDebugLogger.LogError($"Chat request failed: {ex}");
+            if (!IsDisposed)
+            {
+                _statusLabel.Text = $"❌ {ex.Message}";
+                _statusLabel.ForeColor = Color.OrangeRed;
+            }
+        }
+        finally
+        {
+            if (ReferenceEquals(_requestCts, requestCts))
+                _requestCts = null;
+            Interlocked.Exchange(ref _sendInProgress, 0);
+            if (!IsDisposed)
+            {
+                _inputBox.Enabled = true;
+                _sendButton.Enabled = true;
+            }
+        }
+    }
+
+    private async Task SendPromptCoreAsync(CancellationToken cancellationToken)
+    {
         var prompt = _inputBox.Text.Trim();
         if (string.IsNullOrEmpty(prompt)) return;
         bool wasExpandedAtStart = _isExpanded;
@@ -623,7 +671,7 @@ public class LlmChatPanel : Panel
 
             if (_agentToggle.Checked)
             {
-                await HandleAgentModeChatAsync(prompt, currentDir, selectedModel, wasExpandedAtStart);
+                await HandleAgentModeChatAsync(prompt, currentDir, selectedModel, wasExpandedAtStart, cancellationToken);
                 _statusLabel.Text = Localization.T("ai_idle");
                 _statusLabel.ForeColor = Color.Gray;
                 if (wasExpandedAtStart)
@@ -643,7 +691,7 @@ public class LlmChatPanel : Panel
             var response = await _llmService.SendChatAsync(_chatHistory,
                 _taggingToggle.Checked, _searchToggle.Checked, 
                 _fullContextToggle.Checked, _thinkingToggle.Checked,
-                currentContext, currentDir, selectedModel);
+                currentContext, currentDir, selectedModel, cancellationToken);
             
             _chatHistory.Add(new ChatMessage { Role = "assistant", Content = response });
 
@@ -736,7 +784,7 @@ public class LlmChatPanel : Panel
 
             string jsonResponse = await _llmService.SendPromptAsync(prompt, fileContext, 
                 _fullContextToggle.Checked, _taggingToggle.Checked, 
-                _searchToggle.Checked, _thinkingToggle.Checked, null, selectedModel);
+                _searchToggle.Checked, _thinkingToggle.Checked, null, selectedModel, cancellationToken);
                 
             var commands = LlmParsers.ParseCommands(jsonResponse);
 
@@ -771,6 +819,10 @@ public class LlmChatPanel : Panel
                 _statusLabel.ForeColor = Color.Orange;
             }
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             _statusLabel.Text = $"❌ {ex.Message}";
@@ -784,7 +836,7 @@ public class LlmChatPanel : Panel
         }
     }
 
-    private async Task HandleAgentModeChatAsync(string userPrompt, string? currentDir, string selectedModel, bool wasExpandedAtStart)
+    private async Task HandleAgentModeChatAsync(string userPrompt, string? currentDir, string selectedModel, bool wasExpandedAtStart, CancellationToken cancellationToken)
     {
         try
         {
@@ -814,7 +866,8 @@ public class LlmChatPanel : Panel
                     _taggingToggle.Checked,
                     _searchToggle.Checked,
                     forceReplyOnly: false,
-                    modelOverride: selectedModel);
+                    modelOverride: selectedModel,
+                    cancellationToken: cancellationToken);
             }
 
             string action = (decision.Action ?? "reply").Trim().ToLowerInvariant();
@@ -841,7 +894,8 @@ public class LlmChatPanel : Panel
                         _taggingToggle.Checked,
                         _searchToggle.Checked,
                         forceReplyOnly: true,
-                        modelOverride: selectedModel);
+                        modelOverride: selectedModel,
+                        cancellationToken: cancellationToken);
                     AppendMessage("AI", blockedReply.Message, Color.LightGreen);
                     _chatHistory.Add(new ChatMessage { Role = "assistant", Content = blockedReply.Message });
                     return;
@@ -879,7 +933,8 @@ public class LlmChatPanel : Panel
                     _taggingToggle.Checked,
                     _searchToggle.Checked,
                     forceReplyOnly: true,
-                    modelOverride: selectedModel);
+                    modelOverride: selectedModel,
+                    cancellationToken: cancellationToken);
 
                 AppendMessage("AI", finalDecision.Message, Color.LightGreen);
                 _chatHistory.Add(new ChatMessage { Role = "assistant", Content = finalDecision.Message });
@@ -907,7 +962,8 @@ public class LlmChatPanel : Panel
                         _taggingToggle.Checked,
                         _searchToggle.Checked,
                         forceReplyOnly: true,
-                        modelOverride: selectedModel);
+                        modelOverride: selectedModel,
+                        cancellationToken: cancellationToken);
                     AppendMessage("AI", blockedReply.Message, Color.LightGreen);
                     _chatHistory.Add(new ChatMessage { Role = "assistant", Content = blockedReply.Message });
                     return;
@@ -940,7 +996,8 @@ public class LlmChatPanel : Panel
                     _searchToggle.Checked,
                     new LlmExecutor(currentDir!, GetOwnerHandle?.Invoke() ?? IntPtr.Zero),
                     progress,
-                    selectedModel);
+                    selectedModel,
+                    cancellationToken);
 
                 if (ops.Count > 0)
                 {
@@ -987,7 +1044,8 @@ public class LlmChatPanel : Panel
                     _taggingToggle.Checked,
                     _searchToggle.Checked,
                     forceReplyOnly: true,
-                    modelOverride: selectedModel);
+                    modelOverride: selectedModel,
+                    cancellationToken: cancellationToken);
 
                 string finalMessage = string.IsNullOrWhiteSpace(postRunDecision.Message)
                     ? (report.Completed ? "Task completed." : $"Task stopped: {report.StopReason}")
@@ -1008,6 +1066,10 @@ public class LlmChatPanel : Panel
 
             AppendMessage("AI", decision.Message, Color.LightGreen);
             _chatHistory.Add(new ChatMessage { Role = "assistant", Content = decision.Message });
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {

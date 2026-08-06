@@ -358,14 +358,25 @@ public partial class MainForm
                 {
                     if (foundBatch == null || foundBatch.Count == 0 || cts.Token.IsCancellationRequested) return;
 
-                    _owner.Invoke(new Action(() =>
+                    if (_owner.IsDisposed || _owner.Disposing || !_owner.IsHandleCreated)
+                        return;
+
+                    try
                     {
-                        if (IsCurrentSearch(cts))
+                        _owner.Invoke(new Action(() =>
                         {
-                            results.AddRange(foundBatch);
-                            PublishLiveResults(force: false);
-                        }
-                    }));
+                            if (IsCurrentSearch(cts))
+                            {
+                                results.AddRange(foundBatch);
+                                PublishLiveResults(force: false);
+                            }
+                        }));
+                    }
+                    catch (InvalidOperationException)
+                    {
+                        // The form can lose its handle while a background search is
+                        // publishing its final batch.
+                    }
                 });
 
                 if (IsTagSearchOnly)

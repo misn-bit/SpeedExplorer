@@ -14,11 +14,19 @@ public partial class MainForm
 {
     private async Task<T> AwaitWithCancellation<T>(Task<T> task, CancellationToken ct)
     {
-        var tcs = new TaskCompletionSource<bool>();
+        var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         using (ct.Register(() => tcs.TrySetResult(true)))
         {
             if (task != await Task.WhenAny(task, tcs.Task))
             {
+                // The underlying operation cannot always be cancelled (for example,
+                // a native or filesystem call may still be running). Observe a
+                // later fault so it does not become an unobserved task exception.
+                _ = task.ContinueWith(
+                    completedTask => _ = completedTask.Exception,
+                    CancellationToken.None,
+                    TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+                    TaskScheduler.Default);
                 throw new OperationCanceledException(ct);
             }
         }
