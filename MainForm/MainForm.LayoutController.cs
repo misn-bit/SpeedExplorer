@@ -447,7 +447,7 @@ public partial class MainForm
                         SendMessage(_owner.Handle, WM_SETREDRAW, 1, 0);
                         _owner.Refresh();
 
-                        if (!_owner._fastStartup)
+                        if (!_owner._fastStartup && !_owner._preloadOnly)
                             _owner.Opacity = 1;
                         _owner._loadCompleted = true;
                         if (_owner._listView != null && !_owner._listView.IsDisposed)
@@ -575,16 +575,7 @@ public partial class MainForm
 
         private void ApplyInitialWindowState()
         {
-            if (AppSettings.Current.MainWindowFullscreen)
-            {
-                _owner.MaximizedBounds = Rectangle.Empty;
-                _owner.WindowState = FormWindowState.Maximized;
-            }
-            else if (AppSettings.Current.MainWindowMaximized)
-            {
-                _owner.MaximizedBounds = Screen.FromControl(_owner).WorkingArea;
-                _owner.WindowState = FormWindowState.Maximized;
-            }
+            _owner.ApplyStoredWindowStateForDisplay();
         }
 
         private void TrySetAppIcon()

@@ -198,7 +198,16 @@ static class Program
                 return;
             }
 
-            if (!startMinimized)
+            if (startMinimized && hasStartupFlag)
+            {
+                // Keep the full main window warm in the background. The first tray open
+                // can then reveal an already initialized form instead of constructing it.
+                var preloadedMainForm = new MainForm(preloadOnly: true);
+                context.SetPreloadedMainForm(preloadedMainForm);
+                preloadedMainForm.Show();
+                preloadedMainForm.Hide();
+            }
+            else if (!startMinimized)
             {
                 context.ShowNext(new MainForm(startPath));
             }
@@ -479,6 +488,12 @@ static class Program
                         var existing = GetBestMainFormForExternalOpen();
                         if (existing != null)
                         {
+                            if (existing.IsPreloadOnly)
+                            {
+                                context.ShowMainWindow();
+                                existing = GetBestMainFormForExternalOpen() ?? existing;
+                            }
+
                             LogCrash("Pipe.Target", null, $"targetHandle=0x{existing.Handle.ToInt64():X} visible={existing.Visible} state={existing.WindowState}");
                             bool wasVisible = existing.Visible;
                             bool wasMinimized = existing.WindowState == FormWindowState.Minimized;
@@ -546,8 +561,7 @@ static class Program
         if (form.WindowState != FormWindowState.Minimized)
             return;
 
-        bool shouldMaximize = AppSettings.Current.MainWindowMaximized || AppSettings.Current.MainWindowFullscreen;
-        form.WindowState = shouldMaximize ? FormWindowState.Maximized : FormWindowState.Normal;
+        form.ApplyStoredWindowStateForDisplay();
     }
 
     public class MultiWindowContext : ApplicationContext
@@ -558,6 +572,7 @@ static class Program
         private int _formCount = 0;
         private NotifyIcon _trayIcon = null!;
         private readonly Control _marshalControl;
+        private MainForm? _preloadedMainForm;
 
         public MultiWindowContext()
         {
@@ -592,7 +607,7 @@ static class Program
             };
 
             var contextMenu = new ContextMenuStrip();
-            contextMenu.Items.Add("Open Speed Explorer", null, (s, e) => ShowNext(new MainForm()));
+            contextMenu.Items.Add("Open Speed Explorer", null, (s, e) => ShowMainWindow());
             contextMenu.Items.Add("-");
             contextMenu.Items.Add("Exit", null, (s, e) => {
                 _trayIcon.Visible = false;
@@ -601,7 +616,7 @@ static class Program
             });
 
             _trayIcon.ContextMenuStrip = contextMenu;
-            _trayIcon.DoubleClick += (s, e) => ShowNext(new MainForm());
+            _trayIcon.DoubleClick += (s, e) => ShowMainWindow();
 
             // Try to load app icon if possible
             try
@@ -616,6 +631,28 @@ static class Program
         {
             if (_trayIcon == null) return;
             _trayIcon.Visible = visible;
+        }
+
+        public void SetPreloadedMainForm(MainForm form)
+        {
+            _preloadedMainForm = form;
+        }
+
+        public void ShowMainWindow()
+        {
+            var preloaded = _preloadedMainForm;
+            if (preloaded != null && !preloaded.IsDisposed)
+            {
+                _preloadedMainForm = null;
+                preloaded.ShowInTaskbar = true;
+                preloaded.Opacity = 0;
+                ShowNext(preloaded);
+                preloaded.ApplyStoredWindowStateForDisplay();
+                preloaded.RevealPreloadedWindow();
+                return;
+            }
+
+            ShowNext(new MainForm());
         }
 
         public void ShowNext(Form form)

@@ -77,6 +77,7 @@ public partial class MainForm : Form
     // before the saved sidebar position has been restored.
     private bool _restoringSidebarSplit;
     private bool _sidebarSplitRestorePending;
+    private bool _preloadOnly;
     private readonly SettingsLauncherController _settingsLauncherController;
     private readonly ThemeController _themeController;
     private readonly WindowChromeController _windowChromeController;
@@ -447,8 +448,9 @@ public partial class MainForm : Form
     private Color InactiveTabBackColor => ThemePalette.InactiveTabBackground;
     private Color SidebarGhostOverlayColor => ThemePalette.SidebarGhostOverlay;
 
-    public MainForm(string? initialPath = null)
+    public MainForm(string? initialPath = null, bool preloadOnly = false)
     {
+        _preloadOnly = preloadOnly;
         _themeController = new ThemeController(this);
         _nav = new NavigationController(this);
         _searchController = new SearchController(this);
@@ -479,6 +481,8 @@ public partial class MainForm : Form
         // Borderless form setup
         Text = "Speed Explorer";
         FormBorderStyle = FormBorderStyle.None;
+        if (_preloadOnly)
+            ShowInTaskbar = false;
         var s = AppSettings.Current;
         Size = new Size(s.MainWindowWidth, s.MainWindowHeight);
         MinimumSize = new Size(Scale(400), Scale(300));
@@ -497,7 +501,7 @@ public partial class MainForm : Form
             {
                 t.Stop();
                 t.Dispose();
-                if (!_loadCompleted)
+                if (!_loadCompleted && !_preloadOnly)
                 {
                     SendMessage(Handle, WM_SETREDRAW, 1, 0);
                     Opacity = 1;
@@ -552,6 +556,38 @@ public partial class MainForm : Form
         UpdateViewToggleLabel();
         _layoutController.InitializeLayoutAndLifecycle(normalizedStartup);
     }
+
+    internal void RevealPreloadedWindow()
+    {
+        if (!_preloadOnly)
+            return;
+
+        _preloadOnly = false;
+        ShowInTaskbar = true;
+        Opacity = 1;
+    }
+
+    internal bool IsPreloadOnly => _preloadOnly;
+
+    internal void ApplyStoredWindowStateForDisplay()
+    {
+        if (AppSettings.Current.MainWindowFullscreen)
+        {
+            MaximizedBounds = Rectangle.Empty;
+            WindowState = FormWindowState.Maximized;
+        }
+        else if (AppSettings.Current.MainWindowMaximized)
+        {
+            MaximizedBounds = Screen.FromControl(this).WorkingArea;
+            WindowState = FormWindowState.Maximized;
+        }
+        else if (WindowState != FormWindowState.Normal)
+        {
+            WindowState = FormWindowState.Normal;
+        }
+    }
+
+    protected override bool ShowWithoutActivation => _preloadOnly || base.ShowWithoutActivation;
 
     private void InitializeTabs(string? initialPath) => _tabsController.InitializeTabs(initialPath);
 
