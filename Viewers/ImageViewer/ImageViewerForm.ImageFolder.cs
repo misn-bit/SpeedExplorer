@@ -100,7 +100,7 @@ public partial class ImageViewerForm
         }
         else
         {
-            added.Sort((a, b) => CompareImagePathsForSort(a, b, _sortOptions));
+            added.Sort((a, b) => ImageViewerPathComparer.Compare(a, b, _sortOptions));
             foreach (var imagePath in added)
             {
                 int insertIndex = FindWatchedFolderSortedInsertIndex(imagePath, _sortOptions);
@@ -153,7 +153,7 @@ public partial class ImageViewerForm
                 continue;
 
             lastFolderImageIndex = i;
-            if (CompareImagePathsForSort(imagePath, _imagePaths[i], sortOptions) < 0)
+            if (ImageViewerPathComparer.Compare(imagePath, _imagePaths[i], sortOptions) < 0)
                 return i;
         }
 
@@ -171,54 +171,6 @@ public partial class ImageViewerForm
                 folder.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
                 _watchedImageFolder,
                 StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static int CompareImagePathsForSort(string leftPath, string rightPath, ImageViewerSortOptions sortOptions)
-    {
-        if (string.Equals(leftPath, rightPath, StringComparison.OrdinalIgnoreCase))
-            return 0;
-
-        if (sortOptions.TaggedFilesOnTop)
-        {
-            bool leftTagged = TagManager.Instance.HasTags(leftPath);
-            bool rightTagged = TagManager.Instance.HasTags(rightPath);
-            if (leftTagged != rightTagged)
-                return leftTagged ? -1 : 1;
-        }
-
-        var leftItem = CreateImageFileItemForSort(leftPath);
-        var rightItem = CreateImageFileItemForSort(rightPath);
-        return FileSystemService.CompareItems(leftItem, rightItem, sortOptions.Column, sortOptions.Direction);
-    }
-
-    private static FileItem CreateImageFileItemForSort(string path)
-    {
-        try
-        {
-            var info = new FileInfo(path);
-            return new FileItem
-            {
-                FullPath = info.FullName,
-                Name = info.Name,
-                IsDirectory = false,
-                Size = info.Exists ? info.Length : 0,
-                DateModified = info.Exists ? info.LastWriteTime : DateTime.MinValue,
-                DateCreated = info.Exists ? info.CreationTime : DateTime.MinValue,
-                Extension = info.Extension,
-                DisplayPath = info.DirectoryName ?? ""
-            };
-        }
-        catch
-        {
-            return new FileItem
-            {
-                FullPath = path,
-                Name = Path.GetFileName(path),
-                IsDirectory = false,
-                Extension = Path.GetExtension(path),
-                DisplayPath = Path.GetDirectoryName(path) ?? ""
-            };
-        }
     }
 
 }
