@@ -392,6 +392,9 @@ public class SettingsForm : Form
         panel.Controls.Add(CreateLabel(Localization.T("codex"), Point.Empty));
         panel.Controls.Add(CreateLabel("GPT-5.3-Codex", Point.Empty));
         panel.Controls.Add(CreateLabel("GPT-5.2-Codex", Point.Empty));
+        panel.Controls.Add(CreateLabel("GPT-5.4", Point.Empty));
+        panel.Controls.Add(CreateLabel("GPT-5.5", Point.Empty));
+        panel.Controls.Add(CreateLabel("GPT-5.6 Luna, Terra", Point.Empty));
         panel.Controls.Add(new Panel { Height = Scale(14), Width = Scale(1), BackColor = tab.BackColor });
 
         panel.Controls.Add(CreateLabel(Localization.T("directed_by"), Point.Empty));
