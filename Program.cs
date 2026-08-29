@@ -202,10 +202,7 @@ static class Program
             {
                 // Keep the full main window warm in the background. The first tray open
                 // can then reveal an already initialized form instead of constructing it.
-                var preloadedMainForm = new MainForm(preloadOnly: true);
-                context.SetPreloadedMainForm(preloadedMainForm);
-                preloadedMainForm.Show();
-                preloadedMainForm.Hide();
+                context.EnsurePreloadedMainForm();
             }
             else if (!startMinimized)
             {
@@ -633,9 +630,30 @@ static class Program
             _trayIcon.Visible = visible;
         }
 
-        public void SetPreloadedMainForm(MainForm form)
+        public void EnsurePreloadedMainForm()
         {
-            _preloadedMainForm = form;
+            if (_preloadedMainForm != null)
+            {
+                if (!_preloadedMainForm.IsDisposed)
+                    return;
+
+                _preloadedMainForm = null;
+            }
+
+            try
+            {
+                var preloaded = new MainForm(preloadOnly: true);
+                _preloadedMainForm = preloaded;
+                preloaded.Show();
+                preloaded.Hide();
+            }
+            catch (Exception ex)
+            {
+                if (_preloadedMainForm != null && !_preloadedMainForm.IsDisposed)
+                    _preloadedMainForm.Dispose();
+                _preloadedMainForm = null;
+                Debug.WriteLine($"Failed to pre-warm main window: {ex}");
+            }
         }
 
         public void ShowMainWindow()
@@ -671,18 +689,27 @@ static class Program
             form.FormClosed += (s, e) =>
             {
                 _formCount--;
-                if (_formCount <= 0 && !AppSettings.Current.RunInBackground)
+                if (_formCount <= 0)
                 {
-                    try
+                    if (AppSettings.Current.RunInBackground)
                     {
-                        if (_trayIcon != null)
-                        {
-                            _trayIcon.Visible = false;
-                            _trayIcon.Dispose();
-                        }
+                        // Keep a replacement form ready so the next tray/external open
+                        // does not pay the full MainForm construction cost again.
+                        EnsurePreloadedMainForm();
                     }
-                    catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
-                    ExitThread();
+                    else
+                    {
+                        try
+                        {
+                            if (_trayIcon != null)
+                            {
+                                _trayIcon.Visible = false;
+                                _trayIcon.Dispose();
+                            }
+                        }
+                        catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+                        ExitThread();
+                    }
                 }
             };
             form.Show();
