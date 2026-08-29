@@ -22,7 +22,7 @@ public partial class MainForm
 
         string imagePath = _startupImagePath;
         _startupImagePath = null;
-        TryOpenImageViewerForImagePath(imagePath, _items.Select(static x => x.FullPath));
+        TryOpenImageViewerForImagePath(imagePath, State.Items.Select(static x => x.FullPath));
     }
 
     private async Task NavigateToAndMaybeOpenImageViewerAsync(
@@ -33,7 +33,7 @@ public partial class MainForm
         await NavigateTo(path, selectPaths);
 
         if (!string.IsNullOrWhiteSpace(imagePathForViewer))
-            TryOpenImageViewerForImagePath(imagePathForViewer, _items.Select(static x => x.FullPath));
+            TryOpenImageViewerForImagePath(imagePathForViewer, State.Items.Select(static x => x.FullPath));
     }
 
     private string? ResolveImagePathForBuiltInViewer(string? rawPath)
@@ -95,7 +95,7 @@ public partial class MainForm
         var viewer = new ImageViewerForm(
             imageFiles,
             startIndex,
-            new ImageViewerSortOptions(_sortColumn, _sortDirection, _taggedFilesOnTop));
+            new ImageViewerSortOptions(State.SortColumn, State.SortDirection, State.TaggedFilesOnTop));
         viewer.Show();
         return true;
     }

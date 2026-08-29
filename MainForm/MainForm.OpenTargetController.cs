@@ -7,6 +7,19 @@ namespace SpeedExplorer;
 
 public partial class MainForm
 {
+    BrowserState IOpenTargetHost.BrowserState => State;
+    bool IOpenTargetHost.IsSearchMode => IsSearchMode;
+    Stack<string> IOpenTargetHost.BackHistory => _nav.BackHistory;
+    Stack<string> IOpenTargetHost.ForwardHistory => _nav.ForwardHistory;
+    string IOpenTargetHost.GetSelectedPath() => GetSelectedPath();
+    string? IOpenTargetHost.GetShellParentPath(string shellPath) => GetShellParentPath(shellPath);
+    void IOpenTargetHost.OpenPathInNewTab(
+        string path,
+        bool activate,
+        Stack<string>? inheritedBackHistory,
+        Stack<string>? inheritedForwardHistory)
+        => _tabsController.OpenPathInNewTab(path, activate, inheritedBackHistory, inheritedForwardHistory);
+
     private sealed class OpenTargetController
     {
         public enum NewTabHistoryMode
@@ -16,22 +29,23 @@ public partial class MainForm
             ForwardButtonTarget
         }
 
-        private readonly MainForm _owner;
+        private readonly IOpenTargetHost _host;
+        private BrowserState State => _host.BrowserState;
 
-        public OpenTargetController(MainForm owner)
+        public OpenTargetController(IOpenTargetHost host)
         {
-            _owner = owner;
+            _host = host;
         }
 
         public string? GetOpenInOtherTargetPath()
         {
-            string path = _owner.GetSelectedPath();
+            string path = _host.GetSelectedPath();
             if (string.IsNullOrEmpty(path))
             {
-                if (!string.IsNullOrEmpty(_owner._currentPath) && _owner._currentPath != ThisPcPath && !_owner.IsSearchMode)
-                    path = _owner._currentPath;
-                else if (!string.IsNullOrEmpty(_owner._currentPath) && _owner._currentPath == ThisPcPath)
-                    path = _owner._currentPath;
+            if (!string.IsNullOrEmpty(State.CurrentPath) && State.CurrentPath != ThisPcPath && !_host.IsSearchMode)
+                path = State.CurrentPath;
+            else if (!string.IsNullOrEmpty(State.CurrentPath) && State.CurrentPath == ThisPcPath)
+                path = State.CurrentPath;
                 else
                     return null;
             }
@@ -46,16 +60,16 @@ public partial class MainForm
 
             if (IsShellPath(path))
             {
-                var item = _owner._items.FirstOrDefault(i => i.FullPath == path);
+            var item = State.Items.FirstOrDefault(i => i.FullPath == path);
                 if (item != null)
                 {
                     if (item.IsDirectory)
                         return path;
-                    var parentShell = _owner.GetShellParentPath(path);
+                    var parentShell = _host.GetShellParentPath(path);
                     return string.IsNullOrEmpty(parentShell) ? null : parentShell;
                 }
 
-                var shellParent = _owner.GetShellParentPath(path);
+                var shellParent = _host.GetShellParentPath(path);
                 return string.IsNullOrEmpty(shellParent) ? null : shellParent;
             }
 
@@ -92,7 +106,7 @@ public partial class MainForm
             Stack<string>? inheritedBackHistory = null,
             Stack<string>? inheritedForwardHistory = null)
         {
-            _owner._tabsController.OpenPathInNewTab(path, activate, inheritedBackHistory, inheritedForwardHistory);
+            _host.OpenPathInNewTab(path, activate, inheritedBackHistory, inheritedForwardHistory);
         }
 
         public void OpenPathByMiddleClickPreference(
@@ -111,20 +125,20 @@ public partial class MainForm
                     return;
                 }
 
-                var back = CloneHistory(_owner._nav.BackHistory);
-                var forward = CloneHistory(_owner._nav.ForwardHistory);
+                var back = CloneHistory(_host.BackHistory);
+                var forward = CloneHistory(_host.ForwardHistory);
 
                 if (historyMode == NewTabHistoryMode.BackButtonTarget)
                 {
                     if (back.Count > 0 && string.Equals(back.Peek(), path, StringComparison.OrdinalIgnoreCase))
                         back.Pop();
-                    if (!string.IsNullOrWhiteSpace(_owner._currentPath))
-                        forward.Push(_owner._currentPath);
+            if (!string.IsNullOrWhiteSpace(State.CurrentPath))
+                forward.Push(State.CurrentPath);
                 }
                 else if (historyMode == NewTabHistoryMode.ForwardButtonTarget)
                 {
-                    if (!string.IsNullOrWhiteSpace(_owner._currentPath))
-                        back.Push(_owner._currentPath);
+            if (!string.IsNullOrWhiteSpace(State.CurrentPath))
+                back.Push(State.CurrentPath);
                     if (forward.Count > 0 && string.Equals(forward.Peek(), path, StringComparison.OrdinalIgnoreCase))
                         forward.Pop();
                 }

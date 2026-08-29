@@ -14,6 +14,7 @@ public partial class MainForm
     private sealed class TabsController
     {
         private readonly MainForm _owner;
+        private BrowserState State => _owner.State;
 
         private readonly List<TabState> _tabs = new();
         private int _activeTabIndex = -1;
@@ -153,7 +154,7 @@ public partial class MainForm
                 if (_activeTabIndex != existingTabIndex)
                     SwitchToTab(existingTabIndex);
 
-                bool activeAlreadyOnPath = string.Equals(_owner._currentPath, normalized, StringComparison.OrdinalIgnoreCase);
+                bool activeAlreadyOnPath = string.Equals(State.CurrentPath, normalized, StringComparison.OrdinalIgnoreCase);
                 if (activeAlreadyOnPath)
                 {
                     if (hasExplicitSelection && !_owner.IsSearchMode)
@@ -169,7 +170,7 @@ public partial class MainForm
                     }
                     if (!string.IsNullOrWhiteSpace(imagePathForViewer))
                     {
-                        _owner.TryOpenImageViewerForImagePath(imagePathForViewer, _owner._items.Select(static x => x.FullPath));
+                        _owner.TryOpenImageViewerForImagePath(imagePathForViewer, State.Items.Select(static x => x.FullPath));
                     }
                     return;
                 }
@@ -321,24 +322,24 @@ public partial class MainForm
         {
             if (_activeTabIndex < 0 || _activeTabIndex >= _tabs.Count) return;
             var tab = _tabs[_activeTabIndex];
-            tab.CurrentPath = _owner._currentPath;
-            tab.CurrentDisplayPath = _owner._currentDisplayPath;
+            tab.CurrentPath = State.CurrentPath;
+            tab.CurrentDisplayPath = State.CurrentDisplayPath;
             tab.IsSearchMode = _owner.IsSearchMode;
             tab.SearchText = _owner._searchBox.Text;
-            tab.SortColumn = _owner._sortColumn;
-            tab.SortDirection = _owner._sortDirection;
-            tab.TaggedFilesOnTop = _owner._taggedFilesOnTop;
+            tab.SortColumn = State.SortColumn;
+            tab.SortDirection = State.SortDirection;
+            tab.TaggedFilesOnTop = State.TaggedFilesOnTop;
             tab.LastSelection = new Dictionary<string, string>(_owner._nav.LastSelection);
             tab.FolderSortSettings = new Dictionary<string, (SortColumn Column, SortDirection Direction)>(_owner._nav.FolderSortSettings);
             tab.BackHistory = CloneStack(_owner._nav.BackHistory);
             tab.ForwardHistory = CloneStack(_owner._nav.ForwardHistory);
-            tab.IsShellMode = _owner._isShellMode;
-            tab.CurrentShellId = ShellNavigationController.IsShellIdPath(_owner._currentPath) ? _owner._currentPath : "";
-            tab.Title = GetTabTitleForPath(_owner._currentPath, tab.IsSearchMode);
-            tab.CachedPath = _owner._currentPath;
-            tab.CachedDirectoryWriteTimeUtc = GetDirectoryWriteTimeUtc(_owner._currentPath);
-            tab.CachedItems = new List<FileItem>(_owner._items);
-            tab.CachedAllItems = new List<FileItem>(_owner._allItems);
+            tab.IsShellMode = State.IsShellMode;
+            tab.CurrentShellId = ShellNavigationController.IsShellIdPath(State.CurrentPath) ? State.CurrentPath : "";
+            tab.Title = GetTabTitleForPath(State.CurrentPath, tab.IsSearchMode);
+            tab.CachedPath = State.CurrentPath;
+            tab.CachedDirectoryWriteTimeUtc = GetDirectoryWriteTimeUtc(State.CurrentPath);
+            tab.CachedItems = new List<FileItem>(State.Items);
+            tab.CachedAllItems = new List<FileItem>(State.AllItems);
             tab.HasCachedSnapshot = true;
             CaptureListState(tab);
         }
@@ -511,14 +512,14 @@ public partial class MainForm
             try
             {
                 _owner._searchController.TryCancelActiveSearch();
-                _owner._isShellMode = tab.IsShellMode;
-                _owner._sortColumn = tab.SortColumn;
-                _owner._sortDirection = tab.SortDirection;
-                _owner._taggedFilesOnTop = tab.TaggedFilesOnTop;
-                _owner._currentPath = path;
-                _owner._currentDisplayPath = string.IsNullOrWhiteSpace(tab.CurrentDisplayPath) ? path : tab.CurrentDisplayPath;
+                State.IsShellMode = tab.IsShellMode;
+                State.SortColumn = tab.SortColumn;
+                State.SortDirection = tab.SortDirection;
+                State.TaggedFilesOnTop = tab.TaggedFilesOnTop;
+                State.CurrentPath = path;
+                State.CurrentDisplayPath = string.IsNullOrWhiteSpace(tab.CurrentDisplayPath) ? path : tab.CurrentDisplayPath;
 
-                UpdateWindowTitle(path, _owner._currentDisplayPath);
+                UpdateWindowTitle(path, State.CurrentDisplayPath);
                 SyncSidebarSelection(path);
                 _owner.UpdateWatcher(path);
                 _owner.UpdateBreadcrumbs(path);
@@ -548,8 +549,8 @@ public partial class MainForm
                     _owner._suppressSearchTextChanged = false;
                 }
 
-                _owner._allItems = tab.CachedAllItems ?? new List<FileItem>();
-                _owner._items = tab.CachedItems ?? new List<FileItem>();
+                State.AllItems = tab.CachedAllItems ?? new List<FileItem>();
+                State.Items = tab.CachedItems ?? new List<FileItem>();
 
                 if (path == ThisPcPath && !restoreSearchMode)
                     _owner.SetupDriveColumns(_owner._listView);
@@ -567,10 +568,10 @@ public partial class MainForm
                 else
                 {
                     _owner._searchController.ExitSearchModeOnNavigate();
-                    _owner._statusLabel.Text = string.Format(Localization.T("status_ready_items"), _owner._items.Count);
+                    _owner._statusLabel.Text = string.Format(Localization.T("status_ready_items"), State.Items.Count);
                 }
 
-                SyncActiveTabPath(_owner._currentPath, _owner._currentDisplayPath);
+                SyncActiveTabPath(State.CurrentPath, State.CurrentDisplayPath);
                 _owner.RefreshSearchOverlayVisibility();
             }
             finally
@@ -588,7 +589,7 @@ public partial class MainForm
             }
             catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
 
-            _owner.LogListViewState("TAB", $"load-fast-cache path=\"{TraceText(path)}\" count={_owner._items.Count}");
+            _owner.LogListViewState("TAB", $"load-fast-cache path=\"{TraceText(path)}\" count={State.Items.Count}");
         }
 
         private static void SetRedraw(IEnumerable<Control?> controls, bool enabled)
@@ -627,10 +628,10 @@ public partial class MainForm
                 else
                 {
                     _owner._listView.VirtualListSize = 0;
-                    _owner._listView.VirtualListSize = _owner._items.Count;
+                    _owner._listView.VirtualListSize = State.Items.Count;
                 }
 
-                if (_owner._items.Count > 0)
+                if (State.Items.Count > 0)
                 {
                     bool restored = false;
 
@@ -638,7 +639,7 @@ public partial class MainForm
                     {
                         foreach (var p in restoreSelection)
                         {
-                            int index = _owner._items.FindIndex(x =>
+                            int index = State.Items.FindIndex(x =>
                                 x.FullPath.Equals(p, StringComparison.OrdinalIgnoreCase) ||
                                 x.Name.Equals(Path.GetFileName(p), StringComparison.OrdinalIgnoreCase));
                             if (index < 0)
@@ -657,7 +658,7 @@ public partial class MainForm
 
                     if (!restored && _owner._nav.LastSelection.TryGetValue(path, out var lastSelectedName))
                     {
-                        int index = _owner._items.FindIndex(x => x.Name == lastSelectedName);
+                        int index = State.Items.FindIndex(x => x.Name == lastSelectedName);
                         if (index >= 0 && (!_owner.IsTileView || index < _owner._listView.Items.Count))
                         {
                             _owner._listView.SelectedIndices.Add(index);
@@ -672,7 +673,7 @@ public partial class MainForm
                         _owner.FocusAndAnchorListIndex(0, ensureVisible: false);
                     }
 
-                    if (topItemIndex >= 0 && topItemIndex < _owner._items.Count)
+                    if (topItemIndex >= 0 && topItemIndex < State.Items.Count)
                     {
                         try
                         {
@@ -858,7 +859,7 @@ public partial class MainForm
             bool keepSearchTitle = string.Equals(_pendingSearchRestoreTabId, tab.Id, StringComparison.Ordinal);
             tab.IsSearchMode = _owner.IsSearchMode || keepSearchTitle;
             tab.SearchText = tab.IsSearchMode ? _owner._searchBox.Text : "";
-            tab.Title = GetTabTitleForPath(_owner._currentPath, tab.IsSearchMode);
+            tab.Title = GetTabTitleForPath(State.CurrentPath, tab.IsSearchMode);
             UpdateTabStripVisuals();
         }
 
@@ -937,16 +938,16 @@ public partial class MainForm
 
             if (_owner._listView == null || _owner._listView.IsDisposed)
                 return;
-            if (_owner._items.Count == 0)
+            if (State.Items.Count == 0)
                 return;
 
             try
             {
                 foreach (int idx in _owner._listView.SelectedIndices)
                 {
-                    if (idx >= 0 && idx < _owner._items.Count)
+                    if (idx >= 0 && idx < State.Items.Count)
                     {
-                        var p = _owner._items[idx].FullPath;
+                        var p = State.Items[idx].FullPath;
                         if (!string.IsNullOrWhiteSpace(p))
                             tab.SelectedPaths.Add(p);
                     }
@@ -987,9 +988,9 @@ public partial class MainForm
                 tab.CachedAllItems = new List<FileItem>(allItems);
                 tab.HasCachedSnapshot = true;
 
-                if (tab.SortColumn == _owner._sortColumn &&
-                    tab.SortDirection == _owner._sortDirection &&
-                    tab.TaggedFilesOnTop == _owner._taggedFilesOnTop)
+                if (tab.SortColumn == State.SortColumn &&
+                    tab.SortDirection == State.SortDirection &&
+                    tab.TaggedFilesOnTop == State.TaggedFilesOnTop)
                 {
                     tab.CachedItems = new List<FileItem>(items);
                     continue;

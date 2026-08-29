@@ -11,6 +11,7 @@ public partial class MainForm
     private sealed class DragDropController : IDisposable
     {
         private readonly MainForm _owner;
+        private BrowserState State => _owner.State;
         private ListView? _listView;
 
         private int _dragHoverIndex = -1;
@@ -42,7 +43,7 @@ public partial class MainForm
         private void ListView_ItemDrag(object? sender, ItemDragEventArgs e)
         {
             if (_listView == null) return;
-            if (IsShellPath(_owner._currentPath)) return;
+            if (IsShellPath(State.CurrentPath)) return;
 
             var paths = _owner.GetSelectedPaths();
             if (paths.Any(IsShellPath)) return;
@@ -67,7 +68,7 @@ public partial class MainForm
 
         private void ListView_DragEnter(object? sender, DragEventArgs e)
         {
-            e.Effect = GetDragDropEffect(e, _owner._currentPath);
+            e.Effect = GetDragDropEffect(e, State.CurrentPath);
         }
 
         private void ListView_DragOver(object? sender, DragEventArgs e)
@@ -83,7 +84,7 @@ public partial class MainForm
         {
             if (_listView == null) return;
             if (e.Data == null || !e.Data.GetDataPresent(DataFormats.FileDrop)) return;
-            if (IsShellPath(_owner._currentPath)) return;
+            if (IsShellPath(State.CurrentPath)) return;
 
             var paths = (string[]?)e.Data.GetData(DataFormats.FileDrop);
             if (paths == null || paths.Length == 0) return;
@@ -147,13 +148,13 @@ public partial class MainForm
 
         private string GetDropTarget(int x, int y)
         {
-            if (_listView == null) return _owner._currentPath;
+            if (_listView == null) return State.CurrentPath;
 
             var point = _listView.PointToClient(new Point(x, y));
             var hitItem = _listView.GetItemAt(point.X, point.Y);
             if (hitItem != null && hitItem.Tag is FileItem fi && fi.IsDirectory)
                 return fi.FullPath;
-            return _owner._currentPath;
+            return State.CurrentPath;
         }
 
         private static DragDropEffects GetDragDropEffect(DragEventArgs e, string destination)

@@ -10,30 +10,69 @@ namespace SpeedExplorer;
 
 public partial class MainForm
 {
+    BrowserState IFileOperationsHost.BrowserState => State;
+    ListView IFileOperationsHost.FileListView => _listView;
+    TextBox? IFileOperationsHost.RenameTextBox
+    {
+        get => _renameTextBox;
+        set => _renameTextBox = value;
+    }
+    IntPtr IFileOperationsHost.WindowHandle => Handle;
+    int IFileOperationsHost.EffectiveIconSize => GetEffectiveIconSize();
+    string[] IFileOperationsHost.GetSelectedPaths() => GetSelectedPaths();
+    Task IFileOperationsHost.RefreshCurrentAsync(List<string>? selectPaths)
+        => RefreshCurrentAsync(selectPaths);
+    void IFileOperationsHost.ApplyMoveToCachedSnapshots(IEnumerable<string> sourcePaths)
+        => _tabsController.ApplyMoveToCachedSnapshots(sourcePaths);
+    void IFileOperationsHost.ShowStatusMessage(string message)
+        => ShowFileOperationStatusMessage(message);
+
+    private void ShowFileOperationStatusMessage(string msg)
+    {
+        _statusLabel.Text = msg;
+
+        if (_statusTimer == null)
+        {
+            _statusTimer = new System.Windows.Forms.Timer { Interval = 3000 };
+            _statusTimer.Tick += (s, e) =>
+            {
+                _statusTimer.Stop();
+                _statusLabel.Text = string.Format(Localization.T("status_ready_items"), State.Items.Count);
+            };
+        }
+        else
+        {
+            _statusTimer.Stop();
+        }
+
+        _statusTimer.Start();
+    }
+
     private sealed class FileOperationsController
     {
-        private readonly MainForm _owner;
+        private readonly IFileOperationsHost _host;
+        private BrowserState State => _host.BrowserState;
         private bool _renameCommitting;
 
-        public FileOperationsController(MainForm owner)
+        public FileOperationsController(IFileOperationsHost host)
         {
-            _owner = owner;
+            _host = host;
         }
 
         public async void StartRenameAfterCreation(string newPath)
         {
-            await _owner.RefreshCurrentAsync();
+            await _host.RefreshCurrentAsync();
 
-            var item = _owner._items.FirstOrDefault(i => i.FullPath.Equals(newPath, StringComparison.OrdinalIgnoreCase));
+            var item = State.Items.FirstOrDefault(i => i.FullPath.Equals(newPath, StringComparison.OrdinalIgnoreCase));
             if (item != null)
             {
-                int index = _owner._items.IndexOf(item);
+                int index = State.Items.IndexOf(item);
                 if (index >= 0)
                 {
-                    _owner._listView.SelectedIndices.Clear();
-                    _owner._listView.SelectedIndices.Add(index);
-                    _owner._listView.EnsureVisible(index);
-                    _owner._listView.Focus();
+                    _host.FileListView.SelectedIndices.Clear();
+                    _host.FileListView.SelectedIndices.Add(index);
+                    _host.FileListView.EnsureVisible(index);
+                    _host.FileListView.Focus();
                     StartRename();
                 }
             }
@@ -41,45 +80,45 @@ public partial class MainForm
 
         public void StartRename()
         {
-            if (_owner._listView.SelectedIndices.Count == 0)
+            if (_host.FileListView.SelectedIndices.Count == 0)
                 return;
-            int index = _owner._listView.SelectedIndices[0];
-            if (index < 0 || index >= _owner._items.Count)
+            int index = _host.FileListView.SelectedIndices[0];
+            if (index < 0 || index >= State.Items.Count)
                 return;
 
-            var item = _owner._items[index];
+            var item = State.Items[index];
 
             // Get bounds of the item text
-            var bounds = _owner._listView.GetItemRect(index, ItemBoundsPortion.Label);
+            var bounds = _host.FileListView.GetItemRect(index, ItemBoundsPortion.Label);
 
             // Adjust bounds for icons and padding
             // User wants it exactly 4px further left and 1px up from previous position.
             // Previous was (iconOffset - 14). New is (iconOffset - 18).
-            int iconOffset = AppSettings.Current.ShowIcons ? (_owner.GetEffectiveIconSize() + 6) : 4;
+            int iconOffset = AppSettings.Current.ShowIcons ? (_host.EffectiveIconSize + 6) : 4;
             bounds.X += (iconOffset - 18);
             bounds.Y -= 1;
             bounds.Width -= (iconOffset - 18);
             bounds.Height = Math.Max(bounds.Height, 22);
 
-            _owner._renameTextBox = new TextBox
+            var renameTextBox = new TextBox
             {
                 Text = item.Name,
                 Bounds = bounds,
                 BackColor = Color.FromArgb(45, 45, 45),
                 ForeColor = Color.White,
                 BorderStyle = BorderStyle.FixedSingle,
-                Font = _owner._listView.Font
+                Font = _host.FileListView.Font
             };
 
             // Select filename only
             int dotIdx = item.Name.LastIndexOf('.');
             if (dotIdx > 0 && !item.IsDirectory)
-                _owner._renameTextBox.Select(0, dotIdx);
+                renameTextBox.Select(0, dotIdx);
             else
-                _owner._renameTextBox.SelectAll();
+                renameTextBox.SelectAll();
 
-            _owner._renameTextBox.LostFocus += (s, e) => EndRename(true);
-            _owner._renameTextBox.KeyDown += (s, e) =>
+            renameTextBox.LostFocus += (s, e) => EndRename(true);
+            renameTextBox.KeyDown += (s, e) =>
             {
                 if (e.KeyCode == Keys.Enter)
                 {
@@ -93,37 +132,38 @@ public partial class MainForm
                 }
             };
 
-            _owner._listView.Controls.Add(_owner._renameTextBox);
-            _owner._renameTextBox.Focus();
+            _host.RenameTextBox = renameTextBox;
+            _host.FileListView.Controls.Add(renameTextBox);
+            renameTextBox.Focus();
         }
 
         public void EndRename(bool commit)
         {
-            if (_owner._renameTextBox == null || _renameCommitting)
+            var renameTextBox = _host.RenameTextBox;
+            if (renameTextBox == null || _renameCommitting)
                 return;
             _renameCommitting = true;
 
-            string newName = _owner._renameTextBox.Text;
-            var textBox = _owner._renameTextBox;
-            _owner._renameTextBox = null;
-            _owner._listView.Controls.Remove(textBox);
-            textBox.Dispose();
+            string newName = renameTextBox.Text;
+            _host.RenameTextBox = null;
+            _host.FileListView.Controls.Remove(renameTextBox);
+            renameTextBox.Dispose();
             _renameCommitting = false;
 
             if (commit && !string.IsNullOrEmpty(newName))
             {
-                int index = _owner._listView.SelectedIndices.Count > 0 ? _owner._listView.SelectedIndices[0] : -1;
-                if (index >= 0 && index < _owner._items.Count)
+                int index = _host.FileListView.SelectedIndices.Count > 0 ? _host.FileListView.SelectedIndices[0] : -1;
+                if (index >= 0 && index < State.Items.Count)
                 {
-                    var item = _owner._items[index];
+                    var item = State.Items[index];
                     if (newName != item.Name)
                     {
                         string oldPath = item.FullPath;
                         string newPath = Path.Combine(Path.GetDirectoryName(oldPath)!, newName);
-                        if (FileSystemService.ShellRename(oldPath, newName, _owner.Handle))
+                        if (FileSystemService.ShellRename(oldPath, newName, _host.WindowHandle))
                         {
                             TagManager.Instance.HandleRename(oldPath, newPath);
-                            _ = _owner.RefreshCurrentAsync();
+                            _ = _host.RefreshCurrentAsync();
                         }
                     }
                 }
@@ -132,34 +172,34 @@ public partial class MainForm
 
         public void CopySelected()
         {
-            var paths = _owner.GetSelectedPaths();
+            var paths = _host.GetSelectedPaths();
             if (paths.Length > 0)
             {
-                _owner._cutPaths.Clear();
+                State.CutPaths.Clear();
                 PerformClipboardOperation(paths, isCut: false);
-                ShowStatusMessage($"Copied {paths.Length} item(s)");
-                _owner._listView.Invalidate();
+                _host.ShowStatusMessage($"Copied {paths.Length} item(s)");
+                _host.FileListView.Invalidate();
             }
         }
 
         public void CutSelected()
         {
-            var paths = _owner.GetSelectedPaths();
+            var paths = _host.GetSelectedPaths();
             if (paths.Length > 0)
             {
-                _owner._cutPaths.Clear();
+                State.CutPaths.Clear();
                 foreach (var p in paths)
-                    _owner._cutPaths.Add(p);
+                    State.CutPaths.Add(p);
 
                 PerformClipboardOperation(paths, isCut: true);
-                ShowStatusMessage($"Cut {paths.Length} item(s)");
-                _owner._listView.Invalidate();
+                _host.ShowStatusMessage($"Cut {paths.Length} item(s)");
+                _host.FileListView.Invalidate();
             }
         }
 
         public async void Paste()
         {
-            if (string.IsNullOrEmpty(_owner._currentPath))
+            if (string.IsNullOrEmpty(State.CurrentPath))
                 return;
 
             var data = Clipboard.GetDataObject();
@@ -171,7 +211,7 @@ public partial class MainForm
 
                 // Detect same-folder operations to prevent "Same File" errors
                 bool isSameFolder = paths.Any(p =>
-                    string.Equals(Path.GetDirectoryName(p), _owner._currentPath, StringComparison.OrdinalIgnoreCase));
+                    string.Equals(Path.GetDirectoryName(p), State.CurrentPath, StringComparison.OrdinalIgnoreCase));
 
                 // Check if it's a Cut operation
                 bool isCut = false;
@@ -189,19 +229,19 @@ public partial class MainForm
 
                     if (isCut)
                     {
-                        addedPaths = await FileSystemService.ShellMoveAsync(paths, _owner._currentPath, _owner.Handle, isSameFolder);
-                        _owner._cutPaths.Clear();
-                        _owner._tabsController.ApplyMoveToCachedSnapshots(paths);
+                        addedPaths = await FileSystemService.ShellMoveAsync(paths, State.CurrentPath, _host.WindowHandle, isSameFolder);
+                        State.CutPaths.Clear();
+                        _host.ApplyMoveToCachedSnapshots(paths);
                     }
                     else
                     {
                         // For same folder, use renameOnCollision=true for " - Copy" behavior.
                         // For different folders, use renameOnCollision=false to get Windows conflict dialog.
-                        addedPaths = await FileSystemService.ShellCopyAsync(paths, _owner._currentPath, _owner.Handle, isSameFolder);
+                        addedPaths = await FileSystemService.ShellCopyAsync(paths, State.CurrentPath, _host.WindowHandle, isSameFolder);
                     }
 
                     // Refresh with explicit selection of new files.
-                    await _owner.RefreshCurrentAsync(addedPaths);
+                    await _host.RefreshCurrentAsync(addedPaths);
                 }
                 catch (Exception ex)
                 {
@@ -212,40 +252,20 @@ public partial class MainForm
 
         public async void DeleteSelected(bool permanent)
         {
-            var paths = _owner.GetSelectedPaths();
+            var paths = _host.GetSelectedPaths();
             if (paths.Length > 0)
             {
                 bool effectivePermanent = permanent || AppSettings.Current.PermanentDeleteByDefault;
                 try
                 {
-                    await FileSystemService.ShellDeleteAsync(paths, _owner.Handle, recordOperation: !effectivePermanent, permanent: effectivePermanent);
-                    _ = _owner.RefreshCurrentAsync();
+                    await FileSystemService.ShellDeleteAsync(paths, _host.WindowHandle, recordOperation: !effectivePermanent, permanent: effectivePermanent);
+                    _ = _host.RefreshCurrentAsync();
                 }
                 catch (Exception ex)
                 {
                     MessageBox.Show($"Delete operation failed: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 }
             }
-        }
-
-        public void ShowStatusMessage(string msg)
-        {
-            _owner._statusLabel.Text = msg;
-
-            if (_owner._statusTimer == null)
-            {
-                _owner._statusTimer = new System.Windows.Forms.Timer { Interval = 3000 };
-                _owner._statusTimer.Tick += (s, e) =>
-                {
-                    _owner._statusTimer.Stop();
-                    _owner._statusLabel.Text = string.Format(Localization.T("status_ready_items"), _owner._items.Count);
-                };
-            }
-            else
-            {
-                _owner._statusTimer.Stop();
-            }
-            _owner._statusTimer.Start();
         }
 
         public void PerformClipboardOperation(string[] paths, bool isCut)

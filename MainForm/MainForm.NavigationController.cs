@@ -45,8 +45,8 @@ public partial class MainForm
         var gcStart = (AppSettings.Current.DebugNavigationLogging && AppSettings.Current.DebugNavigationGcStats)
             ? CaptureGcSnapshot()
             : ((int, int, int, long)?)null;
-        var previousPath = _currentPath;
-        NavigationDebugLogger.Log($"NAV#{navTraceId} START path=\"{TraceText(path)}\" current=\"{TraceText(_currentPath)}\" selectCount={pathsToSelect?.Count ?? 0}");
+        var previousPath = State.CurrentPath;
+        NavigationDebugLogger.Log($"NAV#{navTraceId} START path=\"{TraceText(path)}\" current=\"{TraceText(State.CurrentPath)}\" selectCount={pathsToSelect?.Count ?? 0}");
 
         if (IsDisposed || Disposing)
         {
@@ -67,7 +67,7 @@ public partial class MainForm
             return;
         }
         bool isShellPath = IsShellPath(path);
-        bool leavingThisPc = _currentPath == ThisPcPath && path != ThisPcPath;
+        bool leavingThisPc = State.CurrentPath == ThisPcPath && path != ThisPcPath;
         NavigationDebugLogger.Log($"NAV#{navTraceId} FLAGS shell={isShellPath} leavingThisPc={leavingThisPc}");
 
         if (!isShellPath && path != ThisPcPath && !Directory.Exists(path))
@@ -118,11 +118,11 @@ public partial class MainForm
             _searchController.ExitSearchModeOnNavigate();
             _tileViewController.CancelPopulation();
             _iconLoadService?.CancelPending();
-            _isShellMode = isShellPath;
+            State.IsShellMode = isShellPath;
             _suppressSearchTextChanged = true;
             try
             {
-                if (_isShellMode)
+                if (State.IsShellMode)
                 {
                     _searchBox.Enabled = false;
                     _searchBox.Text = Localization.T("search_not_supported");
@@ -140,9 +140,9 @@ public partial class MainForm
                 _suppressSearchTextChanged = false;
             }
 
-            if (!_suppressHistoryUpdate && !string.IsNullOrEmpty(_currentPath) && _currentPath != path)
+            if (!_suppressHistoryUpdate && !string.IsNullOrEmpty(State.CurrentPath) && State.CurrentPath != path)
             {
-                _nav.BackHistory.Push(_currentPath);
+                _nav.BackHistory.Push(State.CurrentPath);
                 _nav.ForwardHistory.Clear();
             }
 
@@ -151,35 +151,35 @@ public partial class MainForm
             // so tab switches and plain navigation do not overwrite that state.
             if (overrideSortColumn.HasValue && overrideSortDirection.HasValue)
             {
-                _sortColumn = overrideSortColumn.Value;
-                _sortDirection = overrideSortDirection.Value;
-                _taggedFilesOnTop = overrideTaggedFilesOnTop ?? (_sortColumn == SortColumn.Tags);
+                State.SortColumn = overrideSortColumn.Value;
+                State.SortDirection = overrideSortDirection.Value;
+                State.TaggedFilesOnTop = overrideTaggedFilesOnTop ?? (State.SortColumn == SortColumn.Tags);
             }
             else if (_nav.FolderSortSettings.TryGetValue(path, out var savedSort))
             {
-                _sortColumn = savedSort.Column;
-                _sortDirection = savedSort.Direction;
-                if (_sortColumn == SortColumn.Tags)
-                    _taggedFilesOnTop = true;
+                State.SortColumn = savedSort.Column;
+                State.SortDirection = savedSort.Direction;
+                if (State.SortColumn == SortColumn.Tags)
+                    State.TaggedFilesOnTop = true;
             }
             else
             {
-                _sortColumn = path == ThisPcPath ? SortColumn.DriveNumber : SortColumn.Name;
-                _sortDirection = SortDirection.Ascending;
+                State.SortColumn = path == ThisPcPath ? SortColumn.DriveNumber : SortColumn.Name;
+                State.SortDirection = SortDirection.Ascending;
             }
 
             // Update Window Title (Taskbar) and Status Bar
             if (isShellPath)
             {
-                _currentDisplayPath = GetShellDisplayName(path);
-                this.Text = _currentDisplayPath;
-                _pathLabel.Text = _currentDisplayPath;
+                State.CurrentDisplayPath = GetShellDisplayName(path);
+                this.Text = State.CurrentDisplayPath;
+                _pathLabel.Text = State.CurrentDisplayPath;
             }
             else if (path == ThisPcPath)
             {
                 this.Text = Localization.T("this_pc");
                 _pathLabel.Text = Localization.T("this_pc");
-                _currentDisplayPath = Localization.T("this_pc");
+                State.CurrentDisplayPath = Localization.T("this_pc");
             }
             else
             {
@@ -200,14 +200,14 @@ public partial class MainForm
 
                 this.Text = folderName; // Just folder name
                 _pathLabel.Text = path; // Show full path in dedicated label
-                _currentDisplayPath = path;
+                State.CurrentDisplayPath = path;
             }
             _statusLabel.Text = Localization.T("status_loading"); // status label used for info
 
             // Save selection (if valid) before navigating away
-            if (!string.IsNullOrEmpty(_currentPath) && _listView.FocusedItem != null && _listView.FocusedItem.Tag is FileItem fi)
+            if (!string.IsNullOrEmpty(State.CurrentPath) && _listView.FocusedItem != null && _listView.FocusedItem.Tag is FileItem fi)
             {
-                _nav.LastSelection[_currentPath] = fi.Name;
+                _nav.LastSelection[State.CurrentPath] = fi.Name;
             }
 
             // Sync sidebar selection:
@@ -252,7 +252,7 @@ public partial class MainForm
                 _sidebar.SelectedNode = sidebarTarget;
             }
 
-            _currentPath = path;
+            State.CurrentPath = path;
             ApplyEffectiveIconSizeIfNeeded(path);
             UpdateWatcher(path);
             if (!isShellPath &&
@@ -264,7 +264,7 @@ public partial class MainForm
             UpdateBreadcrumbs(path);
             _addressTextBox.Text = path;
             _statusLabel.Text = Localization.T("status_loading");
-            _tabsController.SyncActiveTabPath(_currentPath, _currentDisplayPath);
+            _tabsController.SyncActiveTabPath(State.CurrentPath, State.CurrentDisplayPath);
             // Invalidate chrome promptly, but don't block folder enumeration on synchronous repaints.
             try
             {
@@ -289,8 +289,8 @@ public partial class MainForm
             {
                 NavigationDebugLogger.Log($"NAV#{navTraceId} CACHE_HIT count={cachedItems.Count} all={cachedAllItems.Count}");
 
-                _allItems = cachedAllItems;
-                _items = cachedItems;
+                State.AllItems = cachedAllItems;
+                State.Items = cachedItems;
 
                 if (path == ThisPcPath && !cacheIsSearchSnapshot)
                     SetupDriveColumns(_listView);
@@ -315,11 +315,11 @@ public partial class MainForm
 
             // Fix: Immediately clear items if we are switching context (e.g. from This PC to a folder)
             // This prevents the "stuck" look where Drives are shown with File columns if load fails or takes time.
-            if (leavingThisPc || (isShellPath && !_isShellMode) || (!isShellPath && _isShellMode))
+            if (leavingThisPc || (isShellPath && !State.IsShellMode) || (!isShellPath && State.IsShellMode))
             {
                 _listView.BeginUpdate();
-                _items = new List<FileItem>();
-                _allItems = new List<FileItem>();
+                State.Items = new List<FileItem>();
+                State.AllItems = new List<FileItem>();
                 _listView.VirtualListSize = 0;
                 _listView.EndUpdate();
                 _listView.Invalidate();
@@ -340,7 +340,7 @@ public partial class MainForm
                 NavigationDebugLogger.Log($"NAV#{navTraceId} LOAD_DRIVES");
                 SetupDriveColumns(_listView);
                 LoadDrives();
-                NavigationDebugLogger.Log($"NAV#{navTraceId} DONE drives totalMs={totalSw.ElapsedMilliseconds} items={_items.Count}");
+                NavigationDebugLogger.Log($"NAV#{navTraceId} DONE drives totalMs={totalSw.ElapsedMilliseconds} items={State.Items.Count}");
                 return;
             }
 
@@ -349,7 +349,7 @@ public partial class MainForm
                 NavigationDebugLogger.Log($"NAV#{navTraceId} LOAD_SHELL shellPath=\"{TraceText(path)}\"");
                 SetupFileColumns(_listView);
                 await LoadShellFolder(path);
-                NavigationDebugLogger.Log($"NAV#{navTraceId} DONE shell totalMs={totalSw.ElapsedMilliseconds} items={_items.Count}");
+                NavigationDebugLogger.Log($"NAV#{navTraceId} DONE shell totalMs={totalSw.ElapsedMilliseconds} items={State.Items.Count}");
                 return;
             }
 
@@ -371,34 +371,34 @@ public partial class MainForm
             {
                 var swEnum = Stopwatch.StartNew();
                 // Wrap in AwaitWithCancellation so we can force-cancel even if GetFilesAsync hangs on I/O
-                _allItems = await AwaitWithCancellation(FileSystemService.GetFilesAsync(path, _loadCts.Token), _loadCts.Token);
+                State.AllItems = await AwaitWithCancellation(FileSystemService.GetFilesAsync(path, _loadCts.Token), _loadCts.Token);
                 swEnum.Stop();
-                NavigationDebugLogger.Log($"NAV#{navTraceId} ENUM ms={swEnum.ElapsedMilliseconds} count={_allItems.Count}");
-                QueueGenericIconsWarmup(_allItems);
+                NavigationDebugLogger.Log($"NAV#{navTraceId} ENUM ms={swEnum.ElapsedMilliseconds} count={State.AllItems.Count}");
+                QueueGenericIconsWarmup(State.AllItems);
 
                 // Sort and clone off the UI thread to avoid long freezes on huge folders
                 var swSort = Stopwatch.StartNew();
-                _items = await Task.Factory.StartNew(() =>
+                State.Items = await Task.Factory.StartNew(() =>
                 {
-                    FileSystemService.SortItems(_allItems, _sortColumn, _sortDirection, _taggedFilesOnTop);
-                    return new List<FileItem>(_allItems);
+                    FileSystemService.SortItems(State.AllItems, State.SortColumn, State.SortDirection, State.TaggedFilesOnTop);
+                    return new List<FileItem>(State.AllItems);
                 }, _loadCts.Token, TaskCreationOptions.LongRunning, TaskScheduler.Default);
                 swSort.Stop();
-                NavigationDebugLogger.Log($"NAV#{navTraceId} SORT ms={swSort.ElapsedMilliseconds} count={_items.Count} sort={_sortColumn}/{_sortDirection}");
+                NavigationDebugLogger.Log($"NAV#{navTraceId} SORT ms={swSort.ElapsedMilliseconds} count={State.Items.Count} sort={State.SortColumn}/{State.SortDirection}");
 
                 // Bind items to list view and restore selection
                 BindItemsToListView(navTraceId, "NAV", path, pathsToSelect, totalSw, gcStart);
             }
             catch (OperationCanceledException)
             {
-                NavigationDebugLogger.Log($"NAV#{navTraceId} CANCELED totalMs={totalSw.ElapsedMilliseconds} current=\"{TraceText(_currentPath)}\" items={_items.Count}");
+                NavigationDebugLogger.Log($"NAV#{navTraceId} CANCELED totalMs={totalSw.ElapsedMilliseconds} current=\"{TraceText(State.CurrentPath)}\" items={State.Items.Count}");
                 LogGcDelta(navTraceId, "NAV", gcStart);
 
                 // If cancelled but list is still empty, trigger a retry (common in background wake scenarios)
                 // But ONLY if we don't have a pending navigation waiting (which caused the cancel)
-                if (_items.Count == 0 && !string.IsNullOrEmpty(_currentPath) && _currentPath != ThisPcPath && _nav.PendingPath == null)
+                if (State.Items.Count == 0 && !string.IsNullOrEmpty(State.CurrentPath) && State.CurrentPath != ThisPcPath && _nav.PendingPath == null)
                 {
-                    _retryLoadPath = _currentPath;
+                    _retryLoadPath = State.CurrentPath;
                     _retryLoadPending = true;
                     _retryLoadTimer.Stop();
                     _retryLoadTimer.Start();
@@ -412,9 +412,9 @@ public partial class MainForm
                 _statusLabel.Text = string.Format(Localization.T("status_error"), ex.Message);
                 // If load failed and list is empty, trigger a retry
                 // But ONLY if we don't have a pending navigation
-                if (_items.Count == 0 && !string.IsNullOrEmpty(_currentPath) && _currentPath != ThisPcPath && _nav.PendingPath == null)
+                if (State.Items.Count == 0 && !string.IsNullOrEmpty(State.CurrentPath) && State.CurrentPath != ThisPcPath && _nav.PendingPath == null)
                 {
-                    _retryLoadPath = _currentPath;
+                    _retryLoadPath = State.CurrentPath;
                     _retryLoadPending = true;
                     _retryLoadTimer.Stop();
                     _retryLoadTimer.Start();
@@ -511,19 +511,19 @@ public partial class MainForm
         try
         {
             var swEnum = Stopwatch.StartNew();
-            _allItems = await AwaitWithCancellation(GetShellItemsAsync(shellPath, _loadCts.Token), _loadCts.Token);
+            State.AllItems = await AwaitWithCancellation(GetShellItemsAsync(shellPath, _loadCts.Token), _loadCts.Token);
             swEnum.Stop();
-            NavigationDebugLogger.Log($"SHELL#{navTraceId} ENUM ms={swEnum.ElapsedMilliseconds} count={_allItems.Count}");
-            QueueGenericIconsWarmup(_allItems);
+            NavigationDebugLogger.Log($"SHELL#{navTraceId} ENUM ms={swEnum.ElapsedMilliseconds} count={State.AllItems.Count}");
+            QueueGenericIconsWarmup(State.AllItems);
 
             var swSort = Stopwatch.StartNew();
-            _items = await Task.Run(() =>
+            State.Items = await Task.Run(() =>
             {
-                FileSystemService.SortItems(_allItems, _sortColumn, _sortDirection, _taggedFilesOnTop);
-                return new List<FileItem>(_allItems);
+                FileSystemService.SortItems(State.AllItems, State.SortColumn, State.SortDirection, State.TaggedFilesOnTop);
+                return new List<FileItem>(State.AllItems);
             }, _loadCts.Token);
             swSort.Stop();
-            NavigationDebugLogger.Log($"SHELL#{navTraceId} SORT ms={swSort.ElapsedMilliseconds} count={_items.Count} sort={_sortColumn}/{_sortDirection}");
+            NavigationDebugLogger.Log($"SHELL#{navTraceId} SORT ms={swSort.ElapsedMilliseconds} count={State.Items.Count} sort={State.SortColumn}/{State.SortDirection}");
 
             // Bind items to list view (no selection to restore for shell paths)
             BindItemsToListView(navTraceId, "SHELL", shellPath, null, totalSw, gcStart);
@@ -576,10 +576,10 @@ public partial class MainForm
             {
                 // Two-step virtual size reset is more stable for viewport math after empty/non-empty transitions.
                 _listView.VirtualListSize = 0;
-                _listView.VirtualListSize = _items.Count;
+                _listView.VirtualListSize = State.Items.Count;
             }
 
-            if (_items.Count > 0)
+            if (State.Items.Count > 0)
             {
                 bool restored = false;
 
@@ -588,7 +588,7 @@ public partial class MainForm
                 {
                     foreach (var p in pathsToSelect)
                     {
-                        var index = _items.FindIndex(x => x.FullPath.Equals(p, StringComparison.OrdinalIgnoreCase) || x.Name.Equals(Path.GetFileName(p), StringComparison.OrdinalIgnoreCase));
+                        var index = State.Items.FindIndex(x => x.FullPath.Equals(p, StringComparison.OrdinalIgnoreCase) || x.Name.Equals(Path.GetFileName(p), StringComparison.OrdinalIgnoreCase));
                         if (index >= 0)
                         {
                             if (IsTileView && index >= _listView.Items.Count)
@@ -608,7 +608,7 @@ public partial class MainForm
                 {
                     if (_nav.LastSelection.TryGetValue(path, out var lastSelectedName))
                     {
-                        var index = _items.FindIndex(x => x.Name == lastSelectedName);
+                        var index = State.Items.FindIndex(x => x.Name == lastSelectedName);
                         if (index >= 0)
                         {
                             if (!IsTileView || index < _listView.Items.Count)
@@ -624,7 +624,7 @@ public partial class MainForm
                 // 3. Fallback: if pathsToSelect was given but nothing matched above, try SelectItems
                 if (!restored && pathsToSelect != null && pathsToSelect.Any())
                 {
-                    if (!IsTileView || _listView.Items.Count >= _items.Count)
+                    if (!IsTileView || _listView.Items.Count >= State.Items.Count)
                         SelectItems(pathsToSelect);
                     if (_listView.SelectedIndices.Count > 0)
                     {
@@ -645,7 +645,7 @@ public partial class MainForm
                 if (!string.IsNullOrEmpty(_pendingTabTopRestorePath) &&
                     string.Equals(_pendingTabTopRestorePath, path, StringComparison.OrdinalIgnoreCase) &&
                     _pendingTabTopRestoreIndex >= 0 &&
-                    _pendingTabTopRestoreIndex < _items.Count)
+                    _pendingTabTopRestoreIndex < State.Items.Count)
                 {
                     try
                     {
@@ -685,9 +685,9 @@ public partial class MainForm
         if (!IsSearchMode &&
             !IsShellPath(path) &&
             !string.Equals(scope, "NAVCACHE_SEARCH", StringComparison.Ordinal))
-            _tabsController.SyncPathSnapshot(path, _items, _allItems);
+            _tabsController.SyncPathSnapshot(path, State.Items, State.AllItems);
 
-        _statusLabel.Text = string.Format(Localization.T("status_loaded"), totalSw.ElapsedMilliseconds, _items.Count);
+        _statusLabel.Text = string.Format(Localization.T("status_loaded"), totalSw.ElapsedMilliseconds, State.Items.Count);
         try
         {
             if (_navigationFreezeActive)
@@ -698,7 +698,7 @@ public partial class MainForm
         catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
         if (!_navigationFreezeActive && ListViewportNeedsRepair())
             EnsureListViewportAndPaint($"{scope}-post");
-        NavigationDebugLogger.Log($"{scope}#{navTraceId} DONE totalMs={totalSw.ElapsedMilliseconds} items={_items.Count}");
+        NavigationDebugLogger.Log($"{scope}#{navTraceId} DONE totalMs={totalSw.ElapsedMilliseconds} items={State.Items.Count}");
         if (_retryLoadPending && !IsDriveItemsOnly()) _retryLoadPending = false;
     }
 
@@ -730,14 +730,14 @@ public partial class MainForm
 
     private void GoUp()
     {
-        if (string.IsNullOrEmpty(_currentPath) || _currentPath == ThisPcPath) return;
-        if (IsShellPath(_currentPath))
+        if (string.IsNullOrEmpty(State.CurrentPath) || State.CurrentPath == ThisPcPath) return;
+        if (IsShellPath(State.CurrentPath))
         {
-            var shellParent = GetShellParentPath(_currentPath);
+            var shellParent = GetShellParentPath(State.CurrentPath);
             ObserveTask(NavigateTo(shellParent ?? ThisPcPath), "GoUp shell-parent");
             return;
         }
-        var parent = Directory.GetParent(_currentPath);
+        var parent = Directory.GetParent(State.CurrentPath);
         if (parent != null)
             ObserveTask(NavigateTo(parent.FullName), "GoUp parent");
         else
@@ -760,7 +760,7 @@ public partial class MainForm
     {
         if (_listView == null || _listView.IsDisposed)
             return;
-        if (index < 0 || index >= _items.Count)
+        if (index < 0 || index >= State.Items.Count)
             return;
 
         try { _listView.FocusedItem = _listView.Items[index]; } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
@@ -774,13 +774,13 @@ public partial class MainForm
     public async Task RefreshCurrentAsync(List<string>? selectPaths = null)
     {
         // Simple refresh logic
-        if (IsShellPath(_currentPath))
+        if (IsShellPath(State.CurrentPath))
         {
-            await NavigateTo(_currentPath, selectPaths);
+            await NavigateTo(State.CurrentPath, selectPaths);
             return;
         }
 
-        if (string.IsNullOrEmpty(_currentPath) || (_currentPath != ThisPcPath && !Directory.Exists(_currentPath)))
+        if (string.IsNullOrEmpty(State.CurrentPath) || (State.CurrentPath != ThisPcPath && !Directory.Exists(State.CurrentPath)))
         {
             await NavigateTo(ThisPcPath, selectPaths);
             return;
@@ -792,11 +792,11 @@ public partial class MainForm
             if (!string.IsNullOrEmpty(_searchBox.Text) && _searchBox.Text != Localization.T("search_placeholder"))
                 _searchController.StartSearch(_searchBox.Text);
             else
-                await NavigateTo(_currentPath, selectPaths);
+                await NavigateTo(State.CurrentPath, selectPaths);
         }
         else
         {
-            await NavigateTo(_currentPath, selectPaths);
+            await NavigateTo(State.CurrentPath, selectPaths);
         }
     }
 
@@ -804,7 +804,7 @@ public partial class MainForm
     {
         if (_listView == null || _listView.IsDisposed || !_listView.IsHandleCreated)
             return;
-        if (IsTileView || !_listView.VirtualMode || _items.Count <= 0)
+        if (IsTileView || !_listView.VirtualMode || State.Items.Count <= 0)
             return;
 
         const int LVM_GETTOPINDEX = 0x1027;
@@ -813,28 +813,28 @@ public partial class MainForm
         const int SB_TOP = 6;
 
         int top = SendMessage(_listView.Handle, LVM_GETTOPINDEX, 0, 0);
-        if (top >= 0 && top < _items.Count)
+        if (top >= 0 && top < State.Items.Count)
             return;
 
         int target = _listView.SelectedIndices.Count > 0 ? _listView.SelectedIndices[0] : 0;
-        if (target < 0 || target >= _items.Count)
+        if (target < 0 || target >= State.Items.Count)
             target = 0;
 
-        NavigationDebugLogger.Log($"{scope}#{navTraceId} VIEWPORT_FIX top={top} count={_items.Count} sel={target}");
+        NavigationDebugLogger.Log($"{scope}#{navTraceId} VIEWPORT_FIX top={top} count={State.Items.Count} sel={target}");
         try { SendMessage(_listView.Handle, WM_VSCROLL, SB_TOP, 0); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
         try { SendMessage(_listView.Handle, LVM_ENSUREVISIBLE, target, 0); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
         try { _listView.EnsureVisible(target); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
 
         int after = SendMessage(_listView.Handle, LVM_GETTOPINDEX, 0, 0);
-        if (after >= 0 && after < _items.Count)
+        if (after >= 0 && after < State.Items.Count)
             return;
 
-        NavigationDebugLogger.Log($"{scope}#{navTraceId} VIEWPORT_FIX_REBIND top={after} count={_items.Count} sel={target}");
+        NavigationDebugLogger.Log($"{scope}#{navTraceId} VIEWPORT_FIX_REBIND top={after} count={State.Items.Count} sel={target}");
         _listView.BeginUpdate();
         try
         {
             _listView.VirtualListSize = 0;
-            _listView.VirtualListSize = _items.Count;
+            _listView.VirtualListSize = State.Items.Count;
             _listView.SelectedIndices.Clear();
             SetListSelectionAnchor(-1);
             _listView.SelectedIndices.Add(target);
@@ -847,8 +847,8 @@ public partial class MainForm
 
         try { _listView.EnsureVisible(target); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
         int done = SendMessage(_listView.Handle, LVM_GETTOPINDEX, 0, 0);
-        NavigationDebugLogger.Log($"{scope}#{navTraceId} VIEWPORT_FIX_DONE top={done} count={_items.Count} sel={target}");
-        if (done < 0 || done >= _items.Count)
+        NavigationDebugLogger.Log($"{scope}#{navTraceId} VIEWPORT_FIX_DONE top={done} count={State.Items.Count} sel={target}");
+        if (done < 0 || done >= State.Items.Count)
             HardResetViewport(navTraceId, scope, target);
     }
 
@@ -856,7 +856,7 @@ public partial class MainForm
     {
         if (_listView == null || _listView.IsDisposed || !_listView.IsHandleCreated)
             return;
-        if (IsTileView || !_listView.VirtualMode || _items.Count <= 0)
+        if (IsTileView || !_listView.VirtualMode || State.Items.Count <= 0)
             return;
 
         const int LVM_GETTOPINDEX = 0x1027;
@@ -864,10 +864,10 @@ public partial class MainForm
         const int WM_VSCROLL = 0x0115;
         const int SB_TOP = 6;
 
-        if (target < 0 || target >= _items.Count)
+        if (target < 0 || target >= State.Items.Count)
             target = 0;
 
-        NavigationDebugLogger.Log($"{scope}#{navTraceId} VIEWPORT_HARD_RESET start count={_items.Count} sel={target}");
+        NavigationDebugLogger.Log($"{scope}#{navTraceId} VIEWPORT_HARD_RESET start count={State.Items.Count} sel={target}");
 
         // Step 1: safe scroll normalization.
         try { SendMessage(_listView.Handle, WM_VSCROLL, SB_TOP, 0); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
@@ -875,7 +875,7 @@ public partial class MainForm
         try { _listView.EnsureVisible(target); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
 
         int top = SendMessage(_listView.Handle, LVM_GETTOPINDEX, 0, 0);
-        if (top >= 0 && top < _items.Count)
+        if (top >= 0 && top < State.Items.Count)
         {
             NavigationDebugLogger.Log($"{scope}#{navTraceId} VIEWPORT_HARD_RESET ok top={top}");
             return;
@@ -890,7 +890,7 @@ public partial class MainForm
                 _listView.SelectedIndices.Clear();
                 SetListSelectionAnchor(-1);
                 _listView.VirtualListSize = 0;
-                _listView.VirtualListSize = _items.Count;
+            _listView.VirtualListSize = State.Items.Count;
                 _listView.SelectedIndices.Add(target);
                 FocusAndAnchorListIndex(target, ensureVisible: false);
             }
@@ -907,12 +907,12 @@ public partial class MainForm
         try { _listView.Invalidate(); _listView.Update(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
 
         int done = SendMessage(_listView.Handle, LVM_GETTOPINDEX, 0, 0);
-        NavigationDebugLogger.Log($"{scope}#{navTraceId} VIEWPORT_HARD_RESET done top={done} count={_items.Count} sel={target}");
-        if (done >= 0 && done < _items.Count)
+        NavigationDebugLogger.Log($"{scope}#{navTraceId} VIEWPORT_HARD_RESET done top={done} count={State.Items.Count} sel={target}");
+        if (done >= 0 && done < State.Items.Count)
             return;
 
         // Final fallback: re-create the ListView handle (same effect as window reopen, but localized).
-        NavigationDebugLogger.Log($"{scope}#{navTraceId} VIEWPORT_HARD_RESET_RECREATE start top={done} count={_items.Count} sel={target}");
+        NavigationDebugLogger.Log($"{scope}#{navTraceId} VIEWPORT_HARD_RESET_RECREATE start top={done} count={State.Items.Count} sel={target}");
         try
         {
             typeof(Control)
@@ -936,7 +936,7 @@ public partial class MainForm
                 _listView.SelectedIndices.Clear();
                 SetListSelectionAnchor(-1);
                 _listView.VirtualListSize = 0;
-                _listView.VirtualListSize = _items.Count;
+            _listView.VirtualListSize = State.Items.Count;
                 _listView.SelectedIndices.Add(target);
                 FocusAndAnchorListIndex(target, ensureVisible: false);
             }
@@ -953,21 +953,21 @@ public partial class MainForm
         try { _listView.Invalidate(); _listView.Update(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
 
         int doneAfterRecreate = SendMessage(_listView.Handle, LVM_GETTOPINDEX, 0, 0);
-        NavigationDebugLogger.Log($"{scope}#{navTraceId} VIEWPORT_HARD_RESET_RECREATE done top={doneAfterRecreate} count={_items.Count} sel={target}");
+        NavigationDebugLogger.Log($"{scope}#{navTraceId} VIEWPORT_HARD_RESET_RECREATE done top={doneAfterRecreate} count={State.Items.Count} sel={target}");
     }
 
     private bool ListViewportNeedsRepair()
     {
         if (_listView == null || _listView.IsDisposed || !_listView.IsHandleCreated)
             return false;
-        if (IsTileView || !_listView.VirtualMode || _items.Count <= 0)
+        if (IsTileView || !_listView.VirtualMode || State.Items.Count <= 0)
             return false;
 
         try
         {
             const int LVM_GETTOPINDEX = 0x1027;
             int top = SendMessage(_listView.Handle, LVM_GETTOPINDEX, 0, 0);
-            return top < 0 || top >= _items.Count;
+            return top < 0 || top >= State.Items.Count;
         }
         catch (Exception ex)
         {
@@ -988,11 +988,11 @@ public partial class MainForm
 
             try
             {
-                if (!IsTileView && _listView.VirtualMode && _items.Count > 0)
+                if (!IsTileView && _listView.VirtualMode && State.Items.Count > 0)
                 {
                     const int LVM_GETTOPINDEX = 0x1027;
                     int top = SendMessage(_listView.Handle, LVM_GETTOPINDEX, 0, 0);
-                    if (top < 0 || top >= _items.Count)
+                    if (top < 0 || top >= State.Items.Count)
                         NormalizeViewportAfterBind(0, scope);
                 }
             }
@@ -1024,7 +1024,7 @@ public partial class MainForm
 
         if (_listView == null || _listView.IsDisposed || !_listView.IsHandleCreated)
             return;
-        if (IsTileView || !_listView.VirtualMode || _items.Count <= 0)
+        if (IsTileView || !_listView.VirtualMode || State.Items.Count <= 0)
             return;
 
         int selected = 0;
@@ -1034,7 +1034,7 @@ public partial class MainForm
                 selected = _listView.SelectedIndices[0];
         }
         catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
-        if (selected < 0 || selected >= _items.Count)
+        if (selected < 0 || selected >= State.Items.Count)
             selected = 0;
 
         try
@@ -1045,7 +1045,7 @@ public partial class MainForm
                 _listView.SelectedIndices.Clear();
                 SetListSelectionAnchor(-1);
                 _listView.VirtualListSize = 0;
-                _listView.VirtualListSize = _items.Count;
+                _listView.VirtualListSize = State.Items.Count;
                 _listView.SelectedIndices.Add(selected);
                 FocusAndAnchorListIndex(selected, ensureVisible: false);
             }

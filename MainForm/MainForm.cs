@@ -10,7 +10,7 @@ using System.Windows.Forms;
 
 namespace SpeedExplorer;
 
-public partial class MainForm : Form
+public partial class MainForm : Form, IFileOperationsHost, IShellActionsHost, IOpenTargetHost, ISelectionOpenHost, IQuickLookHost, ISearchHost
 {
     private void RefreshFrame()
         => _windowChromeController.RefreshFrame();
@@ -25,8 +25,9 @@ public partial class MainForm : Form
     // Keep internal surface tiny: it only exists to let NavigationController manage state without
     // exposing MainForm internals publicly.
     internal const string ThisPcPathConst = ThisPcPath;
-    internal string CurrentPathForNav => _currentPath;
-    internal void ClearCurrentPathForHistory() => _currentPath = "";
+    internal BrowserState State => _browserState;
+    internal string CurrentPathForNav => State.CurrentPath;
+    internal void ClearCurrentPathForHistory() => State.CurrentPath = "";
     internal static bool IsShellPathStatic(string path) => ShellNavigationController.IsShellPath(path);
     private IntPtr _headerHandle;
 
@@ -83,11 +84,7 @@ public partial class MainForm : Form
     private readonly WindowChromeController _windowChromeController;
     private readonly ShellNavigationController _shellNav;
 
-    private List<FileItem> _items = new();
-    private List<FileItem> _allItems = new(); // Unfiltered list for search
-    private string _currentPath = "";
-    private string _currentDisplayPath = "";
-    private bool _isShellMode = false;
+    private readonly BrowserState _browserState = new();
     private bool _suppressSearchTextChanged = false;
     private bool _suppressHistoryUpdate = false;
     private readonly NavigationController _nav;
@@ -113,10 +110,6 @@ public partial class MainForm : Form
     private string? _retryLoadPath;
     private bool _retryLoadPending = false;
     private bool _needsRepaint = false;
-    private HashSet<string> _cutPaths = new();
-    private SortColumn _sortColumn = SortColumn.Name;
-    private SortDirection _sortDirection = SortDirection.Ascending;
-    private bool _taggedFilesOnTop = false; // "Sticky" tag grouping
     private bool IsSearchMode => _searchController.IsSearchMode;
     private bool IsTileView => _tileViewController.IsTileView;
     private char _lastSearchChar = '\0';
@@ -175,7 +168,7 @@ public partial class MainForm : Form
 
     private int GetEffectiveIconSize(string? path = null)
     {
-        if (TryGetFolderIconSizeOverride(path ?? _currentPath, out var iconSize))
+        if (TryGetFolderIconSizeOverride(path ?? State.CurrentPath, out var iconSize))
             return iconSize;
         return Math.Clamp(AppSettings.Current.IconSize, 16, 192);
     }
@@ -183,9 +176,9 @@ public partial class MainForm : Form
     private void SaveIconSizeForCurrentPath(int iconSize)
     {
         int clamped = Math.Clamp(iconSize, 16, 192);
-        if (CanPersistFolderIconSizeForPath(_currentPath))
+        if (CanPersistFolderIconSizeForPath(State.CurrentPath))
         {
-            _nav.FolderIconSizeOverrides[_currentPath] = clamped;
+            _nav.FolderIconSizeOverrides[State.CurrentPath] = clamped;
             SaveFolderSettings();
             return;
         }
@@ -281,8 +274,8 @@ public partial class MainForm : Form
         LogListViewState(reason, $"before-pass{pass}");
 
         int index = 0;
-        if (_items.Count > 0)
-            index = Math.Max(0, Math.Min(preferredIndex, _items.Count - 1));
+        if (State.Items.Count > 0)
+            index = Math.Max(0, Math.Min(preferredIndex, State.Items.Count - 1));
 
         try
         {
@@ -293,7 +286,7 @@ public partial class MainForm : Form
 
         try
         {
-            if (_items.Count > 0)
+            if (State.Items.Count > 0)
                 _listView.EnsureVisible(index);
         }
         catch (Exception ex) { Debug.WriteLine($"ForceListViewportTopAndRedraw EnsureVisible failed: {ex.Message}"); }
@@ -696,7 +689,7 @@ public partial class MainForm : Form
     private string GetShellDisplayName(string shellPath) => _shellNav.GetShellDisplayName(shellPath);
     internal string? GetShellParentPath(string shellPath) => _shellNav.GetShellParentPath(shellPath);
     private Task<List<FileItem>> GetShellItemsAsync(string shellPath, CancellationToken ct)
-        => _shellNav.GetShellItemsAsync(shellPath, ct, _currentDisplayPath);
+        => _shellNav.GetShellItemsAsync(shellPath, ct, State.CurrentDisplayPath);
     private void OpenShellPath(string shellPath) => _shellNav.OpenShellPath(shellPath);
     internal string RegisterShellItem(object item, string? parentShellId) => _shellNav.RegisterShellItem(item, parentShellId);
 

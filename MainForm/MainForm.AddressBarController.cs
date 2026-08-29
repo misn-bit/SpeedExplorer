@@ -11,6 +11,7 @@ public partial class MainForm
     private sealed class AddressBarController
     {
         private readonly MainForm _owner;
+        private BrowserState State => _owner.State;
 
         public AddressBarController(MainForm owner)
         {
@@ -116,7 +117,7 @@ public partial class MainForm
 
         public void EnableAddressEdit()
         {
-            if (MainForm.IsShellPath(_owner._currentPath))
+            if (MainForm.IsShellPath(State.CurrentPath))
             {
                 _owner._statusLabel.Text = Localization.T("status_address_unavailable");
                 return;
@@ -124,7 +125,7 @@ public partial class MainForm
 
             _owner._breadcrumbPanel.Visible = false;
             _owner._addressTextBox.Visible = true;
-            _owner._addressTextBox.Text = _owner._currentPath;
+            _owner._addressTextBox.Text = State.CurrentPath;
             _owner._addressTextBox.Focus();
             _owner._addressTextBox.SelectAll();
         }

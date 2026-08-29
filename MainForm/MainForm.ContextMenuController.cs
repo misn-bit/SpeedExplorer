@@ -12,6 +12,7 @@ public partial class MainForm
     private sealed class ContextMenuController : IDisposable
     {
         private readonly MainForm _owner;
+        private BrowserState State => _owner.State;
 
         public ContextMenuStrip Menu { get; }
 
@@ -114,8 +115,8 @@ public partial class MainForm
                 var paths = _owner.GetSelectedPaths();
                 if (paths.Length == 0)
                 {
-                    if (!string.IsNullOrEmpty(_owner._currentPath) && !IsShellPath(_owner._currentPath))
-                        paths = new[] { _owner._currentPath };
+            if (!string.IsNullOrEmpty(State.CurrentPath) && !IsShellPath(State.CurrentPath))
+                paths = new[] { State.CurrentPath };
                 }
 
                 if (paths.Length == 0) return;
@@ -199,10 +200,10 @@ public partial class MainForm
             var paths = _owner.GetSelectedPaths();
             bool hasSelection = paths.Length > 0;
             string? firstPath = paths.FirstOrDefault();
-            bool isShell = IsShellPath(_owner._currentPath);
+            bool isShell = IsShellPath(State.CurrentPath);
             bool allFileSystem = hasSelection 
                 ? !isShell
-                : (!string.IsNullOrEmpty(_owner._currentPath) && !isShell);
+                : (!string.IsNullOrEmpty(State.CurrentPath) && !isShell);
 
             if (AppSettings.Current.UseWindowsContextMenu && hasSelection && allFileSystem && !isShell)
             {
@@ -214,7 +215,7 @@ public partial class MainForm
             }
 
             bool canManipulate = _owner.CanManipulateSelected();
-            bool showFileActions = _owner.IsSearchMode || _owner._currentPath != ThisPcPath;
+            bool showFileActions = _owner.IsSearchMode || State.CurrentPath != ThisPcPath;
 
             _pinItem.Visible = hasSelection;
             _copyItem.Visible = showFileActions; _copyItem.Enabled = canManipulate && hasSelection;
@@ -228,12 +229,12 @@ public partial class MainForm
             _integrationsMenu.DropDownItems.Clear();
             string[] manualActionPaths = paths;
             if (manualActionPaths.Length == 0 &&
-                !string.IsNullOrEmpty(_owner._currentPath) &&
-                _owner._currentPath != ThisPcPath &&
+                !string.IsNullOrEmpty(State.CurrentPath) &&
+                State.CurrentPath != ThisPcPath &&
                 !_owner.IsSearchMode &&
                 !isShell)
             {
-                manualActionPaths = new[] { _owner._currentPath };
+                manualActionPaths = new[] { State.CurrentPath };
             }
 
             var manualItems = ManualContextActionService.BuildMenuItems(manualActionPaths);
@@ -253,7 +254,7 @@ public partial class MainForm
             bool isFile = hasSelection && paths.Length == 1 && File.Exists(firstPath) && !Directory.Exists(firstPath);
             _openWithItem.Enabled = isFile;
 
-            bool canPaste = !string.IsNullOrEmpty(_owner._currentPath) && _owner._currentPath != ThisPcPath;
+            bool canPaste = !string.IsNullOrEmpty(State.CurrentPath) && State.CurrentPath != ThisPcPath;
             _pasteItem.Visible = canPaste;
             _pasteItem.Enabled = canPaste && !isShell && _owner.IsClipboardFileContentPresent();
 
@@ -274,12 +275,12 @@ public partial class MainForm
                     _pinItem.Text = isPinned ? Localization.T("unpin_sidebar") : Localization.T("pin_sidebar");
                 }
             }
-            else if (!hasSelection && !string.IsNullOrEmpty(_owner._currentPath) && _owner._currentPath != ThisPcPath && !_owner.IsSearchMode)
+            else if (!hasSelection && !string.IsNullOrEmpty(State.CurrentPath) && State.CurrentPath != ThisPcPath && !_owner.IsSearchMode)
             {
                 _pinItem.Visible = !isShell;
                 if (!isShell)
                 {
-                    bool isPinned = AppSettings.Current.PinnedPaths.Contains(_owner._currentPath);
+                    bool isPinned = AppSettings.Current.PinnedPaths.Contains(State.CurrentPath);
                     _pinItem.Text = isPinned ? Localization.T("unpin_current_folder") : Localization.T("pin_current_folder");
                 }
             }
@@ -289,7 +290,7 @@ public partial class MainForm
             }
 
             // Edit Tags visibility on empty space
-            if (!hasSelection && !string.IsNullOrEmpty(_owner._currentPath) && _owner._currentPath != ThisPcPath && !_owner.IsSearchMode)
+            if (!hasSelection && !string.IsNullOrEmpty(State.CurrentPath) && State.CurrentPath != ThisPcPath && !_owner.IsSearchMode)
             {
                 _editTagsItem.Visible = true;
                 _editTagsItem.Enabled = !isShell;
@@ -303,15 +304,15 @@ public partial class MainForm
             }
 
             // New item should not be visible in search mode or This PC root, or when invoked from sidebar
-            _newItem.Visible = !string.IsNullOrEmpty(_owner._currentPath) && _owner._currentPath != ThisPcPath &&
+            _newItem.Visible = !string.IsNullOrEmpty(State.CurrentPath) && State.CurrentPath != ThisPcPath &&
                                !_owner.IsSearchMode && Menu.SourceControl != _owner._sidebar;
 
             // Show in Explorer / open current folder
-            _showInExplorerItem.Visible = hasSelection || (!string.IsNullOrEmpty(_owner._currentPath) && _owner._currentPath != ThisPcPath);
+            _showInExplorerItem.Visible = hasSelection || (!string.IsNullOrEmpty(State.CurrentPath) && State.CurrentPath != ThisPcPath);
             _showInExplorerItem.Text = hasSelection ? Localization.T("show_in_explorer") : Localization.T("open_current_folder");
 
             // Copy Path / copy current path
-            _copyPathItem.Visible = hasSelection || (!string.IsNullOrEmpty(_owner._currentPath) && _owner._currentPath != ThisPcPath);
+            _copyPathItem.Visible = hasSelection || (!string.IsNullOrEmpty(State.CurrentPath) && State.CurrentPath != ThisPcPath);
             _copyPathItem.Text = hasSelection ? Localization.T("copy_path") : Localization.T("copy_current_path");
 
             // Open in other target (tab/window depends on setting)
@@ -339,13 +340,13 @@ public partial class MainForm
             // WinRAR
             string winRarPath = _owner.GetWinRarPath();
             bool winRarExists = !string.IsNullOrEmpty(winRarPath);
-            bool allowWinRar = _owner._currentPath != ThisPcPath && !_owner.IsSearchMode;
+            bool allowWinRar = State.CurrentPath != ThisPcPath && !_owner.IsSearchMode;
             _winRarSubMenu.Visible = allowWinRar && winRarExists && hasSelection && Menu.SourceControl != _owner._sidebar;
             bool singleArchive = hasSelection && paths.Length == 1 && IsArchiveFilePath(firstPath);
             _winRarExtractHereItem.Visible = singleArchive;
             _winRarExtractToItem.Visible = singleArchive;
 
-            _propertiesItem.Visible = hasSelection || (!string.IsNullOrEmpty(_owner._currentPath) && _owner._currentPath != ThisPcPath);
+            _propertiesItem.Visible = hasSelection || (!string.IsNullOrEmpty(State.CurrentPath) && State.CurrentPath != ThisPcPath);
 
             // Hide disabled items if invoked from sidebar
             if (Menu.SourceControl == _owner._sidebar)

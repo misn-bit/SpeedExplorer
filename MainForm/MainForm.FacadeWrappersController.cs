@@ -65,7 +65,7 @@ public partial class MainForm
     }
 
     private void ShowStatusMessage(string msg)
-        => _fileOperationsController.ShowStatusMessage(msg);
+        => ShowFileOperationStatusMessage(msg);
 
     private void PerformClipboardOperation(string[] paths, bool isCut)
         => _fileOperationsController.PerformClipboardOperation(paths, isCut);

@@ -11,6 +11,7 @@ public partial class MainForm
     private sealed class ListViewInteractionController
     {
         private readonly MainForm _owner;
+        private BrowserState State => _owner.State;
         private bool _virtualRepairPending;
         private readonly System.Windows.Forms.Timer _middleAutoScrollTimer;
         private bool _middleButtonDown;
@@ -54,21 +55,21 @@ public partial class MainForm
                     return;
                 }
 
-                if (e.ItemIndex >= 0 && e.ItemIndex < _owner._items.Count)
+                if (e.ItemIndex >= 0 && e.ItemIndex < State.Items.Count)
                 {
-                    var item = _owner._items[e.ItemIndex];
+                    var item = State.Items[e.ItemIndex];
                     e.Item = BuildListViewItem(item, includeSubItems: true);
                 }
                 else
                 {
                     // Index out of bounds should never happen in steady state.
                     // Self-heal VirtualListSize and return a safe fallback item for this frame.
-                    _owner.LogListViewState("RVI", $"oob idx={e.ItemIndex} count={_owner._items.Count} vsize={_owner._listView.VirtualListSize}");
-                    QueueVirtualListRepair($"RetrieveVirtualItem oob idx={e.ItemIndex} count={_owner._items.Count} vsize={_owner._listView.VirtualListSize}");
-                    if (_owner._items.Count > 0)
+                    _owner.LogListViewState("RVI", $"oob idx={e.ItemIndex} count={State.Items.Count} vsize={_owner._listView.VirtualListSize}");
+                    QueueVirtualListRepair($"RetrieveVirtualItem oob idx={e.ItemIndex} count={State.Items.Count} vsize={_owner._listView.VirtualListSize}");
+                    if (State.Items.Count > 0)
                     {
-                        int safeIndex = Math.Min(Math.Max(e.ItemIndex, 0), _owner._items.Count - 1);
-                        e.Item = BuildListViewItem(_owner._items[safeIndex], includeSubItems: true);
+                        int safeIndex = Math.Min(Math.Max(e.ItemIndex, 0), State.Items.Count - 1);
+                        e.Item = BuildListViewItem(State.Items[safeIndex], includeSubItems: true);
                     }
                     else
                     {
@@ -101,7 +102,7 @@ public partial class MainForm
                         if (!_owner._listView.VirtualMode)
                             return;
 
-                        int target = _owner._items.Count;
+                        int target = State.Items.Count;
                         if (_owner._listView.VirtualListSize == target)
                             return;
 
@@ -136,7 +137,7 @@ public partial class MainForm
             _ = sender;
             SortColumn? newColumn;
 
-            if (_owner._currentPath == ThisPcPath && !_owner.IsSearchMode)
+            if (State.CurrentPath == ThisPcPath && !_owner.IsSearchMode)
             {
                 newColumn = e.Column switch
                 {
@@ -169,54 +170,54 @@ public partial class MainForm
                 return;
 
             // Special tag cycling logic for files.
-            if (_owner._currentPath != ThisPcPath && newColumn == SortColumn.Tags)
+            if (State.CurrentPath != ThisPcPath && newColumn == SortColumn.Tags)
             {
-                if (!_owner._taggedFilesOnTop)
+                if (!State.TaggedFilesOnTop)
                 {
-                    _owner._taggedFilesOnTop = true;
-                    _owner._sortColumn = SortColumn.Tags;
-                    _owner._sortDirection = SortDirection.Ascending;
+                    State.TaggedFilesOnTop = true;
+                    State.SortColumn = SortColumn.Tags;
+                    State.SortDirection = SortDirection.Ascending;
                 }
-                else if (_owner._sortColumn == SortColumn.Tags)
+                else if (State.SortColumn == SortColumn.Tags)
                 {
-                    if (_owner._sortDirection == SortDirection.Ascending)
+                    if (State.SortDirection == SortDirection.Ascending)
                     {
-                        _owner._sortDirection = SortDirection.Descending;
+                        State.SortDirection = SortDirection.Descending;
                     }
                     else
                     {
-                        _owner._taggedFilesOnTop = false;
-                        _owner._sortColumn = SortColumn.Name;
-                        _owner._sortDirection = SortDirection.Ascending;
+                        State.TaggedFilesOnTop = false;
+                        State.SortColumn = SortColumn.Name;
+                        State.SortDirection = SortDirection.Ascending;
                     }
                 }
                 else
                 {
-                    _owner._sortColumn = SortColumn.Tags;
-                    _owner._sortDirection = SortDirection.Ascending;
+                    State.SortColumn = SortColumn.Tags;
+                    State.SortDirection = SortDirection.Ascending;
                 }
             }
             else
             {
-                if (newColumn == _owner._sortColumn)
+                if (newColumn == State.SortColumn)
                 {
-                    _owner._sortDirection = _owner._sortDirection == SortDirection.Ascending
+                    State.SortDirection = State.SortDirection == SortDirection.Ascending
                         ? SortDirection.Descending
                         : SortDirection.Ascending;
                 }
                 else
                 {
-                    _owner._sortColumn = newColumn.Value;
-                    _owner._sortDirection = SortDirection.Ascending;
+                    State.SortColumn = newColumn.Value;
+                    State.SortDirection = SortDirection.Ascending;
                 }
             }
 
             // Persist current folder sort immediately so it survives app close without navigation.
-            if (!string.IsNullOrWhiteSpace(_owner._currentPath) &&
-                _owner._currentPath != ThisPcPath &&
-                !ShellNavigationController.IsShellPath(_owner._currentPath))
+            if (!string.IsNullOrWhiteSpace(State.CurrentPath) &&
+                State.CurrentPath != ThisPcPath &&
+                !ShellNavigationController.IsShellPath(State.CurrentPath))
             {
-                _owner._nav.FolderSortSettings[_owner._currentPath] = (_owner._sortColumn, _owner._sortDirection);
+                _owner._nav.FolderSortSettings[State.CurrentPath] = (State.SortColumn, State.SortDirection);
                 _owner.SaveFolderSettings();
             }
 
@@ -902,7 +903,7 @@ public partial class MainForm
                 return;
             }
 
-            if (_owner._currentPath == ThisPcPath)
+            if (State.CurrentPath == ThisPcPath)
             {
                 if (e.KeyCode == Keys.Delete || e.KeyCode == Keys.F2)
                 {
@@ -945,7 +946,7 @@ public partial class MainForm
 
         public void SearchAndSelect(char c)
         {
-            if (_owner._items.Count == 0)
+            if (State.Items.Count == 0)
                 return;
 
             c = char.ToUpper(c);
@@ -962,11 +963,11 @@ public partial class MainForm
             }
 
             // Single-pass loop that wraps around the entire list.
-            int count = _owner._items.Count;
+            int count = State.Items.Count;
             for (int i = 0; i < count; i++)
             {
                 int idx = (startIndex + i) % count;
-                if (_owner._items[idx].Name.Length > 0 && char.ToUpper(_owner._items[idx].Name[0]) == c)
+                if (State.Items[idx].Name.Length > 0 && char.ToUpper(State.Items[idx].Name[0]) == c)
                 {
                     _owner._listView.SelectedIndices.Clear();
                     _owner._listView.SelectedIndices.Add(idx);
@@ -984,9 +985,9 @@ public partial class MainForm
         public void SortAndRefresh()
         {
             var sw = System.Diagnostics.Stopwatch.StartNew();
-            FileSystemService.SortItems(_owner._items, _owner._sortColumn, _owner._sortDirection, _owner._taggedFilesOnTop);
+            FileSystemService.SortItems(State.Items, State.SortColumn, State.SortDirection, State.TaggedFilesOnTop);
             if (!_owner.IsSearchMode)
-                FileSystemService.SortItems(_owner._allItems, _owner._sortColumn, _owner._sortDirection, _owner._taggedFilesOnTop);
+                FileSystemService.SortItems(State.AllItems, State.SortColumn, State.SortDirection, State.TaggedFilesOnTop);
             sw.Stop();
 
             _owner._listView.Invalidate();

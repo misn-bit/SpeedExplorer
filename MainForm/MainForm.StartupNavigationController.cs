@@ -11,6 +11,7 @@ public partial class MainForm
     private sealed class StartupNavigationController
     {
         private readonly MainForm _owner;
+        private BrowserState State => _owner.State;
         private static string FolderSettingsPath = AppStorage.GetPath("folder_settings.json");
 
         public StartupNavigationController(MainForm owner)
@@ -20,8 +21,8 @@ public partial class MainForm
 
         public void LoadDrives()
         {
-            _owner._items.Clear();
-            _owner._allItems.Clear();
+            State.Items.Clear();
+            State.AllItems.Clear();
 
             _owner._listView.BeginUpdate();
             try
@@ -50,28 +51,28 @@ public partial class MainForm
                         DateModified = DateTime.MinValue,
                         Extension = isUsb ? ".usb" : ".drive"
                     };
-                    _owner._items.Add(item);
+                    State.Items.Add(item);
                 }
-                _owner._allItems = new List<FileItem>(_owner._items);
+                State.AllItems = new List<FileItem>(State.Items);
                 if (_owner.IsTileView)
                 {
                     _owner.PopulateTileItems();
                 }
                 else
                 {
-                    _owner._listView.VirtualListSize = _owner._items.Count;
+                    _owner._listView.VirtualListSize = State.Items.Count;
                     _owner._listView.TileSize = new System.Drawing.Size(_owner.Scale(260), _owner.Scale(60));
                 }
 
-                _owner._statusLabel.Text = string.Format(Localization.T("status_drives_count"), _owner._items.Count);
+                _owner._statusLabel.Text = string.Format(Localization.T("status_drives_count"), State.Items.Count);
                 _owner._pathLabel.Text = Localization.T("this_pc");
                 _owner.Text = Localization.T("this_pc");
-                _owner._currentPath = ThisPcPath;
+                State.CurrentPath = ThisPcPath;
                 _owner._addressBar.Text = Localization.T("this_pc");
 
-                _owner._sortColumn = SortColumn.DriveNumber;
-                _owner._sortDirection = SortDirection.Ascending;
-                _owner._tabsController.SyncPathSnapshot(ThisPcPath, _owner._items, _owner._allItems);
+                State.SortColumn = SortColumn.DriveNumber;
+                State.SortDirection = SortDirection.Ascending;
+                _owner._tabsController.SyncPathSnapshot(ThisPcPath, State.Items, State.AllItems);
             }
             catch (Exception ex)
             {
@@ -86,9 +87,9 @@ public partial class MainForm
 
         public bool IsDriveItemsOnly()
         {
-            if (_owner._items.Count == 0)
+            if (State.Items.Count == 0)
                 return false;
-            foreach (var item in _owner._items)
+            foreach (var item in State.Items)
             {
                 if (item.Extension != ".drive" && item.Extension != ".usb")
                     return false;

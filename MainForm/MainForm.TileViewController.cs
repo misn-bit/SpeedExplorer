@@ -31,6 +31,7 @@ public partial class MainForm
     private sealed class TileViewController
     {
         private readonly MainForm _owner;
+        private BrowserState State => _owner.State;
         private bool _isTileView;
         private System.Windows.Forms.Timer? _populateTimer;
         private System.Windows.Forms.Timer? _deferredUniqueLoadTimer;
@@ -64,7 +65,7 @@ public partial class MainForm
         }
 
         private bool IsThisPcContext()
-            => _owner._currentPath == ThisPcPathConst && !_owner.IsSearchMode;
+            => State.CurrentPath == ThisPcPathConst && !_owner.IsSearchMode;
 
         private bool GetContextTilePreference()
             => IsThisPcContext() ? AppSettings.Current.TileViewThisPc : AppSettings.Current.TileViewFolders;
@@ -126,11 +127,11 @@ public partial class MainForm
                     _owner._listView.Items.Clear();
                     _owner._listView.VirtualMode = true;
                     // Restore the appropriate columns (This PC vs folder view) when switching back.
-                    if (_owner._currentPath == ThisPcPathConst && !_owner.IsSearchMode)
+                    if (State.CurrentPath == ThisPcPathConst && !_owner.IsSearchMode)
                         _owner.SetupDriveColumns(_owner._listView);
                     else
                         _owner.SetupFileColumns(_owner._listView);
-                    _owner._listView.VirtualListSize = _owner._items.Count;
+                    _owner._listView.VirtualListSize = State.Items.Count;
                     _owner.EnsureHeaderTail();
                 }
             }
@@ -232,7 +233,7 @@ public partial class MainForm
             _owner._listView.VirtualListSize = 0;
             _owner._listView.Items.Clear();
 
-            int total = _owner._items.Count;
+            int total = State.Items.Count;
             if (total == 0) return;
             _populateTotal = total;
             _useDeferredUniqueLoading = total >= LargeFolderUniqueDeferThreshold;
@@ -406,7 +407,7 @@ public partial class MainForm
             {
                 _isPopulating = false;
                 _populateTimer?.Stop();
-                _owner._statusLabel.Text = string.Format(Localization.T("status_ready_items"), _owner._items.Count);
+                _owner._statusLabel.Text = string.Format(Localization.T("status_ready_items"), State.Items.Count);
                 return;
             }
             
@@ -450,7 +451,7 @@ public partial class MainForm
             var batch = new ListViewItem[count];
             for (int i = 0; i < count; i++)
             {
-                batch[i] = _owner.BuildListViewItem(_owner._items[startIndex + i], includeSubItems: false);
+                batch[i] = _owner.BuildListViewItem(State.Items[startIndex + i], includeSubItems: false);
             }
             _owner._listView.Items.AddRange(batch);
         }

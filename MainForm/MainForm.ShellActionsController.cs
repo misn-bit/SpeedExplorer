@@ -9,23 +9,30 @@ namespace SpeedExplorer;
 
 public partial class MainForm
 {
+    BrowserState IShellActionsHost.BrowserState => State;
+    string IShellActionsHost.GetSelectedPath() => GetSelectedPath();
+    string[] IShellActionsHost.GetSelectedPaths() => GetSelectedPaths();
+    void IShellActionsHost.OpenShellPath(string path) => OpenShellPath(path);
+    void IShellActionsHost.SetStatusMessage(string message) => _statusLabel.Text = message;
+
     private sealed class ShellActionsController
     {
-        private readonly MainForm _owner;
+        private readonly IShellActionsHost _host;
+        private BrowserState State => _host.BrowserState;
 
-        public ShellActionsController(MainForm owner)
+        public ShellActionsController(IShellActionsHost host)
         {
-            _owner = owner;
+            _host = host;
         }
 
         public void OpenWithDialog()
         {
-            string path = _owner.GetSelectedPath();
+            string path = _host.GetSelectedPath();
             if (string.IsNullOrEmpty(path))
                 return;
             if (IsShellPath(path))
             {
-                _owner.OpenShellPath(path);
+                _host.OpenShellPath(path);
                 return;
             }
 
@@ -38,11 +45,11 @@ public partial class MainForm
 
         public void ShowInExplorer()
         {
-            string path = _owner.GetSelectedPath();
+            string path = _host.GetSelectedPath();
             if (string.IsNullOrEmpty(path))
             {
-                if (!string.IsNullOrEmpty(_owner._currentPath) && _owner._currentPath != ThisPcPath)
-                    path = _owner._currentPath;
+            if (!string.IsNullOrEmpty(State.CurrentPath) && State.CurrentPath != ThisPcPath)
+                path = State.CurrentPath;
                 else
                     return;
             }
@@ -51,7 +58,7 @@ public partial class MainForm
             {
                 if (IsShellPath(path))
                 {
-                    _owner.OpenShellPath(path);
+                    _host.OpenShellPath(path);
                     return;
                 }
 
@@ -65,11 +72,11 @@ public partial class MainForm
 
         public void CopyPathToClipboard()
         {
-            string path = _owner.GetSelectedPath();
+            string path = _host.GetSelectedPath();
             if (string.IsNullOrEmpty(path))
             {
-                if (!string.IsNullOrEmpty(_owner._currentPath) && _owner._currentPath != ThisPcPath)
-                    path = _owner._currentPath;
+            if (!string.IsNullOrEmpty(State.CurrentPath) && State.CurrentPath != ThisPcPath)
+                path = State.CurrentPath;
                 else
                     return;
             }
@@ -78,19 +85,19 @@ public partial class MainForm
 
         public void ShowProperties()
         {
-            var paths = _owner.GetSelectedPaths();
+            var paths = _host.GetSelectedPaths();
             if (paths.Length == 0)
             {
-                if (!string.IsNullOrEmpty(_owner._currentPath) && _owner._currentPath != ThisPcPath)
-                    paths = new[] { _owner._currentPath };
+            if (!string.IsNullOrEmpty(State.CurrentPath) && State.CurrentPath != ThisPcPath)
+                paths = new[] { State.CurrentPath };
                 else
                     return;
             }
 
             if (paths.Any(IsShellPath))
             {
-                _owner.OpenShellPath(paths.First(p => IsShellPath(p)));
-                _owner._statusLabel.Text = Localization.T("status_properties_unavailable");
+                _host.OpenShellPath(paths.First(p => IsShellPath(p)));
+                _host.SetStatusMessage(Localization.T("status_properties_unavailable"));
                 return;
             }
 

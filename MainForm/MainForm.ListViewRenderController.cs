@@ -9,6 +9,7 @@ public partial class MainForm
     private sealed class ListViewRenderController
     {
         private readonly MainForm _owner;
+        private BrowserState State => _owner.State;
 
         public ListViewRenderController(MainForm owner)
         {
@@ -73,33 +74,33 @@ public partial class MainForm
             var colIndex = e.ColumnIndex;
             var sortIndicator = "";
 
-            bool isDriveView = _owner._currentPath == ThisPcPath && !_owner.IsSearchMode;
+            bool isDriveView = State.CurrentPath == ThisPcPath && !_owner.IsSearchMode;
             bool isMatch;
 
             if (isDriveView)
             {
-                isMatch = (colIndex == 0 && _owner._sortColumn == SortColumn.DriveNumber) ||
-                          (colIndex == 1 && _owner._sortColumn == SortColumn.Name) ||
-                          (colIndex == 2 && _owner._sortColumn == SortColumn.Type) ||
-                          (colIndex == 3 && _owner._sortColumn == SortColumn.Format) ||
-                          (colIndex == 4 && _owner._sortColumn == SortColumn.Size) ||
-                          (colIndex == 5 && _owner._sortColumn == SortColumn.Size) ||
-                          (colIndex == 6 && _owner._sortColumn == SortColumn.FreeSpace);
+                isMatch = (colIndex == 0 && State.SortColumn == SortColumn.DriveNumber) ||
+                          (colIndex == 1 && State.SortColumn == SortColumn.Name) ||
+                          (colIndex == 2 && State.SortColumn == SortColumn.Type) ||
+                          (colIndex == 3 && State.SortColumn == SortColumn.Format) ||
+                          (colIndex == 4 && State.SortColumn == SortColumn.Size) ||
+                          (colIndex == 5 && State.SortColumn == SortColumn.Size) ||
+                          (colIndex == 6 && State.SortColumn == SortColumn.FreeSpace);
             }
             else
             {
-                isMatch = (colIndex == 0 && _owner._sortColumn == SortColumn.Name) ||
-                          (colIndex == 1 && _owner._sortColumn == SortColumn.Location) ||
-                          (colIndex == 2 && _owner._sortColumn == SortColumn.Size) ||
-                          (colIndex == 3 && _owner._sortColumn == SortColumn.DateModified) ||
-                          (colIndex == 4 && _owner._sortColumn == SortColumn.DateCreated) ||
-                          (colIndex == 5 && _owner._sortColumn == SortColumn.Type) ||
-                          (colIndex == 6 && _owner._sortColumn == SortColumn.Tags);
+                isMatch = (colIndex == 0 && State.SortColumn == SortColumn.Name) ||
+                          (colIndex == 1 && State.SortColumn == SortColumn.Location) ||
+                          (colIndex == 2 && State.SortColumn == SortColumn.Size) ||
+                          (colIndex == 3 && State.SortColumn == SortColumn.DateModified) ||
+                          (colIndex == 4 && State.SortColumn == SortColumn.DateCreated) ||
+                          (colIndex == 5 && State.SortColumn == SortColumn.Type) ||
+                          (colIndex == 6 && State.SortColumn == SortColumn.Tags);
             }
 
             if (isMatch)
             {
-                sortIndicator = _owner._sortDirection == SortDirection.Ascending ? " ▲" : " ▼";
+                sortIndicator = State.SortDirection == SortDirection.Ascending ? " ▲" : " ▼";
             }
 
             var align = e.Header?.TextAlign ?? HorizontalAlignment.Left;
@@ -140,7 +141,7 @@ public partial class MainForm
         {
             _ = sender;
             Color rowBackColor = _owner.ListBackColor;
-            bool isDriveView = _owner._currentPath == ThisPcPath && !_owner.IsSearchMode;
+            bool isDriveView = State.CurrentPath == ThisPcPath && !_owner.IsSearchMode;
 
             var drawItem = e.Item;
             if (drawItem == null)
@@ -194,7 +195,7 @@ public partial class MainForm
                             var image = _owner._smallIcons.Images[drawItem.ImageKey];
                             if (image != null)
                             {
-                                bool isCut = drawItem.Tag is FileItem fi && _owner._cutPaths.Contains(fi.FullPath);
+                                bool isCut = drawItem.Tag is FileItem fi && State.CutPaths.Contains(fi.FullPath);
                                 if (isCut)
                                 {
                                     var cm = new System.Drawing.Imaging.ColorMatrix { Matrix33 = 0.5f };
@@ -226,7 +227,7 @@ public partial class MainForm
                 using var textBrush = new SolidBrush(
                     isProgressRow
                         ? _owner.MutedForeColor
-                        : drawItem.Tag is FileItem fs && _owner._cutPaths.Contains(fs.FullPath)
+                        : drawItem.Tag is FileItem fs && State.CutPaths.Contains(fs.FullPath)
                         ? Color.FromArgb(120, _owner.ForeColor_Dark)
                         : _owner.ForeColor_Dark);
 
@@ -255,7 +256,7 @@ public partial class MainForm
                 using var b = new SolidBrush(rowBackColor);
                 e.Graphics.FillRectangle(b, fillRect);
 
-                if (_owner._currentPath == ThisPcPath &&
+                if (State.CurrentPath == ThisPcPath &&
                     e.ColumnIndex == ColumnIndex_DriveCapacity &&
                     drawItem.Tag is FileItem fi &&
                     (fi.Extension == ".drive" || fi.Extension == ".usb"))
@@ -290,7 +291,7 @@ public partial class MainForm
                     using (var pen = new Pen(_owner.BorderSoftColor))
                         e.Graphics.DrawRectangle(pen, barRect);
                 }
-                else if (_owner._currentPath != ThisPcPath && e.ColumnIndex == ColumnIndex_Tags)
+                else if (State.CurrentPath != ThisPcPath && e.ColumnIndex == ColumnIndex_Tags)
                 {
                     DrawTags(e.Graphics, e.Bounds, e.SubItem?.Text, rowBackColor, drawItem.Selected);
                 }

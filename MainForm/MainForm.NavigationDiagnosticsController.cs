@@ -114,7 +114,7 @@ public partial class MainForm
             $"{scope} LV stage={stage} view={_listView.View} ownerDraw={_listView.OwnerDraw} virtual={_listView.VirtualMode} " +
             $"vsize={_listView.VirtualListSize} items={_listView.Items.Count} top={top} perPage={perPage} " +
             $"selCount={_listView.SelectedIndices.Count} firstSel={firstSel} focused={_listView.Focused} " +
-            $"search={IsSearchMode}/{_searchController.IsSearchInProgress} path=\"{TraceText(_currentPath)}\"");
+            $"search={IsSearchMode}/{_searchController.IsSearchInProgress} path=\"{TraceText(State.CurrentPath)}\"");
     }
 
     internal void ObserveTask(Task task, string source)

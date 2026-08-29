@@ -8,13 +8,26 @@ namespace SpeedExplorer;
 
 public partial class MainForm
 {
+    BrowserState ISelectionOpenHost.BrowserState => State;
+    bool ISelectionOpenHost.IsSearchMode => IsSearchMode;
+    TreeView ISelectionOpenHost.Sidebar => _sidebar;
+    ListView ISelectionOpenHost.FileListView => _listView;
+    ContextMenuStrip ISelectionOpenHost.ContextMenu => _contextMenu;
+    void ISelectionOpenHost.PopulateSidebar() => _sidebarController.PopulateSidebar();
+    void ISelectionOpenHost.ObserveTask(Task task, string source) => ObserveTask(task, source);
+    Task ISelectionOpenHost.NavigateTo(string path) => NavigateTo(path);
+    void ISelectionOpenHost.OpenShellPath(string path) => OpenShellPath(path);
+    bool ISelectionOpenHost.TryOpenImageViewerForImagePath(string imagePath, IEnumerable<string> preferredImagePool)
+        => TryOpenImageViewerForImagePath(imagePath, preferredImagePool);
+
     private sealed class SelectionOpenController
     {
-        private readonly MainForm _owner;
+        private readonly ISelectionOpenHost _host;
+        private BrowserState State => _host.BrowserState;
 
-        public SelectionOpenController(MainForm owner)
+        public SelectionOpenController(ISelectionOpenHost host)
         {
-            _owner = owner;
+            _host = host;
         }
 
         public void TogglePinSelected()
@@ -22,8 +35,8 @@ public partial class MainForm
             string path = GetSelectedPath();
             if (string.IsNullOrEmpty(path))
             {
-                if (!string.IsNullOrEmpty(_owner._currentPath) && _owner._currentPath != ThisPcPath && !_owner.IsSearchMode)
-                    path = _owner._currentPath;
+            if (!string.IsNullOrEmpty(State.CurrentPath) && State.CurrentPath != ThisPcPath && !_host.IsSearchMode)
+                path = State.CurrentPath;
                 else
                     return;
             }
@@ -35,24 +48,24 @@ public partial class MainForm
                 pinned.Add(path);
 
             AppSettings.Current.Save();
-            _owner._sidebarController.PopulateSidebar();
+            _host.PopulateSidebar();
         }
 
         public string GetSelectedPath()
         {
             var active = GetActiveSelectionContainer();
-            if (active == _owner._sidebar)
+            if (active == _host.Sidebar)
             {
-                var path = _owner._sidebar?.SelectedNode?.Tag as string;
+                var path = _host.Sidebar?.SelectedNode?.Tag as string;
                 return (path == SidebarSeparatorTag) ? string.Empty : (path ?? string.Empty);
             }
-            if (active == _owner._listView)
+            if (active == _host.FileListView)
             {
-                if (_owner._listView?.SelectedIndices.Count == 1)
+                if (_host.FileListView?.SelectedIndices.Count == 1)
                 {
-                    int selectedIndex = _owner._listView.SelectedIndices[0];
-                    if (selectedIndex >= 0 && selectedIndex < _owner._items.Count)
-                        return _owner._items[selectedIndex].FullPath;
+                    int selectedIndex = _host.FileListView.SelectedIndices[0];
+            if (selectedIndex >= 0 && selectedIndex < State.Items.Count)
+                return State.Items[selectedIndex].FullPath;
                 }
             }
             return string.Empty;
@@ -61,18 +74,18 @@ public partial class MainForm
         public string[] GetSelectedPaths()
         {
             var active = GetActiveSelectionContainer();
-            if (active == _owner._sidebar)
+            if (active == _host.Sidebar)
             {
-                string path = _owner._sidebar?.SelectedNode?.Tag as string ?? "";
+                string path = _host.Sidebar?.SelectedNode?.Tag as string ?? "";
                 return string.IsNullOrEmpty(path) || path == SidebarSeparatorTag ? Array.Empty<string>() : new[] { path };
             }
-            if (active == _owner._listView)
+            if (active == _host.FileListView)
             {
                 var paths = new System.Collections.Generic.List<string>();
-                foreach (int index in _owner._listView!.SelectedIndices)
+                foreach (int index in _host.FileListView!.SelectedIndices)
                 {
-                    if (index >= 0 && index < _owner._items.Count)
-                        paths.Add(_owner._items[index].FullPath);
+            if (index >= 0 && index < State.Items.Count)
+                paths.Add(State.Items[index].FullPath);
                 }
                 return paths.ToArray();
             }
@@ -82,16 +95,16 @@ public partial class MainForm
         private Control? GetActiveSelectionContainer()
         {
             // 1. If a control is focused, it wins.
-            if (_owner._sidebar != null && _owner._sidebar.Focused) return _owner._sidebar;
-            if (_owner._listView != null && _owner._listView.Focused) return _owner._listView;
+            if (_host.Sidebar != null && _host.Sidebar.Focused) return _host.Sidebar;
+            if (_host.FileListView != null && _host.FileListView.Focused) return _host.FileListView;
 
             // 2. If the context menu is open, use its source.
-            if (_owner._contextMenu != null && _owner._contextMenu.Visible)
-                return _owner._contextMenu.SourceControl;
+            if (_host.ContextMenu != null && _host.ContextMenu.Visible)
+                return _host.ContextMenu.SourceControl;
 
             // 3. Fallback: if list view has selection, assume it's the target even if not strictly focused.
-            if (_owner._listView != null && _owner._listView.SelectedIndices.Count > 0)
-                return _owner._listView;
+            if (_host.FileListView != null && _host.FileListView.SelectedIndices.Count > 0)
+                return _host.FileListView;
 
             return null;
         }
@@ -101,24 +114,24 @@ public partial class MainForm
             string path = GetSelectedPath();
             if (string.IsNullOrEmpty(path)) return;
 
-            var selectedItem = _owner._items.FirstOrDefault(i => i.FullPath == path);
+            var selectedItem = State.Items.FirstOrDefault(i => i.FullPath == path);
             if (selectedItem != null && selectedItem.IsShellItem)
             {
                 if (selectedItem.IsDirectory)
-                    _owner.ObserveTask(_owner.NavigateTo(selectedItem.FullPath), "SelectionOpen.OpenFolder");
+                    _host.ObserveTask(_host.NavigateTo(selectedItem.FullPath), "SelectionOpen.OpenFolder");
                 else
-                    _owner.OpenShellPath(selectedItem.FullPath);
+                    _host.OpenShellPath(selectedItem.FullPath);
                 return;
             }
 
             if (Directory.Exists(path))
             {
-                _owner.ObserveTask(_owner.NavigateTo(path), "SelectionOpen.OpenShellOrPath");
+                _host.ObserveTask(_host.NavigateTo(path), "SelectionOpen.OpenShellOrPath");
                 return;
             }
             else if (FileSystemService.IsImageFile(path) && AppSettings.Current.UseBuiltInImageViewer)
             {
-                if (_owner.TryOpenImageViewerForImagePath(path, _owner._items.Select(static x => x.FullPath)))
+            if (_host.TryOpenImageViewerForImagePath(path, State.Items.Select(static x => x.FullPath)))
                     return;
             }
 

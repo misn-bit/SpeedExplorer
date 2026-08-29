@@ -9,6 +9,7 @@ public partial class MainForm
     private sealed class ListViewController
     {
         private readonly MainForm _owner;
+        private BrowserState State => _owner.State;
 
         public ListViewController(MainForm owner)
         {
@@ -138,7 +139,7 @@ public partial class MainForm
                         int baseWidth = _owner.Unscale(col.Width);
                         meta.BaseWidth = baseWidth;
 
-                        bool isDriveView = _owner._currentPath == ThisPcPath && !_owner.IsSearchMode;
+            bool isDriveView = State.CurrentPath == ThisPcPath && !_owner.IsSearchMode;
                         var target = isDriveView ? AppSettings.Current.DriveColumnWidths : AppSettings.Current.FileColumnWidths;
                         target[meta.Key] = baseWidth;
                         AppSettings.Current.Save();

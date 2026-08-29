@@ -6,22 +6,29 @@ namespace SpeedExplorer;
 
 public partial class MainForm
 {
+    BrowserState IQuickLookHost.BrowserState => State;
+    Form IQuickLookHost.OwnerWindow => this;
+    string IQuickLookHost.GetSelectedPath() => GetSelectedPath();
+    bool IQuickLookHost.TryGetQuickLookBinding(out Keys keys)
+        => _hotkeyController.TryGetBinding("QuickLook", out keys);
+
     private sealed class QuickLookController : IDisposable
     {
-        private readonly MainForm _owner;
+        private readonly IQuickLookHost _host;
+        private BrowserState State => _host.BrowserState;
         private readonly System.Windows.Forms.Timer _timer;
 
         private QuickLookForm? _quickLook;
         private bool _isActive;
 
-        public QuickLookController(MainForm owner)
+        public QuickLookController(IQuickLookHost host)
         {
-            _owner = owner;
+            _host = host;
 
             _timer = new System.Windows.Forms.Timer { Interval = 50 };
             _timer.Tick += (s, e) =>
             {
-                if (_isActive && _owner._hotkeyController.TryGetBinding("QuickLook", out var k))
+                if (_isActive && _host.TryGetQuickLookBinding(out var k))
                 {
                     int vk = (int)(k & Keys.KeyCode);
                     if ((GetAsyncKeyState(vk) & 0x8000) == 0) Hide();
@@ -36,10 +43,10 @@ public partial class MainForm
         {
             if (_isActive) return;
 
-            var path = _owner.GetSelectedPath();
+            var path = _host.GetSelectedPath();
             if (string.IsNullOrEmpty(path)) return;
 
-            var item = _owner._items.FirstOrDefault(i => i.FullPath == path);
+            var item = State.Items.FirstOrDefault(i => i.FullPath == path);
             if (item == null || !IsPreviewable(item)) return;
 
             try
@@ -50,7 +57,7 @@ public partial class MainForm
                     _quickLook.Dispose();
                 }
 
-                _quickLook = new QuickLookForm { Owner = _owner };
+                _quickLook = new QuickLookForm { Owner = _host.OwnerWindow };
                 _quickLook.ShowPreview(item);
                 _quickLook.Show();
                 _isActive = true;

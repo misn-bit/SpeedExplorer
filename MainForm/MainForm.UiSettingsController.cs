@@ -8,6 +8,7 @@ public partial class MainForm
     private sealed class UiSettingsController
     {
         private readonly MainForm _owner;
+        private BrowserState State => _owner.State;
 
         public UiSettingsController(MainForm owner)
         {
@@ -133,10 +134,10 @@ public partial class MainForm
                 {
                     try
                     {
-                        _owner._listView.VirtualListSize = _owner._items.Count;
-                        if (_owner._items.Count > 0)
+            _owner._listView.VirtualListSize = State.Items.Count;
+            if (State.Items.Count > 0)
                         {
-                            int idx = selectedIndexBefore >= 0 && selectedIndexBefore < _owner._items.Count ? selectedIndexBefore : 0;
+            int idx = selectedIndexBefore >= 0 && selectedIndexBefore < State.Items.Count ? selectedIndexBefore : 0;
                             _owner._listView.SelectedIndices.Clear();
                             _owner._listView.SelectedIndices.Add(idx);
                             try { _owner._listView.FocusedItem = _owner._listView.Items[idx]; } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }

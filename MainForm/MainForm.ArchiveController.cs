@@ -14,6 +14,7 @@ public partial class MainForm
     private sealed class ArchiveController
     {
         private readonly MainForm _owner;
+        private BrowserState State => _owner.State;
 
         public ArchiveController(MainForm owner)
         {
@@ -22,12 +23,12 @@ public partial class MainForm
 
         public void CreateNewWinRarArchive()
         {
-            if (string.IsNullOrEmpty(_owner._currentPath) || _owner._currentPath == ThisPcPath) return;
+            if (string.IsNullOrEmpty(State.CurrentPath) || State.CurrentPath == ThisPcPath) return;
 
             try
             {
-                string name = _owner.GenerateUniqueName(_owner._currentPath, "New WinRAR Archive", ".rar");
-                string fullPath = Path.Combine(_owner._currentPath, name);
+                string name = _owner.GenerateUniqueName(State.CurrentPath, "New WinRAR Archive", ".rar");
+                string fullPath = Path.Combine(State.CurrentPath, name);
                 File.WriteAllBytes(fullPath, Array.Empty<byte>());
                 _owner.StartRenameAfterCreation(fullPath);
             }
@@ -43,14 +44,14 @@ public partial class MainForm
             if (paths.Length != 1) return;
             string zipPath = paths[0];
             if (!IsZipFilePath(zipPath)) return;
-            if (string.IsNullOrEmpty(_owner._currentPath) || _owner._currentPath == ThisPcPath) return;
+            if (string.IsNullOrEmpty(State.CurrentPath) || State.CurrentPath == ThisPcPath) return;
 
             if (MessageBox.Show("Files may be overwritten. Continue?", "Extract Here", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK)
                 return;
 
             try
             {
-                ZipFile.ExtractToDirectory(zipPath, _owner._currentPath, overwriteFiles: true);
+                ZipFile.ExtractToDirectory(zipPath, State.CurrentPath, overwriteFiles: true);
                 _ = _owner.RefreshCurrentAsync();
             }
             catch (Exception ex)
@@ -65,13 +66,13 @@ public partial class MainForm
             if (paths.Length != 1) return;
             string zipPath = paths[0];
             if (!IsZipFilePath(zipPath)) return;
-            if (string.IsNullOrEmpty(_owner._currentPath) || _owner._currentPath == ThisPcPath) return;
+            if (string.IsNullOrEmpty(State.CurrentPath) || State.CurrentPath == ThisPcPath) return;
 
             using var fbd = new FolderBrowserDialog
             {
                 Description = "Select destination folder",
                 UseDescriptionForTitle = true,
-                SelectedPath = _owner._currentPath,
+                    SelectedPath = State.CurrentPath,
                 ShowNewFolderButton = true
             };
             if (fbd.ShowDialog(_owner) != DialogResult.OK) return;
@@ -92,9 +93,9 @@ public partial class MainForm
         {
             var paths = _owner.GetSelectedPaths();
             if (paths.Length == 0) return;
-            if (string.IsNullOrEmpty(_owner._currentPath) || _owner._currentPath == ThisPcPath) return;
+            if (string.IsNullOrEmpty(State.CurrentPath) || State.CurrentPath == ThisPcPath) return;
 
-            string archiveName = paths.Length == 1 ? Path.GetFileNameWithoutExtension(paths[0]) : Path.GetFileName(_owner._currentPath);
+            string archiveName = paths.Length == 1 ? Path.GetFileNameWithoutExtension(paths[0]) : Path.GetFileName(State.CurrentPath);
             if (string.IsNullOrEmpty(archiveName) || archiveName == ":") archiveName = "archive";
 
             using var sfd = new SaveFileDialog
@@ -104,7 +105,7 @@ public partial class MainForm
                 DefaultExt = "zip",
                 AddExtension = true,
                 FileName = $"{archiveName}.zip",
-                InitialDirectory = _owner._currentPath,
+                InitialDirectory = State.CurrentPath,
                 OverwritePrompt = true
             };
 
@@ -226,11 +227,11 @@ public partial class MainForm
         public void ExecuteWinRarAddPrompt(string[] paths)
         {
             if (paths.Length == 0) return;
-            if (string.IsNullOrEmpty(_owner._currentPath) || _owner._currentPath == ThisPcPath) return;
+            if (string.IsNullOrEmpty(State.CurrentPath) || State.CurrentPath == ThisPcPath) return;
 
             string defaultName = paths.Length == 1
                 ? Path.GetFileNameWithoutExtension(paths[0])
-                : Path.GetFileName(_owner._currentPath);
+                : Path.GetFileName(State.CurrentPath);
             if (string.IsNullOrEmpty(defaultName) || defaultName == ":")
                 defaultName = "archive";
 
@@ -246,7 +247,7 @@ public partial class MainForm
             if (paths.Length != 1) return;
             string archivePath = paths[0];
             if (!IsArchiveFilePath(archivePath)) return;
-            if (string.IsNullOrEmpty(_owner._currentPath) || _owner._currentPath == ThisPcPath) return;
+            if (string.IsNullOrEmpty(State.CurrentPath) || State.CurrentPath == ThisPcPath) return;
 
             string winRarPath = GetWinRarPath();
             if (string.IsNullOrEmpty(winRarPath))
@@ -256,7 +257,7 @@ public partial class MainForm
             }
 
             string baseName = Path.GetFileNameWithoutExtension(archivePath);
-            string destination = Path.Combine(_owner._currentPath, baseName);
+            string destination = Path.Combine(State.CurrentPath, baseName);
             if (Directory.Exists(destination))
             {
                 var result = MessageBox.Show(
@@ -268,8 +269,8 @@ public partial class MainForm
                 if (result == DialogResult.Cancel) return;
                 if (result == DialogResult.No)
                 {
-                    string uniqueName = _owner.GenerateUniqueName(_owner._currentPath, baseName, "");
-                    destination = Path.Combine(_owner._currentPath, uniqueName);
+            string uniqueName = _owner.GenerateUniqueName(State.CurrentPath, baseName, "");
+            destination = Path.Combine(State.CurrentPath, uniqueName);
                 }
             }
 
@@ -280,7 +281,7 @@ public partial class MainForm
                 string args = $"x \"{archivePath}\" \"{destination}\\\"";
                 Process.Start(new ProcessStartInfo(winRarPath, args)
                 {
-                    WorkingDirectory = _owner._currentPath,
+                WorkingDirectory = State.CurrentPath,
                     UseShellExecute = true
                 });
                 ScheduleRefresh();
@@ -302,7 +303,7 @@ public partial class MainForm
             {
                 Description = "Select destination folder",
                 UseDescriptionForTitle = true,
-                SelectedPath = _owner._currentPath,
+                SelectedPath = State.CurrentPath,
                 ShowNewFolderButton = true
             };
             if (fbd.ShowDialog(_owner) != DialogResult.OK) return;
@@ -343,7 +344,7 @@ public partial class MainForm
 
             try
             {
-                string archivePath = Path.Combine(_owner._currentPath, $"{archiveBaseName}.rar");
+            string archivePath = Path.Combine(State.CurrentPath, $"{archiveBaseName}.rar");
                 if (File.Exists(archivePath))
                 {
                     var overwriteResult = MessageBox.Show(
@@ -354,8 +355,8 @@ public partial class MainForm
                     if (overwriteResult == DialogResult.Cancel) return;
                     if (overwriteResult == DialogResult.No)
                     {
-                        string uniqueName = _owner.GenerateUniqueName(_owner._currentPath, archiveBaseName, ".rar");
-                        archivePath = Path.Combine(_owner._currentPath, uniqueName);
+            string uniqueName = _owner.GenerateUniqueName(State.CurrentPath, archiveBaseName, ".rar");
+            archivePath = Path.Combine(State.CurrentPath, uniqueName);
                     }
                 }
 
@@ -365,7 +366,7 @@ public partial class MainForm
 
                 Process.Start(new ProcessStartInfo(winRarPath, args)
                 {
-                    WorkingDirectory = _owner._currentPath,
+                WorkingDirectory = State.CurrentPath,
                     UseShellExecute = true
                 });
 

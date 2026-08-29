@@ -17,11 +17,11 @@ public partial class MainForm
 
     private bool CanManipulateSelected()
     {
-        if (string.IsNullOrEmpty(_currentPath)) return false;
-        if (IsShellPath(_currentPath)) return false;
+        if (string.IsNullOrEmpty(State.CurrentPath)) return false;
+        if (IsShellPath(State.CurrentPath)) return false;
 
         // Block manipulation in This PC if not searching (drives view)
-        if (!IsSearchMode && _currentPath == ThisPcPath) return false;
+        if (!IsSearchMode && State.CurrentPath == ThisPcPath) return false;
 
         // If sidebar is focused on a drive or common folder, block
         if (_sidebar.Focused && _sidebar.SelectedNode != null)
@@ -37,9 +37,9 @@ public partial class MainForm
         {
             foreach (int index in _listView.SelectedIndices)
             {
-                if (index >= 0 && index < _items.Count)
+                if (index >= 0 && index < State.Items.Count)
                 {
-                    var item = _items[index];
+                    var item = State.Items[index];
                     if (item.IsShellItem) return false;
                     // Any item that looks like a drive root should be protected
                     if (!string.IsNullOrEmpty(item.DriveFormat) || item.Extension == ".drive" || item.Extension == ".usb" || (item.FullPath.Length <= 3 && item.FullPath.EndsWith(":\\")))
@@ -74,10 +74,10 @@ public partial class MainForm
             StringComparer.OrdinalIgnoreCase);
 
         // Because VirtualMode is on, we iterate indices and check cached value if possible
-        // But _allItems is our data source
-        for (int i = 0; i < _items.Count; i++)
+        // But State.AllItems is our data source
+        for (int i = 0; i < State.Items.Count; i++)
         {
-            var item = _items[i];
+            var item = State.Items[i];
 
             // Check full path first
             bool matches = pathSet.Contains(item.FullPath);
@@ -104,12 +104,12 @@ public partial class MainForm
 
     private void SelectAll()
     {
-        if (_listView == null || _items.Count == 0) return;
+        if (_listView == null || State.Items.Count == 0) return;
         _listView.BeginUpdate();
         try
         {
             _listView.SelectedIndices.Clear();
-            for (int i = 0; i < _items.Count; i++)
+            for (int i = 0; i < State.Items.Count; i++)
             {
                 _listView.SelectedIndices.Add(i);
             }
@@ -126,8 +126,8 @@ public partial class MainForm
         if (paths.Count == 0)
         {
             // If no selection, apply to current path
-            if (!string.IsNullOrEmpty(_currentPath) && _currentPath != ThisPcPath && !IsSearchMode)
-                paths.Add(_currentPath);
+            if (!string.IsNullOrEmpty(State.CurrentPath) && State.CurrentPath != ThisPcPath && !IsSearchMode)
+                paths.Add(State.CurrentPath);
             else
                 return;
         }
@@ -195,12 +195,12 @@ public partial class MainForm
 
     private void CreateNewFolder()
     {
-        if (string.IsNullOrEmpty(_currentPath) || _currentPath == ThisPcPath) return;
+        if (string.IsNullOrEmpty(State.CurrentPath) || State.CurrentPath == ThisPcPath) return;
 
         try
         {
-            string name = GenerateUniqueName(_currentPath, "New Folder", "");
-            string fullPath = Path.Combine(_currentPath, name);
+            string name = GenerateUniqueName(State.CurrentPath, "New Folder", "");
+            string fullPath = Path.Combine(State.CurrentPath, name);
             Directory.CreateDirectory(fullPath);
             StartRenameAfterCreation(fullPath);
         }
@@ -212,12 +212,12 @@ public partial class MainForm
 
     private void CreateNewTextFile()
     {
-        if (string.IsNullOrEmpty(_currentPath) || _currentPath == ThisPcPath) return;
+        if (string.IsNullOrEmpty(State.CurrentPath) || State.CurrentPath == ThisPcPath) return;
 
         try
         {
-            string name = GenerateUniqueName(_currentPath, "New Text File", ".txt");
-            string fullPath = Path.Combine(_currentPath, name);
+            string name = GenerateUniqueName(State.CurrentPath, "New Text File", ".txt");
+            string fullPath = Path.Combine(State.CurrentPath, name);
             File.WriteAllText(fullPath, "");
             StartRenameAfterCreation(fullPath);
         }

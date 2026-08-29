@@ -10,6 +10,7 @@ public partial class MainForm
     private sealed class LayoutController
     {
         private readonly MainForm _owner;
+        private BrowserState State => _owner.State;
 
         public LayoutController(MainForm owner)
         {
@@ -108,7 +109,7 @@ public partial class MainForm
 
             _owner._searchBox.TextChanged += (s, e) =>
             {
-                if (_owner._suppressSearchTextChanged || !_owner._searchBox.Enabled || _owner._isShellMode)
+            if (_owner._suppressSearchTextChanged || !_owner._searchBox.Enabled || !State.IsShellMode)
                     return;
                 if (_owner._searchBox.Text != Localization.T("search_placeholder"))
                 {
@@ -343,7 +344,7 @@ public partial class MainForm
 
             _owner._llmChatPanel = new LlmChatPanel
             {
-                GetCurrentDirectory = () => _owner._currentPath,
+                GetCurrentDirectory = () => State.CurrentPath,
                 GetOwnerHandle = () => _owner.Handle,
                 // Debounce AI-triggered refresh together with watcher events to avoid refresh storms.
                 OnOperationsComplete = () => _owner.RequestWatcherRefresh()
@@ -619,9 +620,9 @@ public partial class MainForm
                 if (!_owner._retryLoadPending || string.IsNullOrEmpty(_owner._retryLoadPath))
                     return;
 
-                bool isEmpty = _owner._items.Count == 0 && !_owner.IsDriveItemsOnly();
+            bool isEmpty = State.Items.Count == 0 && !_owner.IsDriveItemsOnly();
 
-                if (_owner._currentPath != _owner._retryLoadPath && !isEmpty)
+            if (State.CurrentPath != _owner._retryLoadPath && !isEmpty)
                 {
                     _owner._retryLoadPending = false;
                     return;
@@ -629,7 +630,7 @@ public partial class MainForm
 
                 if (_owner.IsDriveItemsOnly() || isEmpty)
                 {
-                    if (_owner._currentPath == _owner._retryLoadPath)
+            if (State.CurrentPath == _owner._retryLoadPath)
                     {
                         _owner._retryLoadPending = false;
                         if (_owner.IsHandleCreated && !_owner.IsDisposed)
@@ -648,13 +649,13 @@ public partial class MainForm
 
         private string? GetUpTargetPath()
         {
-            if (string.IsNullOrWhiteSpace(_owner._currentPath) || _owner._currentPath == ThisPcPath)
+            if (string.IsNullOrWhiteSpace(State.CurrentPath) || State.CurrentPath == ThisPcPath)
                 return null;
 
-            if (IsShellPath(_owner._currentPath))
-                return _owner.GetShellParentPath(_owner._currentPath) ?? ThisPcPath;
+            if (IsShellPath(State.CurrentPath))
+                return _owner.GetShellParentPath(State.CurrentPath) ?? ThisPcPath;
 
-            var parent = Directory.GetParent(_owner._currentPath);
+            var parent = Directory.GetParent(State.CurrentPath);
             return parent?.FullName ?? ThisPcPath;
         }
 

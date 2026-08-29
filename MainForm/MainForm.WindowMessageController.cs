@@ -18,7 +18,7 @@ public partial class MainForm
         {
             BeginInvoke(() => {
                 _sidebarController.PopulateSidebar();
-                if (_currentPath == ThisPcPath) LoadDrives();
+                if (State.CurrentPath == ThisPcPath) LoadDrives();
             });
         }
 

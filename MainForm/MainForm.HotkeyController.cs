@@ -11,6 +11,7 @@ public partial class MainForm
     private sealed class HotkeyController
     {
         private readonly MainForm _owner;
+        private BrowserState State => _owner.State;
 
         private readonly Dictionary<string, Keys> _actionToKeys = new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<Keys, string> _keysToAction = new();
@@ -71,7 +72,7 @@ public partial class MainForm
             var effective = NormalizeKeyData(keyData);
 
             // Block destructive shortcuts in This PC (drives view), regardless of focus.
-            if (_owner._currentPath == ThisPcPath && !_owner.IsSearchMode)
+            if (State.CurrentPath == ThisPcPath && !_owner.IsSearchMode)
             {
                 if (effective == (Keys.Control | Keys.X) ||
                     effective == (Keys.Control | Keys.V) ||
@@ -158,13 +159,13 @@ public partial class MainForm
                 case "Copy": if (_owner.CanManipulateSelected()) _owner.CopySelected(); break;
                 case "Cut": if (_owner.CanManipulateSelected()) _owner.CutSelected(); break;
                 case "Paste":
-                    if (_owner._sidebar.Focused || _owner._currentPath == ThisPcPath) return;
+            if (_owner._sidebar.Focused || State.CurrentPath == ThisPcPath) return;
                     _owner.Paste();
                     break;
                 case "Delete": if (_owner.CanManipulateSelected()) _owner.DeleteSelected(permanent: false); break;
                 case "DeletePermanent": if (_owner.CanManipulateSelected()) _owner.DeleteSelected(permanent: true); break;
                 case "Rename": if (_owner.CanManipulateSelected()) _owner.StartRename(); break;
-                case "EditTags": if (_owner.CanManipulateSelected() && _owner._currentPath != ThisPcPath) _owner.EditTags(); break;
+            case "EditTags": if (_owner.CanManipulateSelected() && State.CurrentPath != ThisPcPath) _owner.EditTags(); break;
                 case "SelectAll": _owner.SelectAll(); break;
 
                 case "FocusFilePanel":
@@ -180,11 +181,11 @@ public partial class MainForm
                     break;
 
                 case "Undo":
-                    if (_owner._currentPath == ThisPcPath) return;
+            if (State.CurrentPath == ThisPcPath) return;
                     _owner.Undo();
                     break;
                 case "Redo":
-                    if (_owner._currentPath == ThisPcPath) return;
+            if (State.CurrentPath == ThisPcPath) return;
                     _owner.Redo();
                     break;
                 case "ToggleSidebar":

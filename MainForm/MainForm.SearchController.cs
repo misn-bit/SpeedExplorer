@@ -11,6 +11,23 @@ namespace SpeedExplorer;
 
 public partial class MainForm
 {
+    BrowserState ISearchHost.BrowserState => State;
+    ListView ISearchHost.FileListView => _listView;
+    ToolStripStatusLabel ISearchHost.StatusLabel => _statusLabel;
+    bool ISearchHost.IsDisposed => IsDisposed;
+    bool ISearchHost.Disposing => Disposing;
+    bool ISearchHost.IsHandleCreated => IsHandleCreated;
+    void ISearchHost.BeginInvoke(Action action) => BeginInvoke(action);
+    void ISearchHost.Invoke(Action action) => Invoke(action);
+    void ISearchHost.SetupDriveColumns(ListView listView) => SetupDriveColumns(listView);
+    void ISearchHost.SetupFileColumns(ListView listView) => SetupFileColumns(listView);
+    void ISearchHost.UpdateActiveTabTitle() => UpdateActiveTabTitle();
+    void ISearchHost.RefreshSearchOverlayVisibility() => RefreshSearchOverlayVisibility();
+    void ISearchHost.ResetListViewportTopAsync(int preferredIndex, string reason)
+        => ResetListViewportTopAsync(preferredIndex, reason);
+    void ISearchHost.LogListViewState(string scope, string stage) => LogListViewState(scope, stage);
+    void ISearchHost.InvalidateListItem(int index) => InvalidateListItem(index);
+
     private Font? _searchOverlayFont;
     private void UpdateSearchTagToggleButtonState()
     {
@@ -81,7 +98,7 @@ public partial class MainForm
 
         bool show = _searchController.IsSearchMode &&
                     _searchController.IsSearchInProgress &&
-                    _items.Count == 0;
+                    State.Items.Count == 0;
 
         if (_searchingOverlay.Visible != show)
             _searchingOverlay.Visible = show;
@@ -92,7 +109,8 @@ public partial class MainForm
 
     private sealed class SearchController
     {
-        private readonly MainForm _owner;
+        private readonly ISearchHost _owner;
+        private BrowserState State => _owner.BrowserState;
         private readonly string[] _spinnerFrames = new[] { "|", "/", "-", "\\" };
         private const int LivePublishMinIntervalMs = 120;
         private const int LivePublishMinResultsDelta = 40;
@@ -106,9 +124,9 @@ public partial class MainForm
         public bool IsSearchMode { get; private set; }
         public bool IsSearchInProgress { get; private set; }
         public bool IsTagSearchOnly { get; private set; }
-        private bool HasProgressRow => IsSearchMode && IsSearchInProgress && _owner._listView != null && _owner._listView.VirtualMode && _owner._items.Count > 0;
+        private bool HasProgressRow => IsSearchMode && IsSearchInProgress && _owner.FileListView != null && _owner.FileListView.VirtualMode && State.Items.Count > 0;
 
-        public SearchController(MainForm owner)
+        public SearchController(ISearchHost owner)
         {
             _owner = owner;
         }
@@ -153,23 +171,23 @@ public partial class MainForm
             StopStatusSpinner();
             _owner.UpdateActiveTabTitle();
 
-            if (_owner._listView != null && !_owner._listView.IsDisposed)
+            if (_owner.FileListView != null && !_owner.FileListView.IsDisposed)
             {
-                int target = _owner._items.Count;
-                if (_owner._listView.VirtualListSize != target)
-                    _owner._listView.VirtualListSize = target;
-                _owner._listView.Invalidate();
+                int target = State.Items.Count;
+                if (_owner.FileListView.VirtualListSize != target)
+                    _owner.FileListView.VirtualListSize = target;
+                _owner.FileListView.Invalidate();
             }
 
-            int scanned = Math.Max(_owner._items.Count, _owner._allItems.Count);
-            _owner._statusLabel.Text = string.Format(Localization.T("status_search_done"), _owner._items.Count, scanned);
+                int scanned = Math.Max(State.Items.Count, State.AllItems.Count);
+                _owner.StatusLabel.Text = string.Format(Localization.T("status_search_done"), State.Items.Count, scanned);
             _owner.RefreshSearchOverlayVisibility();
         }
 
         public bool TryBuildProgressVirtualItem(int index, out ListViewItem item)
         {
             item = null!;
-            if (!HasProgressRow || index != _owner._items.Count)
+            if (!HasProgressRow || index != State.Items.Count)
                 return false;
 
             item = new ListViewItem($"{Localization.T("search_overlay_searching")} {_spinnerFrames[_spinnerFrameIndex]}")
@@ -177,7 +195,7 @@ public partial class MainForm
                 Tag = SearchProgressRowTag
             };
 
-            while (item.SubItems.Count < _owner._listView.Columns.Count)
+            while (item.SubItems.Count < _owner.FileListView.Columns.Count)
                 item.SubItems.Add("");
 
             return true;
@@ -191,57 +209,57 @@ public partial class MainForm
             StopStatusSpinner();
 
             // Always restore list from current folder snapshot even if search mode flag desynced.
-            if (!IsSearchMode && _owner._items.Count > 0)
+            if (!IsSearchMode && State.Items.Count > 0)
             {
                 _owner.RefreshSearchOverlayVisibility();
                 return;
             }
 
-            _owner._listView.VirtualListSize = 0;
+            _owner.FileListView.VirtualListSize = 0;
             IsSearchMode = false;
 
-            if (_owner._currentPath == ThisPcPath)
-                _owner.SetupDriveColumns(_owner._listView);
+            if (State.CurrentPath == ThisPcPath)
+                _owner.SetupDriveColumns(_owner.FileListView);
             else
-                _owner.SetupFileColumns(_owner._listView);
+                _owner.SetupFileColumns(_owner.FileListView);
 
-            _owner._items = new List<FileItem>(_owner._allItems);
-            FileSystemService.SortItems(_owner._items, _owner._sortColumn, _owner._sortDirection, _owner._taggedFilesOnTop);
+            State.Items = new List<FileItem>(State.AllItems);
+            FileSystemService.SortItems(State.Items, State.SortColumn, State.SortDirection, State.TaggedFilesOnTop);
 
-            _owner._listView.BeginUpdate();
+            _owner.FileListView.BeginUpdate();
             try
             {
-                _owner._listView.SelectedIndices.Clear();
-                _owner._listView.VirtualListSize = 0;
-                _owner._listView.VirtualListSize = _owner._items.Count;
+                _owner.FileListView.SelectedIndices.Clear();
+                _owner.FileListView.VirtualListSize = 0;
+                _owner.FileListView.VirtualListSize = State.Items.Count;
             }
             finally
             {
-                _owner._listView.EndUpdate();
+                _owner.FileListView.EndUpdate();
             }
 
             // Force viewport reset and full repaint after cancelling search to avoid stale top-index artifacts.
             _owner.BeginInvoke((Action)(() =>
             {
-                if (_owner._listView == null || _owner._listView.IsDisposed || !_owner._listView.IsHandleCreated)
+                if (_owner.FileListView == null || _owner.FileListView.IsDisposed || !_owner.FileListView.IsHandleCreated)
                     return;
 
                 try
                 {
-                    _owner._listView.SelectedIndices.Clear();
-                    _owner._listView.VirtualListSize = _owner._items.Count;
-                    if (_owner._items.Count > 0)
+                    _owner.FileListView.SelectedIndices.Clear();
+                    _owner.FileListView.VirtualListSize = State.Items.Count;
+                    if (State.Items.Count > 0)
                     {
-                        try { SendMessage(_owner._listView.Handle, 0x1013 /* LVM_ENSUREVISIBLE */, 0, 0); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
-                        try { _owner._listView.EnsureVisible(0); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+                        try { SendMessage(_owner.FileListView.Handle, 0x1013 /* LVM_ENSUREVISIBLE */, 0, 0); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+                        try { _owner.FileListView.EnsureVisible(0); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                     }
-                    _owner._listView.Invalidate();
-                    _owner._listView.Update();
+                    _owner.FileListView.Invalidate();
+                    _owner.FileListView.Update();
                 }
                 catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
             }));
 
-            _owner._statusLabel.Text = string.Format(Localization.T("status_ready_items"), _owner._items.Count);
+            _owner.StatusLabel.Text = string.Format(Localization.T("status_ready_items"), State.Items.Count);
             _owner.RefreshSearchOverlayVisibility();
             _owner.UpdateActiveTabTitle();
         }
@@ -265,9 +283,9 @@ public partial class MainForm
                 return;
             }
 
-            if (IsShellPath(_owner._currentPath))
+            if (IsShellPath(State.CurrentPath))
             {
-                _owner._statusLabel.Text = Localization.T("search_not_supported");
+                _owner.StatusLabel.Text = Localization.T("search_not_supported");
                 return;
             }
 
@@ -290,16 +308,16 @@ public partial class MainForm
             if (!IsCurrentSearch(cts)) return;
 
             IsSearchInProgress = true;
-            _owner._items = new List<FileItem>();
-            _owner._listView.VirtualListSize = 0;
+            State.Items = new List<FileItem>();
+            _owner.FileListView.VirtualListSize = 0;
             _owner.LogListViewState("SEARCH", "begin-empty-before-reset");
             _owner.ResetListViewportTopAsync(0, "SEARCH-empty");
             SetSearchStatus(Localization.T("status_searching_progress"), 0, 0);
             _owner.RefreshSearchOverlayVisibility();
-            if (_owner._listView.Columns.Count == 0 ||
-                (_owner._listView.Columns[0].Tag as ColumnMeta)?.Key != "col_name")
+            if (_owner.FileListView.Columns.Count == 0 ||
+                (_owner.FileListView.Columns[0].Tag as ColumnMeta)?.Key != "col_name")
             {
-                _owner.SetupFileColumns(_owner._listView);
+                _owner.SetupFileColumns(_owner.FileListView);
             }
 
             List<FileItem> results = new List<FileItem>();
@@ -324,7 +342,7 @@ public partial class MainForm
 
                 void PublishLiveResults(bool force)
                 {
-                    if (_owner._listView == null || _owner._listView.IsDisposed)
+                    if (_owner.FileListView == null || _owner.FileListView.IsDisposed)
                         return;
 
                     int availableCount = results.Count;
@@ -340,7 +358,7 @@ public partial class MainForm
                         return;
                     }
 
-                    _owner._items = results;
+                    State.Items = results;
                     RefreshVirtualListSize();
                     if (publishedCount == 0 && availableCount > 0 && !_userScrolledDuringSearch)
                     {
@@ -350,7 +368,7 @@ public partial class MainForm
 
                     publishedCount = availableCount;
                     lastLivePublishTick = now;
-                    _owner._listView.Invalidate();
+                    _owner.FileListView.Invalidate();
                     _owner.RefreshSearchOverlayVisibility();
                 }
 
@@ -383,13 +401,13 @@ public partial class MainForm
                 {
                     SetSearchStatus(Localization.T("status_searching_tags"));
                     await FileSystemService.SearchTagsAsync(
-                        _owner._currentPath,
+                        State.CurrentPath,
                         query,
                         uiUpdateAction,
                         cts.Token);
                     finalScanned = results.Count;
                 }
-                else if (_owner._currentPath == ThisPcPath)
+                else if (State.CurrentPath == ThisPcPath)
                 {
                     SetSearchStatus(Localization.T("status_searching_all_drives"));
                     var drives = DriveInfo.GetDrives().Where(d => d.IsReady).Select(d => d.Name).ToList();
@@ -432,7 +450,7 @@ public partial class MainForm
                     });
 
                     await FileSystemService.SearchFilesRecursiveAsync(
-                        _owner._currentPath,
+                        State.CurrentPath,
                         query,
                         progress,
                         uiUpdateAction,
@@ -443,30 +461,30 @@ public partial class MainForm
                 if (!IsCurrentSearch(cts)) return;
 
                 PublishLiveResults(force: true);
-                FileSystemService.SortItems(results, _owner._sortColumn, _owner._sortDirection, _owner._taggedFilesOnTop);
-                _owner._items = results;
+                FileSystemService.SortItems(results, State.SortColumn, State.SortDirection, State.TaggedFilesOnTop);
+                State.Items = results;
                 IsSearchInProgress = false;
 
-                _owner._listView.BeginUpdate();
+                _owner.FileListView.BeginUpdate();
                 try
                 {
-                    _owner._listView.SelectedIndices.Clear();
-                    _owner._listView.VirtualListSize = 0;
-                    _owner._listView.VirtualListSize = _owner._items.Count;
-                    if (_owner._items.Count > 0 && !_userScrolledDuringSearch)
+                    _owner.FileListView.SelectedIndices.Clear();
+                    _owner.FileListView.VirtualListSize = 0;
+                    _owner.FileListView.VirtualListSize = State.Items.Count;
+                    if (State.Items.Count > 0 && !_userScrolledDuringSearch)
                     {
-                        try { _owner._listView.TopItem = _owner._listView.Items[0]; } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
-                        try { _owner._listView.Items[0].EnsureVisible(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+                        try { _owner.FileListView.TopItem = _owner.FileListView.Items[0]; } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+                        try { _owner.FileListView.Items[0].EnsureVisible(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                     }
                 }
                 finally
                 {
-                    _owner._listView.EndUpdate();
+                    _owner.FileListView.EndUpdate();
                 }
 
                 StopStatusSpinner();
-                finalScanned = Math.Max(finalScanned, _owner._items.Count);
-                _owner._statusLabel.Text = string.Format(Localization.T("status_search_done"), _owner._items.Count, finalScanned);
+                finalScanned = Math.Max(finalScanned, State.Items.Count);
+                _owner.StatusLabel.Text = string.Format(Localization.T("status_search_done"), State.Items.Count, finalScanned);
                 _owner.LogListViewState("SEARCH", "done-before-reset");
                 if (!_userScrolledDuringSearch)
                     _owner.ResetListViewportTopAsync(0, "SEARCH-done");
@@ -480,16 +498,16 @@ public partial class MainForm
                     {
                         if (IsCurrentSearch(cts))
                         {
-                            FileSystemService.SortItems(results, _owner._sortColumn, _owner._sortDirection, _owner._taggedFilesOnTop);
-                            _owner._items = results;
+                            FileSystemService.SortItems(results, State.SortColumn, State.SortDirection, State.TaggedFilesOnTop);
+                            State.Items = results;
                             IsSearchInProgress = false;
-                            _owner._listView.VirtualListSize = _owner._items.Count;
+                            _owner.FileListView.VirtualListSize = State.Items.Count;
                             StopStatusSpinner();
-                            _owner._statusLabel.Text = string.Format(Localization.T("status_search_stopped"), _owner._items.Count);
+                            _owner.StatusLabel.Text = string.Format(Localization.T("status_search_stopped"), State.Items.Count);
                             _owner.LogListViewState("SEARCH", "stopped-before-reset");
                             if (!_userScrolledDuringSearch)
                                 _owner.ResetListViewportTopAsync(0, "SEARCH-stopped");
-                            _owner._listView.Invalidate();
+                            _owner.FileListView.Invalidate();
                             _owner.RefreshSearchOverlayVisibility();
                         }
                     });
@@ -499,7 +517,7 @@ public partial class MainForm
             {
                 if (!IsCurrentSearch(cts)) return;
                 StopStatusSpinner();
-                _owner._statusLabel.Text = string.Format(Localization.T("status_error"), ex.Message);
+                _owner.StatusLabel.Text = string.Format(Localization.T("status_error"), ex.Message);
                 IsSearchInProgress = false;
                 _owner.RefreshSearchOverlayVisibility();
             }
@@ -514,7 +532,7 @@ public partial class MainForm
         {
             _searchStatusBase = args.Length == 0 ? format : string.Format(format, args);
             EnsureStatusSpinnerRunning();
-            _owner._statusLabel.Text = $"{_searchStatusBase} {_spinnerFrames[_spinnerFrameIndex]}";
+            _owner.StatusLabel.Text = $"{_searchStatusBase} {_spinnerFrames[_spinnerFrameIndex]}";
         }
 
         private void EnsureStatusSpinnerRunning()
@@ -531,9 +549,9 @@ public partial class MainForm
                     }
 
                     _spinnerFrameIndex = (_spinnerFrameIndex + 1) % _spinnerFrames.Length;
-                    _owner._statusLabel.Text = $"{_searchStatusBase} {_spinnerFrames[_spinnerFrameIndex]}";
+                    _owner.StatusLabel.Text = $"{_searchStatusBase} {_spinnerFrames[_spinnerFrameIndex]}";
                     if (HasProgressRow)
-                        _owner.InvalidateListItem(_owner._items.Count);
+                        _owner.InvalidateListItem(State.Items.Count);
                 };
             }
 
@@ -550,12 +568,12 @@ public partial class MainForm
 
         private void RefreshVirtualListSize()
         {
-            if (_owner._listView == null || _owner._listView.IsDisposed || !_owner._listView.VirtualMode)
+            if (_owner.FileListView == null || _owner.FileListView.IsDisposed || !_owner.FileListView.VirtualMode)
                 return;
 
-            int target = _owner._items.Count + (HasProgressRow ? 1 : 0);
-            if (_owner._listView.VirtualListSize != target)
-                _owner._listView.VirtualListSize = target;
+            int target = State.Items.Count + (HasProgressRow ? 1 : 0);
+            if (_owner.FileListView.VirtualListSize != target)
+                _owner.FileListView.VirtualListSize = target;
         }
     }
 }

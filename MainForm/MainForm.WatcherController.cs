@@ -38,6 +38,7 @@ public partial class MainForm
         private const int PatchEventFactor = 2; // Events can be noisier than distinct paths.
 
         private readonly MainForm _owner;
+        private BrowserState State => _owner.State;
         private readonly System.Windows.Forms.Timer _watcherTimer;
         private FileSystemWatcher? _watcher;
         private readonly object _pendingLock = new();
@@ -150,9 +151,9 @@ public partial class MainForm
 
             if (_owner._nav.IsNavigating ||
                 _owner.IsSearchMode ||
-                MainForm.IsShellPath(_owner._currentPath) ||
-                string.IsNullOrWhiteSpace(_owner._currentPath) ||
-                _owner._currentPath == ThisPcPath ||
+                MainForm.IsShellPath(State.CurrentPath) ||
+                string.IsNullOrWhiteSpace(State.CurrentPath) ||
+                State.CurrentPath == ThisPcPath ||
                 _owner._listView == null ||
                 _owner._listView.IsDisposed)
             {
@@ -167,7 +168,7 @@ public partial class MainForm
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .Count();
 
-            int totalItems = Math.Max(_owner._allItems.Count, _owner._items.Count);
+            int totalItems = Math.Max(State.AllItems.Count, State.Items.Count);
             int dynamicDistinctLimit = (int)Math.Round(totalItems * PatchRatio);
             dynamicDistinctLimit = Math.Max(PatchMinDistinctPaths, Math.Min(PatchMaxDistinctPaths, dynamicDistinctLimit));
             int dynamicEventLimit = dynamicDistinctLimit * PatchEventFactor;
@@ -188,7 +189,7 @@ public partial class MainForm
             catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
 
             var map = new Dictionary<string, FileItem>(StringComparer.OrdinalIgnoreCase);
-            foreach (var item in _owner._allItems)
+            foreach (var item in State.AllItems)
             {
                 if (!string.IsNullOrWhiteSpace(item.FullPath))
                     map[item.FullPath] = item;
@@ -262,10 +263,10 @@ public partial class MainForm
             if (changedCount == 0)
                 return true;
 
-            _owner._allItems = map.Values.ToList();
-            _owner.QueueGenericIconsWarmup(_owner._allItems);
-            FileSystemService.SortItems(_owner._allItems, _owner._sortColumn, _owner._sortDirection, _owner._taggedFilesOnTop);
-            _owner._items = new List<FileItem>(_owner._allItems);
+            State.AllItems = map.Values.ToList();
+            _owner.QueueGenericIconsWarmup(State.AllItems);
+            FileSystemService.SortItems(State.AllItems, State.SortColumn, State.SortDirection, State.TaggedFilesOnTop);
+            State.Items = new List<FileItem>(State.AllItems);
 
             _owner._listView.BeginUpdate();
             try
@@ -280,7 +281,7 @@ public partial class MainForm
                 else
                 {
                     _owner._listView.VirtualListSize = 0;
-                    _owner._listView.VirtualListSize = _owner._items.Count;
+                    _owner._listView.VirtualListSize = State.Items.Count;
                 }
 
                 if (selectedPaths.Count > 0)
@@ -293,7 +294,7 @@ public partial class MainForm
 
             if (!string.IsNullOrWhiteSpace(topPath))
             {
-                int topIndex = _owner._items.FindIndex(x => x.FullPath.Equals(topPath, StringComparison.OrdinalIgnoreCase));
+                int topIndex = State.Items.FindIndex(x => x.FullPath.Equals(topPath, StringComparison.OrdinalIgnoreCase));
                 if (topIndex >= 0)
                 {
                     try
@@ -308,8 +309,8 @@ public partial class MainForm
             }
 
             _owner._listView.Invalidate();
-            _owner._tabsController.SyncPathSnapshot(_owner._currentPath, _owner._items, _owner._allItems);
-            _owner._statusLabel.Text = string.Format(Localization.T("status_ready_items"), _owner._items.Count);
+            _owner._tabsController.SyncPathSnapshot(State.CurrentPath, State.Items, State.AllItems);
+            _owner._statusLabel.Text = string.Format(Localization.T("status_ready_items"), State.Items.Count);
             return true;
         }
 
@@ -330,9 +331,9 @@ public partial class MainForm
         {
             if (string.IsNullOrWhiteSpace(path))
                 return false;
-            if (string.IsNullOrWhiteSpace(_owner._currentPath))
+            if (string.IsNullOrWhiteSpace(State.CurrentPath))
                 return false;
-            if (MainForm.IsShellPath(_owner._currentPath) || _owner._currentPath == ThisPcPath)
+            if (MainForm.IsShellPath(State.CurrentPath) || State.CurrentPath == ThisPcPath)
                 return false;
 
             try
@@ -342,7 +343,7 @@ public partial class MainForm
                     return false;
                 return string.Equals(
                     parent.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
-                    _owner._currentPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+                    State.CurrentPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
                     StringComparison.OrdinalIgnoreCase);
             }
             catch
