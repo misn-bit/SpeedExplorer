@@ -32,7 +32,7 @@ public sealed class ImageViewerSortOptions
     public bool TaggedFilesOnTop { get; }
 }
 
-public class ImageViewerForm : Form
+public partial class ImageViewerForm : Form
 {
     // ... Imports for window dragging ...
     [DllImport("user32.dll")]
@@ -4538,17 +4538,17 @@ public class ImageViewerForm : Form
         ClearAnimationState();
         try
         {
-            bool isAnimated = ImageSharpViewerService.IsAnimatedImage(path);
-            if (isAnimated)
+            var loadedImage = ImageViewerImageLoader.Load(path);
+            _currentAnimation = loadedImage.Animation;
+            if (loadedImage.IsAnimated)
             {
-                _currentAnimation = ImageSharpViewerService.LoadAnimation(path);
                 _animationFrameIndex = 0;
-                _currentImage = _currentAnimation.GetFrame(_animationFrameIndex);
+                _currentImage = _currentAnimation!.GetFrame(_animationFrameIndex);
                 StartAnimationIfNeeded();
             }
             else
             {
-                _currentImage = ImageSharpViewerService.LoadBitmap(path);
+                _currentImage = loadedImage.Bitmap;
             }
             
             _fileNameLabel.Text = Path.GetFileName(path);
