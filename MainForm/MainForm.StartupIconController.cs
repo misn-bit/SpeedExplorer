@@ -11,10 +11,7 @@ public partial class MainForm
 {
     private sealed class StartupIconController
     {
-        public StartupIconController(MainForm owner)
-        {
-            _ = owner;
-        }
+        public StartupIconController() { }
 
         public string NormalizeStartupPath(string? input, out List<string>? selectPaths, bool inferRecentSelectionForDirectory = false)
         {

@@ -10,24 +10,10 @@ namespace SpeedExplorer;
 public partial class ImageViewerForm
 {
     private static RectangleF ClampNormalizedRect(float x, float y, float w, float h)
-    {
-        float nx = Math.Clamp(x, 0f, 1f);
-        float ny = Math.Clamp(y, 0f, 1f);
-        float nw = Math.Clamp(w, 0f, 1f);
-        float nh = Math.Clamp(h, 0f, 1f);
-
-        if (nx + nw > 1f)
-            nw = 1f - nx;
-        if (ny + nh > 1f)
-            nh = 1f - ny;
-        if (nw < 0f) nw = 0f;
-        if (nh < 0f) nh = 0f;
-
-        return new RectangleF(nx, ny, nw, nh);
-    }
+        => ImageViewerOverlayGeometry.ClampNormalizedRect(x, y, w, h);
 
     private static RectangleF RotateNormalizedRectClockwise(RectangleF rect)
-        => ClampNormalizedRect(1f - (rect.Y + rect.Height), rect.X, rect.Height, rect.Width);
+        => ImageViewerOverlayGeometry.RotateClockwise(rect);
 
     private void ApplyCurrentRotationToOverlayBlocks()
     {

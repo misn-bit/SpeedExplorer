@@ -44,25 +44,13 @@ public partial class ImageViewerForm
     }
 
     private static RectangleF RotateNormalizedRectCounterClockwise(RectangleF rect)
-        => ClampNormalizedRect(rect.Y, 1f - (rect.X + rect.Width), rect.Height, rect.Width);
+        => ImageViewerOverlayGeometry.RotateCounterClockwise(rect);
 
     private static RectangleF UnrotateNormalizedRect(RectangleF rect, int clockwiseQuarterTurns)
-    {
-        var result = rect;
-        int turns = ((clockwiseQuarterTurns % 4) + 4) % 4;
-        for (int i = 0; i < turns; i++)
-            result = RotateNormalizedRectCounterClockwise(result);
-        return result;
-    }
+        => ImageViewerOverlayGeometry.Unrotate(rect, clockwiseQuarterTurns);
 
     private static Rectangle NormalizeRectToPixels(RectangleF normalizedRect, Size imageSize)
-    {
-        int left = Math.Clamp((int)Math.Floor(normalizedRect.X * imageSize.Width), 0, Math.Max(0, imageSize.Width - 1));
-        int top = Math.Clamp((int)Math.Floor(normalizedRect.Y * imageSize.Height), 0, Math.Max(0, imageSize.Height - 1));
-        int right = Math.Clamp((int)Math.Ceiling((normalizedRect.X + normalizedRect.Width) * imageSize.Width), left + 1, imageSize.Width);
-        int bottom = Math.Clamp((int)Math.Ceiling((normalizedRect.Y + normalizedRect.Height) * imageSize.Height), top + 1, imageSize.Height);
-        return Rectangle.FromLTRB(left, top, right, bottom);
-    }
+        => ImageViewerOverlayGeometry.NormalizeToPixels(normalizedRect, imageSize);
 
     private List<OverlayTextBlock> BuildPendingManualOverlayBlocks()
     {

@@ -4,11 +4,15 @@ namespace SpeedExplorer;
 
 public partial class MainForm
 {
+    Form ISettingsLauncherHost.OwnerWindow => this;
+    void ISettingsLauncherHost.ApplySettings() => ApplySettings();
+    void ISettingsLauncherHost.ReloadHotkeys() => _hotkeyController.Reload();
+
     private sealed class SettingsLauncherController
     {
-        private readonly MainForm _owner;
+        private readonly ISettingsLauncherHost _owner;
 
-        public SettingsLauncherController(MainForm owner)
+        public SettingsLauncherController(ISettingsLauncherHost owner)
         {
             _owner = owner;
         }
@@ -16,10 +20,10 @@ public partial class MainForm
         public void OpenSettings()
         {
             using var form = new SettingsForm();
-            if (form.ShowDialog(_owner) == DialogResult.OK)
+            if (form.ShowDialog(_owner.OwnerWindow) == DialogResult.OK)
             {
                 _owner.ApplySettings();
-                _owner._hotkeyController.Reload();
+                _owner.ReloadHotkeys();
             }
         }
     }

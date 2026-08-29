@@ -10,7 +10,7 @@ using System.Windows.Forms;
 
 namespace SpeedExplorer;
 
-public partial class MainForm : Form, IFileOperationsHost, IShellActionsHost, IOpenTargetHost, ISelectionOpenHost, IQuickLookHost, ISearchHost
+public partial class MainForm : Form, IFileOperationsHost, IShellActionsHost, IOpenTargetHost, ISelectionOpenHost, IQuickLookHost, ISearchHost, ISettingsLauncherHost, INavigationHost
 {
     private void RefreshFrame()
         => _windowChromeController.RefreshFrame();
@@ -26,9 +26,6 @@ public partial class MainForm : Form, IFileOperationsHost, IShellActionsHost, IO
     // exposing MainForm internals publicly.
     internal const string ThisPcPathConst = ThisPcPath;
     internal BrowserState State => _browserState;
-    internal string CurrentPathForNav => State.CurrentPath;
-    internal void ClearCurrentPathForHistory() => State.CurrentPath = "";
-    internal static bool IsShellPathStatic(string path) => ShellNavigationController.IsShellPath(path);
     private IntPtr _headerHandle;
 
     private ListView _listView;
@@ -454,7 +451,7 @@ public partial class MainForm : Form, IFileOperationsHost, IShellActionsHost, IO
         _quickLookController = new QuickLookController(this);
         _layoutController = new LayoutController(this);
         _startupNavigationController = new StartupNavigationController(this);
-        _startupIconController = new StartupIconController(this);
+        _startupIconController = new StartupIconController();
         _uiSettingsController = new UiSettingsController(this);
         _listViewInteractionController = new ListViewInteractionController(this);
         _tileViewController = new TileViewController(this);

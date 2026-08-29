@@ -84,7 +84,7 @@ public partial class MainForm
         if (!FileSystemService.IsImageFile(normalizedImagePath))
             return false;
 
-        var imageFiles = BuildImageSequenceForPath(normalizedImagePath, preferredImagePool);
+        var imageFiles = ImageViewerSequenceBuilder.BuildForPath(normalizedImagePath, preferredImagePool);
         if (imageFiles.Count == 0)
             return false;
 
@@ -100,90 +100,4 @@ public partial class MainForm
         return true;
     }
 
-    private static List<string> BuildImageSequenceForPath(string imagePath, IEnumerable<string>? preferredImagePool)
-    {
-        var directory = Path.GetDirectoryName(imagePath);
-        if (string.IsNullOrWhiteSpace(directory))
-            return new List<string> { imagePath };
-
-        var results = new List<string>();
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-        if (preferredImagePool != null)
-        {
-            foreach (var candidate in preferredImagePool)
-            {
-                if (TryNormalizeImageCandidate(candidate, out var normalized) && seen.Add(normalized))
-                    results.Add(normalized);
-            }
-        }
-
-        if (results.Count == 0)
-        {
-            try
-            {
-                foreach (var file in Directory.EnumerateFiles(directory))
-                {
-                    if (TryNormalizeImageCandidate(file, directory, out var normalized) && seen.Add(normalized))
-                        results.Add(normalized);
-                }
-                results.Sort(StringComparer.OrdinalIgnoreCase);
-            }
-            catch
-            {
-                // Fall back to just the explicitly requested image.
-            }
-        }
-
-        if (seen.Add(imagePath))
-            results.Add(imagePath);
-
-        return results;
-    }
-
-    private static bool TryNormalizeImageCandidate(string? candidatePath, out string normalizedPath)
-    {
-        normalizedPath = string.Empty;
-        if (string.IsNullOrWhiteSpace(candidatePath))
-            return false;
-
-        string candidate = candidatePath.Trim();
-        try
-        {
-            candidate = Path.GetFullPath(candidate);
-        }
-        catch
-        {
-            return false;
-        }
-
-        if (!File.Exists(candidate))
-            return false;
-        if (!FileSystemService.IsImageFile(candidate))
-            return false;
-
-        normalizedPath = candidate;
-        return true;
-    }
-
-    private static bool TryNormalizeImageCandidate(string? candidatePath, string requiredDirectory, out string normalizedPath)
-    {
-        if (!TryNormalizeImageCandidate(candidatePath, out normalizedPath))
-            return false;
-
-        var candidateDir = Path.GetDirectoryName(normalizedPath);
-        if (string.IsNullOrWhiteSpace(candidateDir))
-            return false;
-
-        if (!string.Equals(
-                candidateDir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
-                requiredDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
-                StringComparison.OrdinalIgnoreCase))
-        {
-            normalizedPath = string.Empty;
-            return false;
-        }
-
-        return true;
-    }
 }

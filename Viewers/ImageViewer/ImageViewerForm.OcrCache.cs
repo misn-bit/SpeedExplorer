@@ -101,100 +101,10 @@ public partial class ImageViewerForm
     }
 
     private static OcrCacheEnvelope? TryReadOcrEnvelopeUnchecked(string cachePath)
-    {
-        try
-        {
-            if (!File.Exists(cachePath))
-                return null;
-
-            string raw = File.ReadAllText(cachePath);
-            string json = ExtractJsonPayload(raw);
-            var envelope = JsonSerializer.Deserialize<OcrCacheEnvelope>(json);
-            if (envelope == null)
-                return null;
-
-            envelope.TranslationLines ??= new List<string>();
-            envelope.OverlayOverrides ??= new List<OcrOverlayBlockOverride>();
-            return envelope;
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    private static string ExtractJsonPayload(string raw)
-    {
-        if (string.IsNullOrWhiteSpace(raw))
-            return raw;
-
-        int separatorIndex = raw.IndexOf(OcrCacheJsonSeparator, StringComparison.Ordinal);
-        if (separatorIndex >= 0)
-        {
-            int jsonStart = separatorIndex + OcrCacheJsonSeparator.Length;
-            while (jsonStart < raw.Length && (raw[jsonStart] == '\r' || raw[jsonStart] == '\n' || char.IsWhiteSpace(raw[jsonStart])))
-                jsonStart++;
-            if (jsonStart < raw.Length)
-                return raw.Substring(jsonStart);
-        }
-
-        int firstBrace = raw.IndexOf('{');
-        if (firstBrace > 0)
-            return raw.Substring(firstBrace);
-
-        return raw;
-    }
-
-    private static string BuildCleanOcrTextBlock(OcrCacheEnvelope envelope)
-    {
-        string ocrText = envelope.Result?.FullText?.Trim() ?? "";
-        if (string.IsNullOrWhiteSpace(ocrText))
-        {
-            ocrText = string.Join(
-                Environment.NewLine,
-                envelope.Result?.Blocks?
-                    .Select(b => b?.Text?.Trim())
-                    .Where(t => !string.IsNullOrWhiteSpace(t))
-                    .Cast<string>() ?? Array.Empty<string>());
-        }
-
-        string translated = envelope.TranslationFullText?.Trim() ?? "";
-        if (string.IsNullOrWhiteSpace(translated) && envelope.TranslationLines != null && envelope.TranslationLines.Count > 0)
-        {
-            translated = string.Join(
-                Environment.NewLine,
-                envelope.TranslationLines
-                    .Where(t => !string.IsNullOrWhiteSpace(t))
-                    .Select(t => t.Trim()));
-        }
-
-        var sb = new StringBuilder();
-        if (!string.IsNullOrWhiteSpace(ocrText))
-            sb.AppendLine(ocrText);
-        if (!string.IsNullOrWhiteSpace(translated))
-        {
-            if (sb.Length > 0)
-                sb.AppendLine();
-            sb.AppendLine(translated);
-        }
-
-        return sb.ToString().TrimEnd();
-    }
+        => ImageViewerOcrCacheSerializer.TryRead(cachePath, OcrCacheJsonSeparator);
 
     private static string SerializeOcrCacheEnvelopeForDisk(OcrCacheEnvelope envelope)
-    {
-        string json = JsonSerializer.Serialize(envelope, new JsonSerializerOptions
-        {
-            WriteIndented = false,
-            Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
-        });
-
-        string cleanText = BuildCleanOcrTextBlock(envelope);
-        if (string.IsNullOrWhiteSpace(cleanText))
-            return $"{OcrCacheJsonSeparator}{Environment.NewLine}{json}";
-
-        return $"{cleanText}{Environment.NewLine}{Environment.NewLine}{OcrCacheJsonSeparator}{Environment.NewLine}{json}";
-    }
+        => ImageViewerOcrCacheSerializer.Serialize(envelope, OcrCacheJsonSeparator);
 
     private static bool TryLoadSavedOcrEnvelope(string imagePath, out OcrCacheEnvelope? envelope)
     {

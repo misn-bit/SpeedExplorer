@@ -1,6 +1,4 @@
 using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
@@ -13,8 +11,7 @@ public partial class MainForm
         private readonly MainForm _owner;
         private BrowserState State => _owner.State;
 
-        private readonly Dictionary<string, Keys> _actionToKeys = new(StringComparer.OrdinalIgnoreCase);
-        private readonly Dictionary<Keys, string> _keysToAction = new();
+        private HotkeyBindingMap _bindings = new();
 
         public HotkeyController(MainForm owner)
         {
@@ -23,47 +20,23 @@ public partial class MainForm
 
         public void Reload()
         {
-            _actionToKeys.Clear();
-            _keysToAction.Clear();
-
-            var shortcuts = AppSettings.Current.Hotkeys;
-            foreach (var kvp in shortcuts)
-            {
-                try
-                {
-                    var converted = new KeysConverter().ConvertFromString(kvp.Value);
-                    if (converted is not Keys parsed)
-                        continue;
-                    var normalized = NormalizeBinding(parsed);
-
-                    _actionToKeys[kvp.Key] = normalized;
-
-                    // If multiple actions share the same key, keep the first one (stable).
-                    if (!_keysToAction.ContainsKey(normalized))
-                        _keysToAction[normalized] = kvp.Key;
-                }
-                catch
-                {
-                    // Ignore malformed entries
-                }
-            }
+            _bindings = new HotkeyBindingMap();
+            _bindings.Load(AppSettings.Current.Hotkeys);
         }
 
         public bool TryGetBinding(string action, out Keys keys)
         {
-            return _actionToKeys.TryGetValue(action, out keys);
+            return _bindings.TryGetBinding(action, out keys);
         }
 
         public bool IsActionKeyCode(string action, Keys keyCode)
         {
-            if (!_actionToKeys.TryGetValue(action, out var keys)) return false;
-            return (keys & Keys.KeyCode) == keyCode;
+            return _bindings.IsActionKeyCode(action, keyCode);
         }
 
         public bool IsActionKeyData(string action, Keys keyData)
         {
-            if (!_actionToKeys.TryGetValue(action, out var keys)) return false;
-            return NormalizeBinding(keyData) == keys;
+            return _bindings.IsActionKeyData(action, keyData);
         }
 
         public bool HandleProcessCmdKey(ref Message msg, Keys keyData)
@@ -232,7 +205,7 @@ public partial class MainForm
 
         private bool TryMapAction(Keys effectiveKeyData, out string action)
         {
-            return _keysToAction.TryGetValue(effectiveKeyData, out action!);
+            return _bindings.TryGetAction(effectiveKeyData, out action!);
         }
 
         private static Keys NormalizeKeyData(Keys keyData)
@@ -242,11 +215,5 @@ public partial class MainForm
             return code | mods;
         }
 
-        private static Keys NormalizeBinding(Keys binding)
-        {
-            var code = binding & Keys.KeyCode;
-            var mods = binding & (Keys.Control | Keys.Shift | Keys.Alt);
-            return code | mods;
-        }
     }
 }

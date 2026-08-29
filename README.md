@@ -16,6 +16,20 @@ For good quality OCR, i recommend using Gemma-4-31B or better.
 
 It's best to disable the "Enable Thinking" toggle in the server inference tab in LM Studio, unless you prefer the model to potentially think about the OCR for thousands of tokens.
 
+## Development
+
+Build the application with:
+
+```powershell
+dotnet build --no-restore
+```
+
+Run the automated tests with:
+
+```powershell
+dotnet test SpeedExplorer.Tests\SpeedExplorer.Tests.csproj --no-restore
+```
+
 
 ## Disclaimer & Safety
 

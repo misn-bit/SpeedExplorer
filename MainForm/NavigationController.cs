@@ -9,7 +9,7 @@ namespace SpeedExplorer;
 // NavigateTo(...) remains on MainForm for now, but it reads/writes state from this controller.
 internal sealed class NavigationController
 {
-    private readonly MainForm _owner;
+    private readonly INavigationHost _host;
 
     public Stack<string> BackHistory { get; set; } = new();
     public Stack<string> ForwardHistory { get; set; } = new();
@@ -21,9 +21,9 @@ internal sealed class NavigationController
     public string? PendingPath { get; private set; }
     public List<string>? PendingSelectPaths { get; private set; }
 
-    public NavigationController(MainForm owner)
+    public NavigationController(INavigationHost host)
     {
-        _owner = owner;
+        _host = host;
     }
 
     public void QueuePending(string path, List<string>? selectPaths)
@@ -44,39 +44,39 @@ internal sealed class NavigationController
     public void GoBack()
     {
         if (BackHistory.Count <= 0) return;
-        ForwardHistory.Push(_owner.CurrentPathForNav);
+        ForwardHistory.Push(_host.CurrentPath);
         var prev = BackHistory.Pop();
-        _owner.ClearCurrentPathForHistory();
-        _owner.ObserveTask(_owner.NavigateTo(prev), "NavController.GoBack");
+        _host.ClearCurrentPathForHistory();
+        _host.ObserveTask(_host.NavigateTo(prev), "NavController.GoBack");
     }
 
     public void GoForward()
     {
         if (ForwardHistory.Count <= 0) return;
-        BackHistory.Push(_owner.CurrentPathForNav);
+        BackHistory.Push(_host.CurrentPath);
         var next = ForwardHistory.Pop();
-        _owner.ClearCurrentPathForHistory();
-        _owner.ObserveTask(_owner.NavigateTo(next), "NavController.GoForward");
+        _host.ClearCurrentPathForHistory();
+        _host.ObserveTask(_host.NavigateTo(next), "NavController.GoForward");
     }
 
     public void GoUp()
     {
-        var path = _owner.CurrentPathForNav;
-        if (string.IsNullOrEmpty(path) || path == MainForm.ThisPcPathConst) return;
+        var path = _host.CurrentPath;
+        if (string.IsNullOrEmpty(path) || path == _host.ThisPcPath) return;
 
-        if (MainForm.IsShellPathStatic(path))
+        if (_host.IsShellPath(path))
         {
-            var shellParent = _owner.GetShellParentPath(path);
-            _owner.ObserveTask(_owner.NavigateTo(shellParent ?? MainForm.ThisPcPathConst), "NavController.GoUpShell");
+            var shellParent = _host.GetShellParentPath(path);
+            _host.ObserveTask(_host.NavigateTo(shellParent ?? _host.ThisPcPath), "NavController.GoUpShell");
             return;
         }
 
         var parent = Directory.GetParent(path);
-        _owner.ObserveTask(_owner.NavigateTo(parent != null ? parent.FullName : MainForm.ThisPcPathConst), "NavController.GoUp");
+        _host.ObserveTask(_host.NavigateTo(parent != null ? parent.FullName : _host.ThisPcPath), "NavController.GoUp");
     }
 
     public async Task RefreshCurrentAsync(List<string>? selectPaths = null)
     {
-        await _owner.RefreshCurrentAsync(selectPaths);
+        await _host.RefreshCurrentAsync(selectPaths);
     }
 }
