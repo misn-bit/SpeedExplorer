@@ -74,16 +74,7 @@ public partial class MainForm
             _tabStrip.Controls.Clear();
 
             var startPath = initialPath ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            var initialSort = ResolveInitialSortForPath(startPath);
-            var tab = new TabState
-            {
-                CurrentPath = startPath,
-                CurrentDisplayPath = startPath,
-                Title = GetTabTitleForPath(startPath, false),
-                SortColumn = initialSort.Column,
-                SortDirection = initialSort.Direction,
-                TaggedFilesOnTop = initialSort.TaggedOnTop
-            };
+            var tab = CreateTab(startPath);
             _tabs.Add(tab);
             _activeTabIndex = 0;
 
@@ -185,16 +176,7 @@ public partial class MainForm
             if (useNewTab)
             {
                 SaveCurrentTabState();
-                var initialSort = ResolveInitialSortForPath(normalized);
-                var tab = new TabState
-                {
-                    CurrentPath = normalized,
-                    CurrentDisplayPath = normalized,
-                    Title = GetTabTitleForPath(normalized, false),
-                    SortColumn = initialSort.Column,
-                    SortDirection = initialSort.Direction,
-                    TaggedFilesOnTop = initialSort.TaggedOnTop
-                };
+                var tab = CreateTab(normalized);
                 _tabs.Add(tab);
                 int newIndex = _tabs.Count - 1;
                 _activeTabIndex = newIndex;
@@ -218,16 +200,7 @@ public partial class MainForm
         {
             SaveCurrentTabState();
             var startPath = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            var initialSort = ResolveInitialSortForPath(startPath);
-            var tab = new TabState
-            {
-                CurrentPath = startPath,
-                CurrentDisplayPath = startPath,
-                Title = GetTabTitleForPath(startPath, false),
-                SortColumn = initialSort.Column,
-                SortDirection = initialSort.Direction,
-                TaggedFilesOnTop = initialSort.TaggedOnTop
-            };
+            var tab = CreateTab(startPath);
             _tabs.Add(tab);
             int newIndex = _tabs.Count - 1;
             _activeTabIndex = newIndex;
@@ -244,18 +217,7 @@ public partial class MainForm
             Stack<string>? inheritedForwardHistory = null)
         {
             SaveCurrentTabState();
-            var initialSort = ResolveInitialSortForPath(path);
-            var tab = new TabState
-            {
-                CurrentPath = path,
-                CurrentDisplayPath = path,
-                Title = GetTabTitleForPath(path, false),
-                SortColumn = initialSort.Column,
-                SortDirection = initialSort.Direction,
-                TaggedFilesOnTop = initialSort.TaggedOnTop,
-                BackHistory = inheritedBackHistory != null ? CloneStack(inheritedBackHistory) : new Stack<string>(),
-                ForwardHistory = inheritedForwardHistory != null ? CloneStack(inheritedForwardHistory) : new Stack<string>()
-            };
+            var tab = CreateTab(path, inheritedBackHistory, inheritedForwardHistory);
             _tabs.Add(tab);
             int newIndex = _tabs.Count - 1;
 
@@ -916,6 +878,25 @@ public partial class MainForm
         }
 
         private Stack<string> CloneStack(Stack<string> source) => new Stack<string>(source.Reverse());
+
+        private TabState CreateTab(
+            string path,
+            Stack<string>? inheritedBackHistory = null,
+            Stack<string>? inheritedForwardHistory = null)
+        {
+            var initialSort = ResolveInitialSortForPath(path);
+            return new TabState
+            {
+                CurrentPath = path,
+                CurrentDisplayPath = path,
+                Title = GetTabTitleForPath(path, false),
+                SortColumn = initialSort.Column,
+                SortDirection = initialSort.Direction,
+                TaggedFilesOnTop = initialSort.TaggedOnTop,
+                BackHistory = inheritedBackHistory != null ? CloneStack(inheritedBackHistory) : new Stack<string>(),
+                ForwardHistory = inheritedForwardHistory != null ? CloneStack(inheritedForwardHistory) : new Stack<string>()
+            };
+        }
 
         private (SortColumn Column, SortDirection Direction, bool TaggedOnTop) ResolveInitialSortForPath(string path)
         {
