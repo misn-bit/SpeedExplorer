@@ -570,6 +570,7 @@ static class Program
         private NotifyIcon _trayIcon = null!;
         private readonly Control _marshalControl;
         private MainForm? _preloadedMainForm;
+        private bool _preloadScheduled;
 
         public MultiWindowContext()
         {
@@ -656,6 +657,33 @@ static class Program
             }
         }
 
+        private void SchedulePreloadedMainForm()
+        {
+            if (_preloadScheduled)
+                return;
+
+            if (_preloadedMainForm != null && !_preloadedMainForm.IsDisposed)
+                return;
+
+            _preloadScheduled = true;
+            try
+            {
+                // Let the closing form finish its message processing before doing the
+                // intentionally expensive MainForm construction on the UI thread.
+                _marshalControl.BeginInvoke((Action)(() =>
+                {
+                    _preloadScheduled = false;
+                    if (_formCount <= 0 && AppSettings.Current.RunInBackground)
+                        EnsurePreloadedMainForm();
+                }));
+            }
+            catch (Exception ex)
+            {
+                _preloadScheduled = false;
+                Debug.WriteLine($"Failed to schedule main window pre-warm: {ex}");
+            }
+        }
+
         public void ShowMainWindow()
         {
             var preloaded = _preloadedMainForm;
@@ -695,7 +723,7 @@ static class Program
                     {
                         // Keep a replacement form ready so the next tray/external open
                         // does not pay the full MainForm construction cost again.
-                        EnsurePreloadedMainForm();
+                        SchedulePreloadedMainForm();
                     }
                     else
                     {
