@@ -93,6 +93,8 @@ public partial class ImageViewerForm
         if (added.Count == 0)
             return;
 
+        string? currentPath = GetCurrentImagePath();
+
         if (_sortOptions == null)
         {
             int insertIndex = FindWatchedFolderAppendIndex();
@@ -108,7 +110,6 @@ public partial class ImageViewerForm
             }
         }
 
-        string? currentPath = GetCurrentImagePath();
         if (!string.IsNullOrWhiteSpace(currentPath))
         {
             int newIndex = _imagePaths.FindIndex(path => string.Equals(path, currentPath, StringComparison.OrdinalIgnoreCase));
