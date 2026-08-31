@@ -120,6 +120,8 @@ public partial class MainForm
 
         private CancellationTokenSource? _cts;
         private bool _userScrolledDuringSearch;
+        private System.Windows.Forms.Timer? _debounceTimer;
+        private string _debounceQuery = "";
 
         public bool IsSearchMode { get; private set; }
         public bool IsSearchInProgress { get; private set; }
@@ -159,7 +161,24 @@ public partial class MainForm
 
         public void StartSearch(string query)
         {
+            _debounceTimer?.Stop();
             _ = PerformSearchAsync(query);
+        }
+
+        public void StartSearchDebounced(string query)
+        {
+            if (_debounceTimer == null)
+            {
+                _debounceTimer = new System.Windows.Forms.Timer { Interval = 400 };
+                _debounceTimer.Tick += (s, e) =>
+                {
+                    _debounceTimer.Stop();
+                    StartSearch(_debounceQuery);
+                };
+            }
+            _debounceQuery = query;
+            _debounceTimer.Stop();
+            _debounceTimer.Start();
         }
 
         public void RestoreCachedSearchState(string query)

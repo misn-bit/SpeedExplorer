@@ -109,11 +109,11 @@ public partial class MainForm
 
             _owner._searchBox.TextChanged += (s, e) =>
             {
-            if (_owner._suppressSearchTextChanged || !_owner._searchBox.Enabled || !State.IsShellMode)
+            if (_owner._suppressSearchTextChanged || !_owner._searchBox.Enabled)
                     return;
                 if (_owner._searchBox.Text != Localization.T("search_placeholder"))
                 {
-                    _owner._searchController.StartSearch(_owner._searchBox.Text);
+                    _owner._searchController.StartSearchDebounced(_owner._searchBox.Text);
                 }
             };
 
