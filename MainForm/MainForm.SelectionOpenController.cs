@@ -135,7 +135,7 @@ public partial class MainForm
                     return;
             }
 
-            try { Process.Start(new ProcessStartInfo(path) { UseShellExecute = true }); }
+            try { Process.Start(new ProcessStartInfo(path) { UseShellExecute = true, WorkingDirectory = Path.GetDirectoryName(path) ?? "" }); }
             catch (Exception ex)
             {
                 MessageBox.Show($"Could not open file: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);

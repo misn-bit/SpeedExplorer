@@ -97,7 +97,7 @@ public partial class MainForm
                 {
                     if (File.Exists(path))
                     {
-                        try { Process.Start(new ProcessStartInfo(path) { UseShellExecute = true }); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+                        try { Process.Start(new ProcessStartInfo(path) { UseShellExecute = true, WorkingDirectory = Path.GetDirectoryName(path) ?? "" }); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                         _owner._listView.Focus();
                     }
                 }
@@ -135,7 +135,7 @@ public partial class MainForm
                     if (tree.SelectedNode?.Tag is string path && !IsSeparatorTag(path))
                     {
                         if (File.Exists(path))
-                            try { Process.Start(new ProcessStartInfo(path) { UseShellExecute = true }); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+                            try { Process.Start(new ProcessStartInfo(path) { UseShellExecute = true, WorkingDirectory = Path.GetDirectoryName(path) ?? "" }); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                         else
                             _owner.ObserveTask(_owner.NavigateTo(path), "Sidebar.NodeNavigate");
 
