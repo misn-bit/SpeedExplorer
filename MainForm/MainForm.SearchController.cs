@@ -149,6 +149,7 @@ public partial class MainForm
 
         public void CancelActive()
         {
+            _debounceTimer?.Stop();
             try { _cts?.Cancel(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
         }
 
