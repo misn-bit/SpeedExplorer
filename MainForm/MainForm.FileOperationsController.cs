@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
@@ -51,6 +52,9 @@ public partial class MainForm
     private sealed class FileOperationsController
     {
         private readonly IFileOperationsHost _host;
+        private static readonly char[] InvalidFileNameChars = Path.GetInvalidFileNameChars();
+        private Label? _nameWarningLabel;
+        private System.Windows.Forms.Timer? _nameWarningTimer;
         private BrowserState State => _host.BrowserState;
         private bool _renameCommitting;
 
@@ -117,7 +121,28 @@ public partial class MainForm
             else
                 renameTextBox.SelectAll();
 
-            renameTextBox.LostFocus += (s, e) => EndRename(true);
+            renameTextBox.LostFocus += (s, e) =>
+            {
+                HideNameWarning();
+                EndRename(true);
+            };
+            renameTextBox.TextChanged += (s, e) =>
+            {
+                string current = renameTextBox.Text;
+                int caret = renameTextBox.SelectionStart;
+                string stripped = StripInvalidFileNameChars(current, caret, out int removedBefore);
+                if (stripped != current)
+                {
+                    int targetCaret = Math.Clamp(caret - removedBefore, 0, stripped.Length);
+                    renameTextBox.Text = stripped;
+                    renameTextBox.SelectionStart = targetCaret;
+                    ShowNameWarning(renameTextBox, Localization.T("invalid_name_chars"));
+                }
+                else if (IsReservedDeviceName(current.Trim()))
+                {
+                    ShowNameWarning(renameTextBox, Localization.T("invalid_name_reserved"));
+                }
+            };
             renameTextBox.KeyDown += (s, e) =>
             {
                 if (e.KeyCode == Keys.Enter)
@@ -142,15 +167,31 @@ public partial class MainForm
             var renameTextBox = _host.RenameTextBox;
             if (renameTextBox == null || _renameCommitting)
                 return;
-            _renameCommitting = true;
 
-            string newName = renameTextBox.Text;
+            string newName = renameTextBox.Text.Trim().TrimEnd('.');
+
+            if (commit && newName.Length > 0)
+            {
+                if (newName.IndexOfAny(InvalidFileNameChars) >= 0)
+                {
+                    ShowNameWarning(renameTextBox, Localization.T("invalid_name_chars"));
+                    return;
+                }
+                if (IsReservedDeviceName(newName))
+                {
+                    ShowNameWarning(renameTextBox, Localization.T("invalid_name_reserved"));
+                    return;
+                }
+            }
+
+            DismissNameWarning();
+            _renameCommitting = true;
             _host.RenameTextBox = null;
             _host.FileListView.Controls.Remove(renameTextBox);
             renameTextBox.Dispose();
             _renameCommitting = false;
 
-            if (commit && !string.IsNullOrEmpty(newName))
+            if (commit && newName.Length > 0)
             {
                 int index = _host.FileListView.SelectedIndices.Count > 0 ? _host.FileListView.SelectedIndices[0] : -1;
                 if (index >= 0 && index < State.Items.Count)
@@ -168,6 +209,82 @@ public partial class MainForm
                     }
                 }
             }
+        }
+
+        private static string StripInvalidFileNameChars(string name, int beforeIndex, out int removedBefore)
+        {
+            removedBefore = 0;
+            var sb = new StringBuilder(name.Length);
+            for (int i = 0; i < name.Length; i++)
+            {
+                char c = name[i];
+                if (Array.IndexOf(InvalidFileNameChars, c) < 0)
+                    sb.Append(c);
+                else if (i < beforeIndex)
+                    removedBefore++;
+            }
+            return sb.ToString();
+        }
+
+        private static bool IsReservedDeviceName(string name)
+        {
+            int dotIdx = name.IndexOf('.');
+            string baseName = (dotIdx > 0 ? name.Substring(0, dotIdx) : name).ToUpperInvariant();
+
+            return baseName is "CON" or "PRN" or "AUX" or "NUL"
+                || ((baseName.StartsWith("COM", StringComparison.Ordinal) || baseName.StartsWith("LPT", StringComparison.Ordinal))
+                    && baseName.Length == 4
+                    && baseName[3] is >= '1' and <= '9');
+        }
+
+        private void ShowNameWarning(Control anchor, string message)
+        {
+            if (_nameWarningLabel == null)
+            {
+                _nameWarningLabel = new Label
+                {
+                    AutoSize = true,
+                    BorderStyle = BorderStyle.FixedSingle,
+                    BackColor = SystemColors.Info,
+                    ForeColor = SystemColors.InfoText,
+                    Padding = new Padding(8, 4, 8, 4),
+                    TabStop = false,
+                    Visible = false
+                };
+                _nameWarningTimer = new System.Windows.Forms.Timer { Interval = 5000 };
+                _nameWarningTimer.Tick += (s, e) => HideNameWarning();
+            }
+
+            var label = _nameWarningLabel;
+            label.Text = message;
+
+            if (label.Parent != _host.FileListView)
+                _host.FileListView.Controls.Add(label);
+
+            int y = anchor.Top - label.Height - 3;
+            if (y < 2)
+                y = anchor.Bottom + 3;
+            int x = Math.Clamp(anchor.Left, 2, Math.Max(2, _host.FileListView.ClientSize.Width - label.Width - 2));
+            label.Location = new Point(x, y);
+            label.BringToFront();
+            label.Visible = true;
+
+            _nameWarningTimer?.Stop();
+            _nameWarningTimer?.Start();
+        }
+
+        private void HideNameWarning()
+        {
+            _nameWarningTimer?.Stop();
+            if (_nameWarningLabel != null)
+                _nameWarningLabel.Visible = false;
+        }
+
+        private void DismissNameWarning()
+        {
+            HideNameWarning();
+            if (_nameWarningLabel is { Parent: not null } label)
+                label.Parent.Controls.Remove(label);
         }
 
         public void CopySelected()
