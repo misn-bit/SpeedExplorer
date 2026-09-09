@@ -204,7 +204,7 @@ public partial class MainForm
                         if (FileSystemService.ShellRename(oldPath, newName, _host.WindowHandle))
                         {
                             TagManager.Instance.HandleRename(oldPath, newPath);
-                            _ = _host.RefreshCurrentAsync();
+                            _ = _host.RefreshCurrentAsync(new List<string> { newPath });
                         }
                     }
                 }
