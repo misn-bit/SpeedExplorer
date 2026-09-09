@@ -372,17 +372,40 @@ public partial class MainForm
             var paths = _host.GetSelectedPaths();
             if (paths.Length > 0)
             {
+                string? adjacentPath = GetAdjacentPathForDeletion();
                 bool effectivePermanent = permanent || AppSettings.Current.PermanentDeleteByDefault;
                 try
                 {
                     await FileSystemService.ShellDeleteAsync(paths, _host.WindowHandle, recordOperation: !effectivePermanent, permanent: effectivePermanent);
-                    _ = _host.RefreshCurrentAsync();
+                    _ = _host.RefreshCurrentAsync(adjacentPath != null ? new List<string> { adjacentPath } : null);
                 }
                 catch (Exception ex)
                 {
                     MessageBox.Show($"Delete operation failed: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 }
             }
+        }
+
+        private string? GetAdjacentPathForDeletion()
+        {
+            var indices = _host.FileListView.SelectedIndices;
+            if (indices.Count == 0)
+                return null;
+
+            int min = int.MaxValue, max = int.MinValue;
+            foreach (int i in indices)
+            {
+                if (i < min) min = i;
+                if (i > max) max = i;
+            }
+
+            if (max + 1 < State.Items.Count)
+                return State.Items[max + 1].FullPath;
+
+            if (min - 1 >= 0)
+                return State.Items[min - 1].FullPath;
+
+            return null;
         }
 
         public void PerformClipboardOperation(string[] paths, bool isCut)
