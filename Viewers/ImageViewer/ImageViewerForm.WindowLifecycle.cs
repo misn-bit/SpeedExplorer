@@ -156,6 +156,9 @@ public partial class ImageViewerForm
 
     private void SaveWindowState()
     {
+        if (WindowState == FormWindowState.Minimized)
+            return;
+
         _settings.ImageViewerMaximized = WindowState == FormWindowState.Maximized;
         if (WindowState == FormWindowState.Normal)
         {

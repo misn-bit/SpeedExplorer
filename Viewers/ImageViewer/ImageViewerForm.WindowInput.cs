@@ -167,6 +167,9 @@ public partial class ImageViewerForm
         const int HTBOTTOM = 15;
         const int HTBOTTOMLEFT = 16;
         const int HTBOTTOMRIGHT = 17;
+        const int WM_WINDOWPOSCHANGED = 0x0047;
+
+        var previousWindowState = m.Msg == WM_WINDOWPOSCHANGED ? WindowState : FormWindowState.Normal;
 
         if (m.Msg == WM_NCHITTEST)
         {
@@ -208,6 +211,8 @@ public partial class ImageViewerForm
             return;
         }
         base.WndProc(ref m);
+        if (m.Msg == WM_WINDOWPOSCHANGED && WindowState != previousWindowState)
+            SaveWindowState();
     }
 
     protected override void OnMouseMove(MouseEventArgs e)

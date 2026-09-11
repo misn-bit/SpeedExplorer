@@ -553,12 +553,7 @@ public partial class MainForm
 
             _owner.FormClosing += (s, e) =>
             {
-                bool isMaximized = _owner.WindowState == FormWindowState.Maximized;
-                bool isFullscreen = isMaximized && _owner.MaximizedBounds == Rectangle.Empty;
-
-                AppSettings.Current.MainWindowMaximized = isMaximized && !isFullscreen;
-                AppSettings.Current.MainWindowFullscreen = isFullscreen;
-                AppSettings.Current.Save();
+                _owner.SaveWindowStateForCurrentState();
 
                 _owner.SaveFolderSettings();
                 TagManager.Instance.Flush(); // Commit any pending debounced tag saves.

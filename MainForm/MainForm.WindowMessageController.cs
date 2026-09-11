@@ -10,6 +10,9 @@ public partial class MainForm
         const int WM_NCHITTEST = 0x84;
         const int WM_DEVICECHANGE = 0x219;
         const int WM_NCCALCSIZE = 0x83;
+        const int WM_WINDOWPOSCHANGED = 0x0047;
+
+        var previousWindowState = m.Msg == WM_WINDOWPOSCHANGED ? WindowState : FormWindowState.Normal;
 
         if (ShellContextMenuService.HandleMenuMessage(ref m))
             return;
@@ -42,5 +45,7 @@ public partial class MainForm
         }
 
         base.WndProc(ref m);
+        if (m.Msg == WM_WINDOWPOSCHANGED && WindowState != previousWindowState)
+            SaveWindowStateForCurrentState();
     }
 }

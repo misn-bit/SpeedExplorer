@@ -577,6 +577,21 @@ public partial class MainForm : Form, IFileOperationsHost, IShellActionsHost, IO
         }
     }
 
+    internal void SaveWindowStateForCurrentState()
+    {
+        // Never persist a minimized window: keep the last normal/maximized state
+        // so the app does not open restored after an exit while minimized.
+        if (WindowState == FormWindowState.Minimized)
+            return;
+
+        bool isMaximized = WindowState == FormWindowState.Maximized;
+        bool isFullscreen = isMaximized && MaximizedBounds == Rectangle.Empty;
+
+        AppSettings.Current.MainWindowMaximized = isMaximized && !isFullscreen;
+        AppSettings.Current.MainWindowFullscreen = isFullscreen;
+        AppSettings.Current.Save();
+    }
+
     protected override bool ShowWithoutActivation => _preloadOnly || base.ShowWithoutActivation;
 
     private void InitializeTabs(string? initialPath) => _tabsController.InitializeTabs(initialPath);
