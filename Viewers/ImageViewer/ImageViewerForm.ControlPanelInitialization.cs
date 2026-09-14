@@ -37,7 +37,7 @@ public partial class ImageViewerForm
 
         _fileNameLabel = new Label
         {
-            AutoSize = true,
+            AutoSize = false,
             Location = new Point(Scale(8), Scale(4)),
             ForeColor = ForeColor_Dark,
             Font = new Font("Segoe UI", 9, FontStyle.Bold),
@@ -55,12 +55,13 @@ public partial class ImageViewerForm
 
         _indexLabel = new Label
         {
-            AutoSize = true,
+            AutoSize = false,
             ForeColor = Color.Gray,
             Font = new Font("Segoe UI", 8),
             TextAlign = ContentAlignment.MiddleLeft
         };
         _fileNameLabel.TextChanged += (s, e) => LayoutInfoControls();
+        _indexLabel.TextChanged += (s, e) => LayoutInfoControls();
 
         _infoContainer.Controls.Add(_fileNameLabel);
         _infoContainer.Controls.Add(_indexLabel);

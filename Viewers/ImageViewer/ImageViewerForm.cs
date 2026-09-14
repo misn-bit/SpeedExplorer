@@ -26,6 +26,8 @@ public partial class ImageViewerForm : Form
     private Panel _infoContainer = null!;
     private Label _fileNameLabel = null!;
     private Label _indexLabel = null!;
+    private string _fileNameFullText = string.Empty;
+    private readonly ToolTip _nameTooltip = new();
     private FlowLayoutPanel _tagsPanel = null!;
     private TrackBar _zoomSlider = null!;
     private Label _zoomLabel = null!;

@@ -77,13 +77,58 @@ public partial class ImageViewerForm
             return;
 
         int left = Scale(8);
+        int gap = Scale(8);
+
+        Size indexSize = TextRenderer.MeasureText(_indexLabel.Text, _indexLabel.Font);
+        int maxNameWidth = _infoContainer.Width - left * 2 - gap - indexSize.Width;
+        string displayName = Ellipsize(_fileNameFullText, _fileNameLabel.Font, maxNameWidth);
+        if (_fileNameLabel.Text != displayName)
+            _fileNameLabel.Text = displayName;
+
+        Size nameSize = TextRenderer.MeasureText(displayName, _fileNameLabel.Font);
+        int nameWidth = Math.Max(Scale(10), nameSize.Width);
+        int rowHeight = Math.Max(nameSize.Height, indexSize.Height);
+
+        _fileNameLabel.Size = new Size(nameWidth, rowHeight);
         _fileNameLabel.Location = new Point(left, Scale(2));
-        _indexLabel.Location = new Point(_fileNameLabel.Right + Scale(8), _fileNameLabel.Top + Scale(1));
+        _indexLabel.Size = new Size(indexSize.Width, rowHeight);
+        _indexLabel.Location = new Point(left + nameWidth + gap, _fileNameLabel.Top + Scale(1));
 
         int tagsY = _fileNameLabel.Bottom + Scale(1);
         int tagsHeight = Math.Max(Scale(12), _infoContainer.Height - tagsY - Scale(2));
         _tagsPanel.Location = new Point(left, tagsY);
         _tagsPanel.Size = new Size(Math.Max(Scale(40), _infoContainer.Width - left * 2), tagsHeight);
+    }
+
+    private void SetFileNameDisplay(string name)
+    {
+        _fileNameFullText = name;
+        _nameTooltip.SetToolTip(_fileNameLabel, name);
+        _fileNameLabel.Text = name;
+    }
+
+    private static string Ellipsize(string text, Font font, int maxWidth)
+    {
+        if (string.IsNullOrEmpty(text) || TextRenderer.MeasureText(text, font).Width <= maxWidth)
+            return text;
+
+        const string ellipsis = "…";
+        int ellipsisWidth = TextRenderer.MeasureText(ellipsis, font).Width;
+        if (maxWidth <= ellipsisWidth)
+            return string.Empty;
+
+        int low = 0;
+        int high = text.Length;
+        while (low < high)
+        {
+            int mid = (low + high + 1) / 2;
+            if (TextRenderer.MeasureText(text.Substring(0, mid) + ellipsis, font).Width <= maxWidth)
+                low = mid;
+            else
+                high = mid - 1;
+        }
+
+        return text.Substring(0, low) + ellipsis;
     }
 
 }

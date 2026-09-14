@@ -46,7 +46,7 @@ public partial class ImageViewerForm
                 _currentImage = loadedImage.Bitmap;
             }
 
-            _fileNameLabel.Text = Path.GetFileName(path);
+            SetFileNameDisplay(Path.GetFileName(path));
             _indexLabel.Text = $"{_currentIndex + 1} / {_imagePaths.Count}";
             _titleLabel.Text = $"Speed Explorer - {Path.GetFileName(path)}";
 
@@ -63,12 +63,12 @@ public partial class ImageViewerForm
         catch (SixLabors.ImageSharp.UnknownImageFormatException)
         {
             _currentImage = null;
-            _fileNameLabel.Text = "Error: Format not supported";
+            SetFileNameDisplay("Error: Format not supported");
         }
         catch (Exception ex)
         {
             _currentImage = null;
-            _fileNameLabel.Text = $"Error: {ex.Message}";
+            SetFileNameDisplay($"Error: {ex.Message}");
         }
         _pictureBox.Invalidate();
         UpdateManualOcrUiState();
