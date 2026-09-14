@@ -131,7 +131,7 @@ public partial class ImageViewerForm : Form
     private int Scale(int pixels) => (int)(pixels * (this.DeviceDpi / 96.0));
     private Padding Scale(Padding p) => new Padding(Scale(p.Left), Scale(p.Top), Scale(p.Right), Scale(p.Bottom));
     private int TitleBarHeight => Scale(32);
-    private int ControlPanelHeight => Scale(50);
+    private int ControlPanelHeight => Scale(38);
     private int ControlButtonHeight => Scale(24);
     private int ZoomSliderVisualOffsetY => Scale(2);
     private Padding WindowFramePadding => Scale(new Padding(2));

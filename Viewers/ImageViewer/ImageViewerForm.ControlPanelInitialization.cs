@@ -13,7 +13,7 @@ public partial class ImageViewerForm
             Dock = DockStyle.Bottom,
             Height = ControlPanelHeight,
             BackColor = ControlPanelColor,
-            Padding = Scale(new Padding(8, 6, 8, 6))
+            Padding = Scale(new Padding(8, 4, 8, 4))
         };
 
         // Navigation

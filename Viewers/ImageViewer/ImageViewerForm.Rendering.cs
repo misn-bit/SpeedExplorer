@@ -12,9 +12,18 @@ public partial class ImageViewerForm
     {
         if (_currentImage == null) return;
 
+        bool isOneToOne = Math.Abs(_zoomLevel - 1.0f) < 0.001f;
         bool isUpscaling = _zoomLevel > 1.0f;
-        e.Graphics.InterpolationMode = isUpscaling ? InterpolationMode.HighQualityBilinear : InterpolationMode.HighQualityBicubic;
-        e.Graphics.PixelOffsetMode = isUpscaling ? PixelOffsetMode.None : PixelOffsetMode.HighQuality;
+        if (isOneToOne)
+        {
+            e.Graphics.InterpolationMode = InterpolationMode.NearestNeighbor;
+            e.Graphics.PixelOffsetMode = PixelOffsetMode.None;
+        }
+        else
+        {
+            e.Graphics.InterpolationMode = isUpscaling ? InterpolationMode.HighQualityBilinear : InterpolationMode.HighQualityBicubic;
+            e.Graphics.PixelOffsetMode = isUpscaling ? PixelOffsetMode.None : PixelOffsetMode.HighQuality;
+        }
         e.Graphics.CompositingQuality = CompositingQuality.HighQuality;
         e.Graphics.SmoothingMode = SmoothingMode.HighQuality;
 
@@ -23,6 +32,12 @@ public partial class ImageViewerForm
 
         float x = (_pictureBox.Width - imgWidth) / 2f + _panOffset.X;
         float y = (_pictureBox.Height - imgHeight) / 2f + _panOffset.Y;
+
+        if (isOneToOne)
+        {
+            x = MathF.Round(x);
+            y = MathF.Round(y);
+        }
 
         var imageRect = new RectangleF(x, y, imgWidth, imgHeight);
         e.Graphics.DrawImage(_currentImage, imageRect);

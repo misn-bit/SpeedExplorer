@@ -43,12 +43,14 @@ public partial class ImageViewerForm
     {
         if (WindowState == FormWindowState.Maximized)
         {
+            Padding = WindowFramePadding;
             WindowState = FormWindowState.Normal;
         }
         else
         {
             // Respect taskbar
             MaximizedBounds = Screen.FromHandle(Handle).WorkingArea;
+            Padding = Padding.Empty;
             WindowState = FormWindowState.Maximized;
         }
     }
@@ -86,9 +88,9 @@ public partial class ImageViewerForm
         if (_autoFitEnabled)
         {
             if (_autoFitBySmallerDimension)
-                FitToWindowBySmallerDimension();
+                FitToWindowBySmallerDimension(allowUpscale: false);
             else
-                FitToWindow();
+                FitToWindow(allowUpscale: false);
         }
     }
 
@@ -104,7 +106,7 @@ public partial class ImageViewerForm
 
     private void ApplyChromeVisibility()
     {
-        Padding = _isFullscreen ? Padding.Empty : WindowFramePadding;
+        Padding = (WindowState == FormWindowState.Maximized || _isFullscreen) ? Padding.Empty : WindowFramePadding;
         _controlPanel.Visible = !_isFullscreen;
         _titleBar.Visible = !_isFullscreen;
         Invalidate();
@@ -145,11 +147,29 @@ public partial class ImageViewerForm
         FitToWindow(allowUpscale: false);
     }
 
+    private void FormStateChanged(object? sender, EventArgs e)
+    {
+        Padding = (WindowState == FormWindowState.Maximized || _isFullscreen) ? Padding.Empty : WindowFramePadding;
+        ApplyAutoFitIfEnabled();
+    }
+
+    private void ApplyAutoFitIfEnabled()
+    {
+        if (!_autoFitEnabled || _isFullscreen)
+            return;
+
+        if (_autoFitBySmallerDimension)
+            FitToWindowBySmallerDimension(allowUpscale: false);
+        else
+            FitToWindow(allowUpscale: false);
+    }
+
     private void ApplySavedWindowState()
     {
         if (_settings.ImageViewerMaximized)
         {
             MaximizedBounds = Screen.FromHandle(Handle).WorkingArea;
+            Padding = Padding.Empty;
             WindowState = FormWindowState.Maximized;
         }
     }

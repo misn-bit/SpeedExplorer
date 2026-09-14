@@ -77,11 +77,11 @@ public partial class ImageViewerForm
             return;
 
         int left = Scale(8);
-        _fileNameLabel.Location = new Point(left, Scale(4));
+        _fileNameLabel.Location = new Point(left, Scale(2));
         _indexLabel.Location = new Point(_fileNameLabel.Right + Scale(8), _fileNameLabel.Top + Scale(1));
 
-        int tagsY = _fileNameLabel.Bottom + Scale(2);
-        int tagsHeight = Math.Max(Scale(12), _infoContainer.Height - tagsY - Scale(4));
+        int tagsY = _fileNameLabel.Bottom + Scale(1);
+        int tagsHeight = Math.Max(Scale(12), _infoContainer.Height - tagsY - Scale(2));
         _tagsPanel.Location = new Point(left, tagsY);
         _tagsPanel.Size = new Size(Math.Max(Scale(40), _infoContainer.Width - left * 2), tagsHeight);
     }

@@ -212,7 +212,10 @@ public partial class ImageViewerForm
         }
         base.WndProc(ref m);
         if (m.Msg == WM_WINDOWPOSCHANGED && WindowState != previousWindowState)
+        {
             SaveWindowState();
+            FormStateChanged(null, EventArgs.Empty);
+        }
     }
 
     protected override void OnMouseMove(MouseEventArgs e)
@@ -258,13 +261,7 @@ public partial class ImageViewerForm
     protected override void OnResize(EventArgs e)
     {
         base.OnResize(e);
-        if (_autoFitEnabled && !_isFullscreen)
-        {
-            if (_autoFitBySmallerDimension)
-                FitToWindowBySmallerDimension(allowUpscale: false);
-            else
-                FitToWindow(allowUpscale: false);
-        }
+        ApplyAutoFitIfEnabled();
     }
 
 }
