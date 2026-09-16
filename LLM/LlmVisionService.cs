@@ -61,7 +61,7 @@ public class LlmVisionService
         var stats = new LlmImageStats { Path = imagePath };
         try 
         {
-            var (imageBytes, s) = LlmImageProcessor.PrepareImageForVision(imagePath, visionMaxPixels);
+            var (imageBytes, s) = LlmImageProcessor.PrepareImageForVision(imagePath, visionMaxPixels, 90);
             stats = s;
             string base64 = Convert.ToBase64String(imageBytes);
             
@@ -222,7 +222,7 @@ public class LlmVisionService
             "You are an OCR extractor. Return strict JSON only. " +
             "Extract readable text from the image. " +
             "Be conservative with block count: merge nearby lines from the same text region and avoid duplicate/overlapping blocks. " +
-            "Return blocks with coordinates x,y,w,h and optional font_size. Coordinate range is from 0 to 1." +
+            "Return blocks with coordinates x,y,w,h and optional font_size. Coordinate range is from 0 to 1, not in pixels." +
             (useReasoning ? " Include a concise thought field explaining OCR interpretation choices before the final OCR fields." : "");
 
         string userPrompt = WithReasoningDirective(
@@ -476,7 +476,7 @@ public class LlmVisionService
         List<LlmImageStats> stats;
         try
         {
-            (requestJson, stats) = BuildRequest(visionMaxPixels, 85);
+            (requestJson, stats) = BuildRequest(visionMaxPixels, 90);
         }
         catch (Exception ex)
         {
@@ -507,7 +507,7 @@ public class LlmVisionService
                 LlmModelManager.IsFailedToProcessImageError(response.StatusCode, responseText))
             {
                 LlmDebugLogger.LogExecution("ExtractImageText early fallback without response_format (primary failed to process image)", success: false);
-                var earlyFallback = await RunFallbackWithoutSchemaAsync(visionMaxPixels, 85, "primary failed_to_process_image");
+                var earlyFallback = await RunFallbackWithoutSchemaAsync(visionMaxPixels, 90, "primary failed_to_process_image");
                 if (earlyFallback != null)
                     return earlyFallback;
 
@@ -1036,7 +1036,7 @@ public class LlmVisionService
         LlmImageStats imageStats;
         try
         {
-            (requestJson, imageStats) = BuildContextImageRequest(contextMaxPixels, 75);
+            (requestJson, imageStats) = BuildContextImageRequest(contextMaxPixels, 90);
         }
         catch (Exception ex)
         {
