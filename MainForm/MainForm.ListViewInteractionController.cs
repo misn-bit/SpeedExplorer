@@ -14,6 +14,10 @@ public partial class MainForm
         private BrowserState State => _owner.State;
         private bool _virtualRepairPending;
         private readonly System.Windows.Forms.Timer _middleAutoScrollTimer;
+        // Resumes low-priority (thumbnail) icon loading a moment after scrolling stops.
+        private readonly System.Windows.Forms.Timer _scrollIdleTimer;
+        private bool _scrollInProgress;
+        private bool _scrollRepaintPending;
         private bool _middleButtonDown;
         private bool _middleMovementExceededOpenThreshold;
         private bool _middleScrollEngaged;
@@ -42,7 +46,39 @@ public partial class MainForm
             _owner = owner;
             _middleAutoScrollTimer = new System.Windows.Forms.Timer { Interval = 16 };
             _middleAutoScrollTimer.Tick += MiddleAutoScrollTimer_Tick;
+            _scrollIdleTimer = new System.Windows.Forms.Timer { Interval = 400 };
+            _scrollIdleTimer.Tick += (s, e) =>
+            {
+                _scrollIdleTimer.Stop();
+                _scrollInProgress = false;
+                _owner._iconLoadService?.SuspendLowPriority = false;
+                QueueIconsForVisibleRange();
+                if (_scrollRepaintPending)
+                {
+                    _scrollRepaintPending = false;
+                    _owner._listView.Invalidate();
+                }
+            };
         }
+
+        /// <summary>
+        /// Called on every list scroll (wheel or scrollbar). Suspends thumbnail
+        /// generation while the user is actively scrolling: otherwise the worker
+        /// keeps finishing thumbnails for newly visible rows and each completed
+        /// batch forces a full list repaint on top of the scroll repaints, which
+        /// is what makes scrolling image folders feel choppy. Regular (high
+        /// priority) extension icons keep loading. Loading resumes 400ms after
+        /// the last scroll activity.
+        /// </summary>
+        public void NotifyScrollActivity()
+        {
+            _scrollInProgress = true;
+            _owner._iconLoadService?.SuspendLowPriority = true;
+            _scrollIdleTimer.Stop();
+            _scrollIdleTimer.Start();
+        }
+
+        public bool IsScrollInteractionActive => _scrollInProgress;
 
         public void RetrieveVirtualItem(object? sender, RetrieveVirtualItemEventArgs e)
         {
@@ -57,8 +93,23 @@ public partial class MainForm
 
                 if (e.ItemIndex >= 0 && e.ItemIndex < State.Items.Count)
                 {
-                    var item = State.Items[e.ItemIndex];
-                    e.Item = BuildListViewItem(item, includeSubItems: true);
+                    if (!_owner.IsTileView)
+                    {
+                        EnsureRowCache();
+                        e.Item = GetCachedListRow(e.ItemIndex);
+                        if (_viewportQueuePending)
+                        {
+                            // Defer until the control has completed the current
+                            // retrieval burst, then queue icons for the viewport.
+                            _viewportQueuePending = false;
+                            try { _owner.BeginInvoke((Action)QueueIconsForVisibleRange); }
+                            catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+                        }
+                    }
+                    else
+                    {
+                        e.Item = BuildListViewItem(State.Items[e.ItemIndex], includeSubItems: true);
+                    }
                 }
                 else
                 {
@@ -293,9 +344,13 @@ public partial class MainForm
             }
         }
 
-        public ListViewItem BuildListViewItem(FileItem item, bool includeSubItems)
+        public ListViewItem BuildListViewItem(FileItem item, bool includeSubItems, bool cacheIconBindings = false, int cacheRowIndex = -1)
         {
             var s = AppSettings.Current;
+            // Cached list-mode rows are built without side effects; icon loads
+            // for them are queued viewport-by-viewport instead (see
+            // QueueIconsForVisibleRange).
+            bool allowQueue = !cacheIconBindings;
 
             string imageKey = "";
             string displayName = item.Name;
@@ -348,11 +403,14 @@ public partial class MainForm
 
                             if (!_owner._smallIcons.Images.ContainsKey(uniqueKey))
                             {
-                                // Queue generic placeholder asynchronously (non-blocking for UI).
-                                _owner._iconLoadService?.EnsureGenericIcon(genericKey, extLookup, item.IsDirectory, colored);
-                                // Queue async load for unique icon/thumbnail.
-                                if (!_owner.IsTileView || _owner._tileViewController.ShouldQueueUniqueIconNow(uniqueKey))
-                                    _owner._iconLoadService?.QueueIconLoad(item.FullPath, item.IsDirectory, colored);
+                                if (allowQueue)
+                                {
+                                    // Queue generic placeholder asynchronously (non-blocking for UI).
+                                    _owner._iconLoadService?.EnsureGenericIcon(genericKey, extLookup, item.IsDirectory, colored);
+                                    // Queue async load for unique icon/thumbnail.
+                                    if (!_owner.IsTileView || _owner._tileViewController.ShouldQueueUniqueIconNow(uniqueKey))
+                                        _owner._iconLoadService?.QueueIconLoad(item.FullPath, item.IsDirectory, colored);
+                                }
 
                                 // Use already loaded generic icon if available, otherwise fallback immediately.
                                 if (_owner._smallIcons.Images.ContainsKey(genericKey))
@@ -381,7 +439,8 @@ public partial class MainForm
 
                                 // Queue async load for proper icon.
                                 string targetKey = item.IsDirectory ? $"{prefix}folder" : $"{prefix}{effectiveExt}";
-                                _owner._iconLoadService?.QueueIconLoad(targetKey, item.IsDirectory, colored, lookupPath: item.IsDirectory ? null : extLookup);
+                                if (allowQueue)
+                                    _owner._iconLoadService?.QueueIconLoad(targetKey, item.IsDirectory, colored, lookupPath: item.IsDirectory ? null : extLookup);
                                 pendingResolvedKey = targetKey;
                             }
                         }
@@ -426,6 +485,27 @@ public partial class MainForm
                     lvi.ImageKey = pendingResolvedKey;
                 else
                     _owner._tileViewController.RegisterIconBinding(pendingResolvedKey, lvi);
+            }
+
+            // Cached list-mode rows can't rely on per-frame rebuilds to pick up
+            // icons that load later, so remember who is waiting for each key;
+            // HandleIconReady updates them in place when the load completes.
+            if (cacheIconBindings && !_owner.IsTileView)
+            {
+                if (!string.IsNullOrEmpty(pendingUniqueKey))
+                {
+                    if (_owner._smallIcons.Images.ContainsKey(pendingUniqueKey))
+                        lvi.ImageKey = pendingUniqueKey;
+                    else
+                        RegisterListIconBinding(pendingUniqueKey, cacheRowIndex);
+                }
+                if (!string.IsNullOrEmpty(pendingResolvedKey))
+                {
+                    if (_owner._smallIcons.Images.ContainsKey(pendingResolvedKey))
+                        lvi.ImageKey = pendingResolvedKey;
+                    else
+                        RegisterListIconBinding(pendingResolvedKey, cacheRowIndex);
+                }
             }
 
             if (!includeSubItems)
@@ -476,6 +556,227 @@ public partial class MainForm
             return lvi;
         }
         
+        // ---------- List-mode row cache ----------
+        // Keep only recently requested rows. A full per-folder cache does a lot
+        // of work during the first paint and retains one ListViewItem plus seven
+        // subitems for every file in a large folder.
+        private const int CachedListRowCapacity = 384;
+
+        private sealed class CachedListRow
+        {
+            public ListViewItem Item { get; }
+            public LinkedListNode<int> LruNode { get; }
+
+            public CachedListRow(ListViewItem item, LinkedListNode<int> lruNode)
+            {
+                Item = item;
+                LruNode = lruNode;
+            }
+        }
+
+        private readonly Dictionary<int, CachedListRow> _cachedRows = new();
+        private readonly LinkedList<int> _cachedRowLru = new();
+        private object? _cacheSource;
+        private readonly Dictionary<string, HashSet<int>> _iconBindings = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<int, HashSet<string>> _rowIconBindings = new();
+        private bool _viewportQueuePending;
+
+        private void EnsureRowCache()
+        {
+            var items = State.Items;
+            if (_cacheSource != null && ReferenceEquals(_cacheSource, items))
+                return;
+
+            ClearRowCache();
+            _cacheSource = items;
+            _viewportQueuePending = true;
+        }
+
+        private ListViewItem GetCachedListRow(int index)
+        {
+            var fileItem = State.Items[index];
+            if (_cachedRows.TryGetValue(index, out var cached))
+            {
+                if (ReferenceEquals(cached.Item.Tag, fileItem))
+                {
+                    _cachedRowLru.Remove(cached.LruNode);
+                    _cachedRowLru.AddFirst(cached.LruNode);
+                    return cached.Item;
+                }
+
+                RemoveCachedListRow(index);
+            }
+
+            var row = BuildListViewItem(fileItem, includeSubItems: true, cacheIconBindings: true, cacheRowIndex: index);
+            var node = _cachedRowLru.AddFirst(index);
+            _cachedRows[index] = new CachedListRow(row, node);
+            while (_cachedRows.Count > CachedListRowCapacity)
+                RemoveCachedListRow(_cachedRowLru.Last!.Value);
+            return row;
+        }
+
+        public void InvalidateRowCache()
+        {
+            ClearRowCache();
+            _viewportQueuePending = true;
+        }
+
+        private void ClearRowCache()
+        {
+            _cachedRows.Clear();
+            _cachedRowLru.Clear();
+            _iconBindings.Clear();
+            _rowIconBindings.Clear();
+            _cacheSource = null;
+            _viewportQueuePending = false;
+        }
+
+        private void RemoveCachedListRow(int index)
+        {
+            if (_cachedRows.Remove(index, out var row))
+                _cachedRowLru.Remove(row.LruNode);
+
+            if (!_rowIconBindings.Remove(index, out var keys))
+                return;
+
+            foreach (string key in keys)
+            {
+                if (_iconBindings.TryGetValue(key, out var rows))
+                {
+                    rows.Remove(index);
+                    if (rows.Count == 0)
+                        _iconBindings.Remove(key);
+                }
+            }
+        }
+
+        private void QueueIconsForVisibleRange()
+        {
+            if (_owner.IsTileView || _scrollInProgress) return;
+            var lv = _owner._listView;
+            if (lv == null || lv.IsDisposed) return;
+            var items = State.Items;
+            if (items.Count == 0) return;
+
+            int top = 0;
+            int rowHeight = Math.Max(1, lv.Font.Height + 4);
+            try
+            {
+                top = lv.TopItem?.Index ?? 0;
+                int measuredHeight = lv.GetItemRect(top, ItemBoundsPortion.Entire).Height;
+                if (measuredHeight > 0)
+                    rowHeight = measuredHeight;
+            }
+            catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+
+            top = Math.Clamp(top, 0, items.Count - 1);
+            int visibleRows = Math.Max(1, (lv.ClientSize.Height / rowHeight) + 3);
+            int limit = Math.Min(top + visibleRows + 8, items.Count);
+            for (int i = top; i < limit; i++)
+                QueueIconsForItem(items[i]);
+        }
+
+        // Side-effect mirror of BuildListViewItem's icon decision: only queues
+        // loads whose keys are missing from the ImageList (dedup is also done
+        // inside IconLoadService). Keep in sync with that method.
+        private void QueueIconsForItem(FileItem item)
+        {
+            var s = AppSettings.Current;
+            if (!s.ShowIcons || s.UseEmojiIcons || item.IsShellItem) return;
+
+            bool colored = s.UseSystemIcons;
+            bool isExeOrLnk = item.Extension.Equals(".exe", StringComparison.OrdinalIgnoreCase) ||
+                              item.Extension.Equals(".lnk", StringComparison.OrdinalIgnoreCase) ||
+                              item.Extension.Equals(".url", StringComparison.OrdinalIgnoreCase) ||
+                              item.Extension.Equals(".ico", StringComparison.OrdinalIgnoreCase);
+            bool preferHighQualityLarge = _owner.GetEffectiveIconSize() >= 64;
+            bool unique = (s.ResolveUniqueIcons && isExeOrLnk) || preferHighQualityLarge;
+
+            string prefix = colored ? "sys_" : "gray_";
+            bool isImage = FileSystemService.IsImageFile(item.FullPath);
+            bool hasExtension = !string.IsNullOrWhiteSpace(item.Extension);
+            string effectiveExt = hasExtension ? item.Extension : ".noext";
+            string extLookup = hasExtension ? item.Extension : "file";
+
+            if (unique || (isImage && s.ShowThumbnails))
+            {
+                string uniqueKey = item.FullPath;
+                if (_owner._smallIcons.Images.ContainsKey(uniqueKey)) return;
+
+                string genericKey = item.IsDirectory
+                    ? $"{prefix}folder"
+                    : (isImage ? $"{prefix}image" : $"{prefix}{effectiveExt}");
+                _owner._iconLoadService?.EnsureGenericIcon(genericKey, extLookup, item.IsDirectory, colored);
+                _owner._iconLoadService?.QueueIconLoad(item.FullPath, item.IsDirectory, colored);
+            }
+            else
+            {
+                string targetKey = item.IsDirectory ? $"{prefix}folder" : $"{prefix}{effectiveExt}";
+                if (_owner._smallIcons.Images.ContainsKey(targetKey)) return;
+                _owner._iconLoadService?.QueueIconLoad(targetKey, item.IsDirectory, colored, lookupPath: item.IsDirectory ? null : extLookup);
+            }
+        }
+
+        private void RegisterListIconBinding(string key, int rowIndex)
+        {
+            if (rowIndex < 0)
+                return;
+
+            if (!_iconBindings.TryGetValue(key, out var rows))
+                _iconBindings[key] = rows = new HashSet<int>();
+            rows.Add(rowIndex);
+
+            if (!_rowIconBindings.TryGetValue(rowIndex, out var keys))
+                _rowIconBindings[rowIndex] = keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            keys.Add(key);
+        }
+
+        /// <summary>
+        /// List-mode counterpart of TileViewController.HandleIconReady: an async
+        /// icon/thumbnail just landed in the ImageList under `key`, so update
+        /// every cached row that was waiting for it.
+        /// </summary>
+        public void HandleIconReady(string key)
+        {
+            if (_owner.IsTileView || string.IsNullOrWhiteSpace(key)) return;
+            if (!_iconBindings.Remove(key, out var rows)) return;
+
+            bool updatedCachedRow = false;
+            foreach (int index in rows)
+            {
+                if (_cachedRows.TryGetValue(index, out var cached))
+                {
+                    if (index >= State.Items.Count || !ReferenceEquals(cached.Item.Tag, State.Items[index]))
+                    {
+                        RemoveCachedListRow(index);
+                        continue;
+                    }
+
+                    try
+                    {
+                        cached.Item.ImageKey = key;
+                        updatedCachedRow = true;
+                    }
+                    catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+                }
+
+                if (_rowIconBindings.TryGetValue(index, out var keys))
+                {
+                    keys.Remove(key);
+                    if (keys.Count == 0)
+                        _rowIconBindings.Remove(index);
+                }
+            }
+
+            if (updatedCachedRow)
+            {
+                if (_scrollInProgress)
+                    _scrollRepaintPending = true;
+                else
+                    _owner._listView.Invalidate();
+            }
+        }
+
         private static string BuildDriveTileIconKey(FileItem item)
         {
             string cleanPath = (item.FullPath ?? "").Replace(":\\", "").ToLowerInvariant();

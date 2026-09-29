@@ -108,7 +108,11 @@ public partial class MainForm
             lv.MouseWheel += _owner._iconZoomController.HandleMouseWheel;
             lv.MouseWheel += _owner._listViewInteractionController.MouseWheel;
             if (lv is PolishedListView polished)
-                polished.ScrollActivity += (s, e) => _owner.NotifySearchScrollInteraction();
+                polished.ScrollActivity += (s, e) =>
+                {
+                    _owner.NotifySearchScrollInteraction();
+                    _owner._listViewInteractionController.NotifyScrollActivity();
+                };
             lv.KeyDown += _owner.ListView_KeyDown;
             lv.KeyUp += _owner.ListView_KeyUp;
             lv.LostFocus += (s, e) => _owner.HideQuickLook();

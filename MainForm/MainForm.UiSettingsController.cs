@@ -73,6 +73,8 @@ public partial class MainForm
             _owner._listView.BeginUpdate();
             try
             {
+                _owner._listViewInteractionController.InvalidateRowCache();
+
                 if (_owner.IsTileView)
                 {
                     _owner._tileViewController.ApplyViewModeForNavigation();

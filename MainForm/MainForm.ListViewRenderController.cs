@@ -9,11 +9,111 @@ public partial class MainForm
     private sealed class ListViewRenderController
     {
         private readonly MainForm _owner;
+        private readonly GdiCache _gdi = new();
         private BrowserState State => _owner.State;
+
+        // Shared, immutable text layout specs (no color/font dependency, live for app lifetime).
+        private static readonly StringFormat SfNear = CreateSf(StringAlignment.Near);
+        private static readonly StringFormat SfCenter = CreateSf(StringAlignment.Center);
+        private static readonly StringFormat SfFar = CreateSf(StringAlignment.Far);
+
+        private static StringFormat CreateSf(StringAlignment alignment) => new()
+        {
+            LineAlignment = StringAlignment.Center,
+            Trimming = StringTrimming.EllipsisCharacter,
+            FormatFlags = StringFormatFlags.NoWrap,
+            Alignment = alignment
+        };
+
+        private static StringFormat GetSf(HorizontalAlignment align) => align switch
+        {
+            HorizontalAlignment.Right => SfFar,
+            HorizontalAlignment.Center => SfCenter,
+            _ => SfNear
+        };
 
         public ListViewRenderController(MainForm owner)
         {
             _owner = owner;
+        }
+
+        /// <summary>
+        /// Disposes all cached GDI+ objects. Call after theme changes so stale
+        /// colors/fonts can't linger; the cache repopulates lazily on next paint.
+        /// </summary>
+        public void InvalidateThemeCaches() => _gdi.Reset();
+
+        /// <summary>
+        /// Caches GDI+ brushes/pens/fonts so owner-draw handlers don't allocate
+        /// them per cell per frame. GDI+ object creation is one of the main
+        /// per-frame costs when scrolling.
+        /// </summary>
+        private sealed class GdiCache : IDisposable
+        {
+            private readonly Dictionary<int, SolidBrush> _brushes = new();
+            private readonly Dictionary<int, Pen> _pens = new();
+            private Font? _tagFont;
+            private string? _tagFontKey;
+            private Font? _italicFont;
+            private string? _italicFontKey;
+
+            public SolidBrush Brush(Color color)
+            {
+                int key = color.ToArgb();
+                if (!_brushes.TryGetValue(key, out var brush))
+                {
+                    brush = new SolidBrush(color);
+                    _brushes[key] = brush;
+                }
+                return brush;
+            }
+
+            public Pen Pen(Color color)
+            {
+                int key = color.ToArgb();
+                if (!_pens.TryGetValue(key, out var pen))
+                {
+                    pen = new Pen(color);
+                    _pens[key] = pen;
+                }
+                return pen;
+            }
+
+            public Font TagFont(Font baseFont)
+            {
+                string key = baseFont.FontFamily.Name;
+                if (_tagFont == null || _tagFontKey != key)
+                {
+                    _tagFont?.Dispose();
+                    _tagFont = new Font(baseFont.FontFamily, 8f);
+                    _tagFontKey = key;
+                }
+                return _tagFont;
+            }
+
+            public Font ItalicFont(Font baseFont)
+            {
+                string key = $"{baseFont.FontFamily.Name}|{baseFont.Size}|{baseFont.Unit}";
+                if (_italicFont == null || _italicFontKey != key)
+                {
+                    _italicFont?.Dispose();
+                    _italicFont = new Font(baseFont, FontStyle.Italic);
+                    _italicFontKey = key;
+                }
+                return _italicFont;
+            }
+
+            public void Reset()
+            {
+                foreach (var b in _brushes.Values) b.Dispose();
+                _brushes.Clear();
+                foreach (var p in _pens.Values) p.Dispose();
+                _pens.Clear();
+                _tagFont?.Dispose(); _tagFont = null; _tagFontKey = null;
+                _italicFont?.Dispose(); _italicFont = null; _italicFontKey = null;
+            }
+
+            public void Dispose() => Reset();
         }
 
         public void DrawTags(Graphics g, Rectangle bounds, string? tagText, Color rowBackColor, bool isSelected)
@@ -31,10 +131,10 @@ public partial class MainForm
                 pillColor = _owner.TagSelectedColor;
             }
 
-            using var bgBrush = new SolidBrush(pillColor);
-            using var textBrush = new SolidBrush(_owner.TagForeColor);
-            using var selectedTextBrush = new SolidBrush(Color.White);
-            using var font = new Font(_owner._listView.Font.FontFamily, 8f);
+            var bgBrush = _gdi.Brush(pillColor);
+            var textBrush = _gdi.Brush(_owner.TagForeColor);
+            var selectedTextBrush = _gdi.Brush(Color.White);
+            var font = _gdi.TagFont(_owner._listView.Font);
 
             // Save graphics state and set clip to column bounds.
             var state = g.Save();
@@ -63,11 +163,11 @@ public partial class MainForm
 
         public void DrawColumnHeader(object? sender, DrawListViewColumnHeaderEventArgs e)
         {
-            using var brush = new SolidBrush(_owner.HeaderBackColor);
+            var brush = _gdi.Brush(_owner.HeaderBackColor);
             e.Graphics.FillRectangle(brush, e.Bounds);
 
             // Draw separator on the right (header only).
-            using var pen = new Pen(_owner.BorderStrongColor);
+            var pen = _gdi.Pen(_owner.BorderStrongColor);
             e.Graphics.DrawLine(pen, e.Bounds.Right - 1, e.Bounds.Top + 4, e.Bounds.Right - 1, e.Bounds.Bottom - 4);
 
             var text = e.Header?.Text ?? "";
@@ -104,28 +204,10 @@ public partial class MainForm
             }
 
             var align = e.Header?.TextAlign ?? HorizontalAlignment.Left;
-            using var sf = new StringFormat
-            {
-                LineAlignment = StringAlignment.Center,
-                Trimming = StringTrimming.EllipsisCharacter,
-                FormatFlags = StringFormatFlags.NoWrap
-            };
-
-            switch (align)
-            {
-                case HorizontalAlignment.Right:
-                    sf.Alignment = StringAlignment.Far;
-                    break;
-                case HorizontalAlignment.Center:
-                    sf.Alignment = StringAlignment.Center;
-                    break;
-                default:
-                    sf.Alignment = StringAlignment.Near;
-                    break;
-            }
+            var sf = GetSf(align);
 
             var textBounds = new Rectangle(e.Bounds.X + 4, e.Bounds.Y, e.Bounds.Width - 8, e.Bounds.Height);
-            using var textBrush = new SolidBrush(_owner.ForeColor_Dark);
+            var textBrush = _gdi.Brush(_owner.ForeColor_Dark);
             var headerFont = e.Font ?? _owner._listView.Font;
             e.Graphics.DrawString(text + sortIndicator, headerFont, textBrush, textBounds, sf);
         }
@@ -174,7 +256,7 @@ public partial class MainForm
             bool isNameColumn = (!isDriveView && e.ColumnIndex == 0) || (isDriveView && e.ColumnIndex == 1);
             if (isNameColumn)
             {
-                using var brush = new SolidBrush(rowBackColor);
+                var brush = _gdi.Brush(rowBackColor);
                 e.Graphics.FillRectangle(brush, fillRect);
 
                 var s = AppSettings.Current;
@@ -224,7 +306,7 @@ public partial class MainForm
                     }
                 }
 
-                using var textBrush = new SolidBrush(
+                var textBrush = _gdi.Brush(
                     isProgressRow
                         ? _owner.MutedForeColor
                         : drawItem.Tag is FileItem fs && State.CutPaths.Contains(fs.FullPath)
@@ -235,25 +317,15 @@ public partial class MainForm
                 var textRect = new Rectangle(textX, e.Bounds.Y, e.Bounds.Width - (textX - e.Bounds.X), e.Bounds.Height);
                 string displayText = isDriveView ? (e.SubItem?.Text ?? "") : drawItem.Text;
 
-                using var sf = new StringFormat
-                {
-                    LineAlignment = StringAlignment.Center,
-                    Trimming = StringTrimming.EllipsisCharacter,
-                    FormatFlags = StringFormatFlags.NoWrap
-                };
-                Font? tempFont = null;
+                var sf = SfNear;
                 var drawFont = _owner._listView.Font;
                 if (isProgressRow)
-                {
-                    tempFont = new Font(_owner._listView.Font, FontStyle.Italic);
-                    drawFont = tempFont;
-                }
+                    drawFont = _gdi.ItalicFont(_owner._listView.Font);
                 e.Graphics.DrawString(displayText, drawFont, textBrush, textRect, sf);
-                tempFont?.Dispose();
             }
             else
             {
-                using var b = new SolidBrush(rowBackColor);
+                var b = _gdi.Brush(rowBackColor);
                 e.Graphics.FillRectangle(b, fillRect);
 
                 if (State.CurrentPath == ThisPcPath &&
@@ -262,8 +334,8 @@ public partial class MainForm
                     (fi.Extension == ".drive" || fi.Extension == ".usb"))
                 {
                     var barRect = new Rectangle(e.Bounds.X + 5, e.Bounds.Y + 4, e.Bounds.Width - 10, e.Bounds.Height - 8);
-                    using (var bgBrush = new SolidBrush(_owner.HoverBackColor))
-                        e.Graphics.FillRectangle(bgBrush, barRect);
+                    var barBgBrush = _gdi.Brush(_owner.HoverBackColor);
+                    e.Graphics.FillRectangle(barBgBrush, barRect);
 
                     if (fi.Size > 0)
                     {
@@ -285,11 +357,11 @@ public partial class MainForm
                         else if (ratio > 0.75)
                             barColor = Color.Yellow;
 
-                        using var fillBrush = new SolidBrush(barColor);
+                        var fillBrush = _gdi.Brush(barColor);
                         e.Graphics.FillRectangle(fillBrush, usageFillRect);
                     }
-                    using (var pen = new Pen(_owner.BorderSoftColor))
-                        e.Graphics.DrawRectangle(pen, barRect);
+                    var barPen = _gdi.Pen(_owner.BorderSoftColor);
+                    e.Graphics.DrawRectangle(barPen, barRect);
                 }
                 else if (State.CurrentPath != ThisPcPath && e.ColumnIndex == ColumnIndex_Tags)
                 {
@@ -299,26 +371,9 @@ public partial class MainForm
                 {
                     var text = e.SubItem?.Text ?? "";
                     var align = e.Header?.TextAlign ?? HorizontalAlignment.Left;
-                    using var sf = new StringFormat
-                    {
-                        LineAlignment = StringAlignment.Center,
-                        Trimming = StringTrimming.EllipsisCharacter,
-                        FormatFlags = StringFormatFlags.NoWrap
-                    };
-                    switch (align)
-                    {
-                        case HorizontalAlignment.Right:
-                            sf.Alignment = StringAlignment.Far;
-                            break;
-                        case HorizontalAlignment.Center:
-                            sf.Alignment = StringAlignment.Center;
-                            break;
-                        default:
-                            sf.Alignment = StringAlignment.Near;
-                            break;
-                    }
+                    var sf = GetSf(align);
 
-                    using var textBrush = new SolidBrush(_owner.ForeColor_Dark);
+                    var textBrush = _gdi.Brush(_owner.ForeColor_Dark);
                     var textBounds = new Rectangle(e.Bounds.X + 4, e.Bounds.Y, e.Bounds.Width - 8, e.Bounds.Height);
                     e.Graphics.DrawString(text, _owner._listView.Font, textBrush, textBounds, sf);
                 }

@@ -1226,7 +1226,17 @@ public class LlmVisionService
 
     private static List<string> NormalizeTranslationLines(IReadOnlyList<string>? rawLines, string? fullText, int expectedCount)
     {
-        var directSegments = NormalizeDirectTranslationSegments(rawLines);
+        var directSegments = NormalizeDirectTranslationSegments(rawLines, expectedCount);
+
+        if (expectedCount > 0 && rawLines != null &&
+            rawLines.Count == expectedCount && directSegments.Count == expectedCount)
+        {
+            // The model returned exactly one item per input block: trust the array order as-is.
+            // Re-grouping by numbered markers can corrupt legitimate translation text that
+            // merely starts with a number (e.g. "4... ").
+            return directSegments;
+        }
+
         var groupedFromArray = ExtractOrderedBlocks(rawLines);
         if (groupedFromArray.Count > 0)
             return FitTranslationBlockCount(groupedFromArray, expectedCount);
@@ -1237,7 +1247,7 @@ public class LlmVisionService
 
         if (directSegments.Count == 0 && !string.IsNullOrWhiteSpace(fullText))
         {
-            string single = StripOrderedPrefix(NormalizeTranslationSegment(fullText));
+            string single = StripOrderedPrefix(NormalizeTranslationSegment(fullText), 0);
             if (!string.IsNullOrWhiteSpace(single))
                 directSegments.Add(single);
         }
@@ -1255,10 +1265,10 @@ public class LlmVisionService
         if (lines.Count > 0)
             return string.Join(Environment.NewLine, lines);
 
-        return StripOrderedPrefix(NormalizeTranslationSegment(fallbackFullText ?? ""));
+        return StripOrderedPrefix(NormalizeTranslationSegment(fallbackFullText ?? ""), 0);
     }
 
-    private static List<string> NormalizeDirectTranslationSegments(IReadOnlyList<string>? rawLines)
+    private static List<string> NormalizeDirectTranslationSegments(IReadOnlyList<string>? rawLines, int expectedCount)
     {
         var normalized = new List<string>();
         if (rawLines == null)
@@ -1266,7 +1276,9 @@ public class LlmVisionService
 
         for (int i = 0; i < rawLines.Count; i++)
         {
-            string line = StripOrderedPrefix(NormalizeTranslationSegment(rawLines[i] ?? ""));
+            // Only strip a leading "N. " prefix when N matches the item's expected position,
+            // so legitimate translations that start with a number are never altered.
+            string line = StripOrderedPrefix(NormalizeTranslationSegment(rawLines[i] ?? ""), expectedCount > 0 ? i + 1 : 0);
             if (!string.IsNullOrWhiteSpace(line))
                 normalized.Add(line);
         }
@@ -1399,13 +1411,15 @@ public class LlmVisionService
         if (marker != '.' && marker != ')' && marker != ':' && marker != '-')
             return false;
 
-        if (marker == ':' && i + 1 < trimmed.Length && !char.IsWhiteSpace(trimmed[i + 1]))
+        i++;
+
+        // Require whitespace (or end of line) after the marker. This prevents matching
+        // legitimate text such as "4... " or "1985-year old" as a list marker.
+        if (i < trimmed.Length && !char.IsWhiteSpace(trimmed[i]))
             return false;
 
         if (!int.TryParse(trimmed.Substring(0, i), out order))
             return false;
-
-        i++;
         while (i < trimmed.Length && char.IsWhiteSpace(trimmed[i]))
             i++;
 
@@ -1457,7 +1471,7 @@ public class LlmVisionService
         return normalized;
     }
 
-    private static string StripOrderedPrefix(string text)
+    private static string StripOrderedPrefix(string text, int expectedOrder)
     {
         if (string.IsNullOrWhiteSpace(text))
             return "";
@@ -1472,14 +1486,23 @@ public class LlmVisionService
             char marker = trimmed[i];
             if (marker == '.' || marker == ')' || marker == ':' || marker == '-')
             {
-                if (marker == ':' && i + 1 < trimmed.Length && !char.IsWhiteSpace(trimmed[i + 1]))
+                i++;
+
+                // Require whitespace (or end of line) after the marker so that text like
+                // "4... " or "1985-year old" is never mistaken for a list prefix.
+                if (i < trimmed.Length && !char.IsWhiteSpace(trimmed[i]))
                     return trimmed;
 
-                i++;
-                while (i < trimmed.Length && char.IsWhiteSpace(trimmed[i]))
-                    i++;
-                if (i < trimmed.Length)
-                    return trimmed.Substring(i).Trim();
+                // When the expected item position is known, only strip a prefix whose
+                // number matches it (e.g. item 1 may start with "1. ", not "4. ").
+                if (int.TryParse(trimmed.Substring(0, i), out int order) &&
+                    (expectedOrder <= 0 || order == expectedOrder))
+                {
+                    while (i < trimmed.Length && char.IsWhiteSpace(trimmed[i]))
+                        i++;
+                    if (i < trimmed.Length)
+                        return trimmed.Substring(i).Trim();
+                }
             }
         }
 

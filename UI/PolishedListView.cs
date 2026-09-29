@@ -25,8 +25,28 @@ namespace SpeedExplorer
             public int Bottom;
         }
 
+        [StructLayout(LayoutKind.Sequential)]
+        private struct SCROLLINFO
+        {
+            public int cbSize;
+            public uint fMask;
+            public int nMin;
+            public int nMax;
+            public int nPage;
+            public int nPos;
+            public int nTrackPos;
+        }
+
+        private const int SIF_RANGE = 0x001;
+        private const int SIF_PAGE = 0x002;
+        private const int SIF_POS = 0x004;
+        private const int SB_VERT = 1;
+
         [DllImport("user32.dll", CharSet = CharSet.Auto)]
         private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
+
+        [DllImport("user32.dll", CharSet = CharSet.Auto)]
+        private static extern bool GetScrollInfo(IntPtr hWnd, int nBar, ref SCROLLINFO lpScrollInfo);
 
         [DllImport("user32.dll", SetLastError = true)]
         private static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
@@ -82,6 +102,14 @@ namespace SpeedExplorer
 
             try
             {
+                // The empty strip below the last row can only be visible when the
+                // list is scrolled to its bottom. Measuring the last item's rect
+                // (GetItemRect) is expensive for huge virtual lists — it forces
+                // layout of every row in between — and it used to run on every
+                // WM_PAINT. Skip the whole tail paint unless the bottom is on screen.
+                if (!BottomOfListIsOnScreen())
+                    return;
+
                 int headerHeight = GetHeaderHeight();
                 int tailTop = headerHeight;
 
@@ -110,6 +138,21 @@ namespace SpeedExplorer
             {
                 // Best-effort visual cleanup.
             }
+        }
+
+        private bool BottomOfListIsOnScreen()
+        {
+            var si = new SCROLLINFO
+            {
+                cbSize = System.Runtime.InteropServices.Marshal.SizeOf<SCROLLINFO>(),
+                fMask = SIF_RANGE | SIF_PAGE | SIF_POS
+            };
+            if (!GetScrollInfo(Handle, SB_VERT, ref si) || si.nMax <= 0)
+                return true; // Can't tell — keep the previous (safe) behavior.
+
+            // Standard Win32 scrollbar math: the end of the content is on screen
+            // only when the page covers the end of the range.
+            return si.nPos + si.nPage > si.nMax;
         }
 
         private int GetHeaderHeight()

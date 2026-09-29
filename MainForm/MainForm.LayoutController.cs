@@ -593,14 +593,18 @@ public partial class MainForm
                 _owner._smallIcons,
                 _owner._largeIcons,
                 requestRepaint: () => _owner._needsRepaint = true,
-                iconApplied: key => _owner._tileViewController.HandleIconReady(key),
+                iconApplied: key =>
+                {
+                    _owner._tileViewController.HandleIconReady(key);
+                    _owner._listViewInteractionController.HandleIconReady(key);
+                },
                 shouldLoadLargeIcons: () => _owner.IsTileView);
             _owner._iconLoadService.Start();
 
             _owner._repaintTimer = new System.Windows.Forms.Timer { Interval = 33 };
             _owner._repaintTimer.Tick += (s, e) =>
             {
-                if (_owner._needsRepaint)
+                if (_owner._needsRepaint && !_owner._listViewInteractionController.IsScrollInteractionActive)
                 {
                     _owner._needsRepaint = false;
                     _owner._listView.Invalidate();

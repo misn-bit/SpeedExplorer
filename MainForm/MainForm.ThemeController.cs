@@ -114,6 +114,10 @@ public partial class MainForm
         {
             var theme = CurrentPalette;
 
+            // Drop cached GDI+ brushes/pens/fonts so the list re-creates them
+            // with the new palette on next paint.
+            _owner._listViewRenderController?.InvalidateThemeCaches();
+
             _owner.BackColor = theme.WindowBackground;
             _owner.Padding = _owner.Scale(new Padding(2));
             _owner.ForeColor = theme.Foreground;

@@ -137,7 +137,7 @@ public partial class ImageViewerForm
             }
 
             string translated = translatedLines != null && i < translatedLines.Count && !string.IsNullOrWhiteSpace(translatedLines[i])
-                ? NormalizeOverlayDisplayText(StripOrderedPrefix(translatedLines[i]))
+                ? NormalizeOverlayDisplayText(translatedLines[i])
                 : NormalizeOverlayDisplayText(block.Text);
 
             _overlayBlocks.Add(new OverlayTextBlock
@@ -171,7 +171,7 @@ public partial class ImageViewerForm
         {
             int sourceIndex = _overlayBlocks[i].SourceIndex;
             if (sourceIndex >= 0 && sourceIndex < translatedLines.Count && !string.IsNullOrWhiteSpace(translatedLines[sourceIndex]))
-                _overlayBlocks[i].DisplayText = NormalizeOverlayDisplayText(StripOrderedPrefix(translatedLines[sourceIndex]));
+                _overlayBlocks[i].DisplayText = NormalizeOverlayDisplayText(translatedLines[sourceIndex]);
         }
 
         ApplyCachedOverlayOverridesForCurrentImage(invalidate: false);
@@ -367,38 +367,6 @@ public partial class ImageViewerForm
         float overlapArea = overlapW * overlapH;
         float minArea = Math.Max(0.0000001f, Math.Min(a.Width * a.Height, b.Width * b.Height));
         return overlapArea / minArea;
-    }
-
-    private static string StripOrderedPrefix(string text)
-    {
-        if (string.IsNullOrWhiteSpace(text))
-            return text;
-
-        string trimmed = text.Trim();
-        int i = 0;
-        while (i < trimmed.Length && char.IsDigit(trimmed[i]))
-            i++;
-
-        if (i > 0 && i < trimmed.Length)
-        {
-            char marker = trimmed[i];
-            if (marker == '.' || marker == ')' || marker == ':' || marker == '-')
-            {
-                if (marker == ':' && i + 1 < trimmed.Length && !char.IsWhiteSpace(trimmed[i + 1]))
-                    return trimmed;
-
-                i++;
-                while (i < trimmed.Length && char.IsWhiteSpace(trimmed[i]))
-                    i++;
-                if (i < trimmed.Length)
-                    return trimmed.Substring(i);
-
-                // If stripping the prefix leaves nothing, return the original text (e.g. for "1.")
-                return trimmed;
-            }
-        }
-
-        return trimmed;
     }
 
     private static string NormalizeOverlayDisplayText(string text)
