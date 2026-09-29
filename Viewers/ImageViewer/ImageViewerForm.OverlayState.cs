@@ -137,7 +137,7 @@ public partial class ImageViewerForm
             }
 
             string translated = translatedLines != null && i < translatedLines.Count && !string.IsNullOrWhiteSpace(translatedLines[i])
-                ? NormalizeOverlayDisplayText(translatedLines[i])
+                ? NormalizeEditedOverlayDisplayText(translatedLines[i])
                 : NormalizeOverlayDisplayText(block.Text);
 
             _overlayBlocks.Add(new OverlayTextBlock
@@ -171,7 +171,7 @@ public partial class ImageViewerForm
         {
             int sourceIndex = _overlayBlocks[i].SourceIndex;
             if (sourceIndex >= 0 && sourceIndex < translatedLines.Count && !string.IsNullOrWhiteSpace(translatedLines[sourceIndex]))
-                _overlayBlocks[i].DisplayText = NormalizeOverlayDisplayText(translatedLines[sourceIndex]);
+                _overlayBlocks[i].DisplayText = NormalizeEditedOverlayDisplayText(translatedLines[sourceIndex]);
         }
 
         ApplyCachedOverlayOverridesForCurrentImage(invalidate: false);
@@ -370,65 +370,18 @@ public partial class ImageViewerForm
     }
 
     private static string NormalizeOverlayDisplayText(string text)
-    {
-        if (string.IsNullOrWhiteSpace(text))
-            return "";
-
-        string normalized = DecodeEscapedLineBreaks(text)
-            .Replace("\r\n", "\n")
-            .Replace('\r', '\n')
-            .Trim();
-        if (normalized.IndexOf('\n') < 0)
-            return normalized;
-
-        var parts = normalized
-            .Split('\n')
-            .Select(static line => line.Trim())
-            .Where(static line => !string.IsNullOrWhiteSpace(line))
-            .ToList();
-
-        if (parts.Count <= 1)
-            return parts.Count == 1 ? parts[0] : "";
-
-        bool likelyVertical = IsLikelyVerticalText(parts);
-        var sb = new StringBuilder(parts[0]);
-        for (int i = 1; i < parts.Count; i++)
-        {
-            string next = parts[i];
-            char prevLast = GetLastNonWhitespace(sb);
-            char nextFirst = GetFirstNonWhitespace(next);
-
-            if (prevLast == '-' && char.IsLetterOrDigit(nextFirst))
-            {
-                if (sb.Length > 0)
-                    sb.Length--;
-                sb.Append(next);
-                continue;
-            }
-
-            if (likelyVertical || ShouldJoinWithoutSpace(prevLast, nextFirst))
-            {
-                sb.Append(next);
-            }
-            else
-            {
-                sb.Append(' ');
-                sb.Append(next);
-            }
-        }
-
-        return sb.ToString().Trim();
-    }
+        => NormalizeEditedOverlayDisplayText(text);
 
     private static string NormalizeEditedOverlayDisplayText(string text)
     {
         if (string.IsNullOrWhiteSpace(text))
             return "";
 
-        return DecodeEscapedLineBreaks(text)
+        string normalized = DecodeEscapedLineBreaks(text)
             .Replace("\r\n", "\n", StringComparison.Ordinal)
             .Replace('\r', '\n')
             .Trim();
+        return normalized;
     }
 
     private static string DecodeEscapedLineBreaks(string text)
@@ -442,70 +395,6 @@ public partial class ImageViewerForm
             .Replace("\\r", "\n", StringComparison.Ordinal);
     }
 
-    private static bool IsLikelyVerticalText(List<string> lines)
-    {
-        if (lines.Count < 3)
-            return false;
-
-        int shortLines = 0;
-        int cjkLines = 0;
-        for (int i = 0; i < lines.Count; i++)
-        {
-            string line = lines[i];
-            if (line.Length <= 2)
-                shortLines++;
-            if (line.Any(IsCjkChar))
-                cjkLines++;
-        }
-
-        return shortLines >= (int)Math.Ceiling(lines.Count * 0.70f) || cjkLines >= (int)Math.Ceiling(lines.Count * 0.70f);
-    }
-
-    private static bool ShouldJoinWithoutSpace(char left, char right)
-    {
-        if (left == '\0' || right == '\0')
-            return false;
-
-        if (IsCjkChar(left) || IsCjkChar(right))
-            return true;
-
-        if ("([{«“\"'".IndexOf(left) >= 0)
-            return true;
-        if (")]},.!?:;»”\"'".IndexOf(right) >= 0)
-            return true;
-
-        return false;
-    }
-
-    private static char GetFirstNonWhitespace(string text)
-    {
-        for (int i = 0; i < text.Length; i++)
-        {
-            if (!char.IsWhiteSpace(text[i]))
-                return text[i];
-        }
-        return '\0';
-    }
-
-    private static char GetLastNonWhitespace(StringBuilder text)
-    {
-        for (int i = text.Length - 1; i >= 0; i--)
-        {
-            if (!char.IsWhiteSpace(text[i]))
-                return text[i];
-        }
-        return '\0';
-    }
-
-    private static bool IsCjkChar(char ch)
-    {
-        return ch is >= '\u3040' and <= '\u30FF'   // Hiragana + Katakana
-            or >= '\u3400' and <= '\u4DBF'         // CJK Extension A
-            or >= '\u4E00' and <= '\u9FFF'         // CJK Unified Ideographs
-            or >= '\uF900' and <= '\uFAFF'         // CJK Compatibility Ideographs
-            or >= '\uAC00' and <= '\uD7AF';        // Hangul syllables
-    }
-
     private static string RenderOcrResult(LlmImageTextResult ocr)
     {
         var sb = new StringBuilder();
@@ -514,7 +403,7 @@ public partial class ImageViewerForm
         sb.AppendLine($"Blocks: {ocr.Blocks.Count}");
         sb.AppendLine();
         sb.AppendLine("Extracted text:");
-        sb.AppendLine(string.IsNullOrWhiteSpace(ocr.FullText) ? "(no text)" : ocr.FullText.Trim());
+        sb.AppendLine(string.IsNullOrWhiteSpace(ocr.FullText) ? "(no text)" : NormalizeEditedOverlayDisplayText(ocr.FullText));
 
         if (ocr.Blocks.Count > 0)
         {
@@ -522,7 +411,7 @@ public partial class ImageViewerForm
             sb.AppendLine("Blocks:");
             for (int i = 0; i < ocr.Blocks.Count; i++)
             {
-                sb.AppendLine($"{i + 1}. {ocr.Blocks[i].Text}");
+                sb.AppendLine($"{i + 1}. {NormalizeEditedOverlayDisplayText(ocr.Blocks[i].Text)}");
             }
         }
 
@@ -536,7 +425,9 @@ public partial class ImageViewerForm
         sb.AppendLine($"Target language: {translation.TargetLanguage}");
         sb.AppendLine();
         sb.AppendLine("Translated text:");
-        sb.AppendLine(string.IsNullOrWhiteSpace(translation.TranslatedFullText) ? "(empty)" : translation.TranslatedFullText.Trim());
+        sb.AppendLine(string.IsNullOrWhiteSpace(translation.TranslatedFullText)
+            ? "(empty)"
+            : NormalizeEditedOverlayDisplayText(translation.TranslatedFullText));
 
         if (translation.Translations.Count > 0)
         {
@@ -545,8 +436,8 @@ public partial class ImageViewerForm
             int count = Math.Max(ocr.Blocks.Count, translation.Translations.Count);
             for (int i = 0; i < count; i++)
             {
-                string src = i < ocr.Blocks.Count ? ocr.Blocks[i].Text : "";
-                string dst = i < translation.Translations.Count ? translation.Translations[i] : "";
+                string src = i < ocr.Blocks.Count ? NormalizeEditedOverlayDisplayText(ocr.Blocks[i].Text) : "";
+                string dst = i < translation.Translations.Count ? NormalizeEditedOverlayDisplayText(translation.Translations[i]) : "";
                 sb.AppendLine($"{i + 1}. {src}");
                 sb.AppendLine($"   -> {dst}");
             }

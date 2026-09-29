@@ -2,6 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Globalization;
+using System.Text;
+using System.Windows.Forms;
 
 namespace SpeedExplorer;
 
@@ -66,7 +69,7 @@ public partial class ImageViewerForm
         Graphics g,
         string text,
         Font font,
-        Brush brush,
+        SolidBrush brush,
         RectangleF textRect,
         StringAlignment alignment,
         StringAlignment verticalAlignment,
@@ -81,7 +84,7 @@ public partial class ImageViewerForm
         try
         {
             g.SetClip(textRect);
-            using var lineFormat = CreateOverlayLineFormat(alignment);
+            using var lineFormat = CreateOverlayLineFormat();
             float extraHeight = Math.Max(0f, textRect.Height - layout.Size.Height);
             float y = verticalAlignment switch
             {
@@ -94,21 +97,58 @@ public partial class ImageViewerForm
                 if (y > textRect.Bottom)
                     break;
 
-                var lineRect = new RectangleF(textRect.X, y, textRect.Width, layout.LineHeight);
-                if (outlineVisible)
+                List<OverlayTextRun> runs = SplitOverlayTextByFont(line);
+                float lineWidth = MeasureOverlayLineWidth(g, font, line);
+                float x = alignment switch
                 {
-                    using var path = new GraphicsPath();
-                    path.AddString(line, font.FontFamily, (int)font.Style, font.Size, lineRect, lineFormat);
-                    using var outlinePen = new Pen(outlineColor, Math.Max(1f, font.Size * 0.075f))
+                    StringAlignment.Center => textRect.X + ((textRect.Width - lineWidth) / 2f),
+                    StringAlignment.Far => textRect.Right - lineWidth,
+                    _ => textRect.X
+                };
+
+                foreach (OverlayTextRun run in runs)
+                {
+                    Font? emojiFont = run.UseEmojiFont ? TryCreateEmojiFont(font) : null;
+                    Font runFont = emojiFont ?? font;
+                    float runWidth = MeasureOverlayRunWidth(g, run.Text, runFont, lineFormat);
+                    var runRect = new RectangleF(x, y, Math.Max(runWidth + 2f, 1f), layout.LineHeight);
+                    try
                     {
-                        LineJoin = LineJoin.Round
-                    };
-                    g.DrawPath(outlinePen, path);
-                    g.FillPath(brush, path);
-                }
-                else
-                {
-                    g.DrawString(line, font, brush, lineRect, lineFormat);
+                        if (outlineVisible && !run.UseEmojiFont)
+                        {
+                            using var path = new GraphicsPath();
+                            path.AddString(run.Text, runFont.FontFamily, (int)runFont.Style, runFont.Size, runRect, lineFormat);
+                            using var outlinePen = new Pen(outlineColor, Math.Max(1f, runFont.Size * 0.075f))
+                            {
+                                LineJoin = LineJoin.Round
+                            };
+                            g.DrawPath(outlinePen, path);
+                            g.FillPath(brush, path);
+                        }
+                        else if (run.UseEmojiFont)
+                        {
+                            TextRenderer.DrawText(
+                                g,
+                                run.Text,
+                                runFont,
+                                new Point((int)MathF.Round(x), (int)MathF.Round(y)),
+                                brush.Color,
+                                TextFormatFlags.NoPadding |
+                                TextFormatFlags.NoPrefix |
+                                TextFormatFlags.SingleLine |
+                                TextFormatFlags.PreserveGraphicsClipping);
+                        }
+                        else
+                        {
+                            g.DrawString(run.Text, runFont, brush, runRect, lineFormat);
+                        }
+                    }
+                    finally
+                    {
+                        emojiFont?.Dispose();
+                    }
+
+                    x += runWidth;
                 }
                 y += layout.LineHeight;
             }
@@ -146,8 +186,87 @@ public partial class ImageViewerForm
             return 0f;
 
         using var format = CreateOverlayLineFormat();
-        return g.MeasureString(line, font, PointF.Empty, format).Width;
+        float width = 0f;
+        foreach (OverlayTextRun run in SplitOverlayTextByFont(line))
+        {
+            using Font? emojiFont = run.UseEmojiFont ? TryCreateEmojiFont(font) : null;
+            width += run.UseEmojiFont
+                ? MeasureEmojiRunWidth(g, run.Text, emojiFont ?? font)
+                : MeasureOverlayRunWidth(g, run.Text, font, format);
+        }
+
+        return width;
     }
+
+    private static float MeasureOverlayRunWidth(Graphics g, string text, Font font, StringFormat format)
+        => g.MeasureString(text, font, PointF.Empty, format).Width;
+
+    private static float MeasureEmojiRunWidth(Graphics g, string text, Font font)
+        => TextRenderer.MeasureText(
+            g,
+            text,
+            font,
+            Size.Empty,
+            TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix | TextFormatFlags.SingleLine).Width;
+
+    private static Font? TryCreateEmojiFont(Font baseFont)
+    {
+        try
+        {
+            return new Font("Segoe UI Emoji", baseFont.Size, baseFont.Style, GraphicsUnit.Pixel);
+        }
+        catch (ArgumentException)
+        {
+            return null;
+        }
+    }
+
+    private static List<OverlayTextRun> SplitOverlayTextByFont(string text)
+    {
+        var runs = new List<OverlayTextRun>();
+        if (string.IsNullOrEmpty(text))
+            return runs;
+
+        var currentText = new StringBuilder();
+        bool? currentUsesEmojiFont = null;
+        TextElementEnumerator elements = StringInfo.GetTextElementEnumerator(text);
+        while (elements.MoveNext())
+        {
+            string element = elements.GetTextElement();
+            bool useEmojiFont = IsEmojiTextElement(element);
+            if (currentUsesEmojiFont.HasValue && currentUsesEmojiFont.Value != useEmojiFont)
+            {
+                runs.Add(new OverlayTextRun(currentText.ToString(), currentUsesEmojiFont.Value));
+                currentText.Clear();
+            }
+
+            currentUsesEmojiFont = useEmojiFont;
+            currentText.Append(element);
+        }
+
+        if (currentText.Length > 0 && currentUsesEmojiFont.HasValue)
+            runs.Add(new OverlayTextRun(currentText.ToString(), currentUsesEmojiFont.Value));
+        return runs;
+    }
+
+    private static bool IsEmojiTextElement(string textElement)
+    {
+        foreach (Rune rune in textElement.EnumerateRunes())
+        {
+            int value = rune.Value;
+            if (value is >= 0x1F000 and <= 0x1FAFF
+                or >= 0x2600 and <= 0x27FF
+                or 0x00A9 or 0x00AE or 0x203C or 0x2049 or 0x2122 or 0x2139
+                or 0x3030 or 0x303D or 0x3297 or 0x3299)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private readonly record struct OverlayTextRun(string Text, bool UseEmojiFont);
 
     private static StringFormat CreateOverlayLineFormat(StringAlignment alignment = StringAlignment.Near)
     {

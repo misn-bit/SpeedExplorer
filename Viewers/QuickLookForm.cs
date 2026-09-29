@@ -2,6 +2,8 @@ using System;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace SpeedExplorer;
@@ -23,7 +25,11 @@ public class QuickLookForm : Form
     private Label _infoLabel;
     private AnimatedImageSequence? _imageSequence;
     private readonly System.Windows.Forms.Timer _animationTimer;
+    private readonly System.Diagnostics.Stopwatch _animationClock = new();
     private int _animationFrameIndex;
+    private long _animationFrameDeadlineMs;
+    private CancellationTokenSource? _imageLoadCts;
+    private int _imageLoadRequestId;
 
     private int EffectiveDpi => IsHandleCreated ? DeviceDpi : (Owner?.DeviceDpi ?? 96);
     private int Scale(int pixels) => (int)Math.Round(pixels * (EffectiveDpi / 96.0));
@@ -95,25 +101,17 @@ public class QuickLookForm : Form
 
         if (isImage)
         {
-            try
-            {
-                int maxW = Math.Min(Scale(BaseImageMaxWidth), maxContentWidth);
-                int maxH = Math.Min(Scale(BaseImageMaxHeight), maxContentHeight);
+            int maxW = Math.Min(Scale(BaseImageMaxWidth), maxContentWidth);
+            int maxH = Math.Min(Scale(BaseImageMaxHeight), maxContentHeight);
 
-                ClearImagePreview();
-                _imageSequence = ImageSharpViewerService.LoadAnimation(item.FullPath, maxW, maxH);
-                _animationFrameIndex = 0;
-                _pictureBox.Image = _imageSequence.GetFrame(_animationFrameIndex);
-                StartAnimationIfNeeded();
-                _pictureBox.Visible = true;
-
-                int targetWidth = _imageSequence.Width + Padding.Horizontal;
-                int targetHeight = _imageSequence.Height + Padding.Vertical + _infoLabel.Height;
-                this.Size = new Size(
-                    Math.Clamp(targetWidth, minFormWidth, maxFormWidth),
-                    Math.Clamp(targetHeight, minFormHeight, maxFormHeight));
-            }
-            catch { this.Hide(); return; }
+            ClearImagePreview();
+            this.Size = new Size(minFormWidth, minFormHeight);
+            Rectangle previewWorkingArea = workingArea;
+            var loadCts = new CancellationTokenSource();
+            _imageLoadCts = loadCts;
+            int requestId = ++_imageLoadRequestId;
+            _ = LoadImagePreviewAsync(item.FullPath, maxW, maxH, minFormWidth, minFormHeight,
+                maxFormWidth, maxFormHeight, previewWorkingArea, requestId, loadCts);
         }
         else if (isText)
         {
@@ -176,6 +174,7 @@ public class QuickLookForm : Form
         else
         {
             _animationTimer.Stop();
+            CancelImageLoad();
         }
     }
 
@@ -224,9 +223,24 @@ public class QuickLookForm : Form
             return;
         }
 
-        _animationFrameIndex = (_animationFrameIndex + 1) % _imageSequence.FrameCount;
+        long elapsedMs = _animationClock.ElapsedMilliseconds;
+        int advancedFrames = 0;
+        while (elapsedMs >= _animationFrameDeadlineMs && advancedFrames < _imageSequence.FrameCount)
+        {
+            _animationFrameIndex = (_animationFrameIndex + 1) % _imageSequence.FrameCount;
+            _animationFrameDeadlineMs += _imageSequence.GetFrameDelayMs(_animationFrameIndex);
+            advancedFrames++;
+        }
+
+        if (advancedFrames == 0)
+        {
+            _animationTimer.Interval = Math.Max(1, (int)(_animationFrameDeadlineMs - elapsedMs));
+            return;
+        }
+
         _pictureBox.Image = _imageSequence.GetFrame(_animationFrameIndex);
-        _animationTimer.Interval = _imageSequence.GetFrameDelayMs(_animationFrameIndex);
+        long remainingMs = Math.Max(1, _animationFrameDeadlineMs - _animationClock.ElapsedMilliseconds);
+        _animationTimer.Interval = (int)Math.Min(int.MaxValue, remainingMs);
     }
 
     private void StartAnimationIfNeeded()
@@ -237,13 +251,79 @@ public class QuickLookForm : Form
             return;
         }
 
+        _animationClock.Restart();
+        _animationFrameDeadlineMs = _imageSequence.GetFrameDelayMs(_animationFrameIndex);
         _animationTimer.Interval = _imageSequence.GetFrameDelayMs(_animationFrameIndex);
         _animationTimer.Start();
     }
 
+    private async Task LoadImagePreviewAsync(
+        string path,
+        int maxWidth,
+        int maxHeight,
+        int minFormWidth,
+        int minFormHeight,
+        int maxFormWidth,
+        int maxFormHeight,
+        Rectangle workingArea,
+        int requestId,
+        CancellationTokenSource loadCts)
+    {
+        AnimatedImageSequence? sequence = null;
+        try
+        {
+            sequence = await Task.Run(
+                () => ImageSharpViewerService.LoadAnimation(path, maxWidth, maxHeight, loadCts.Token),
+                loadCts.Token);
+
+            if (IsDisposed || Disposing || requestId != _imageLoadRequestId || loadCts.IsCancellationRequested)
+                return;
+
+            _imageSequence = sequence;
+            _animationFrameIndex = 0;
+            _pictureBox.Image = sequence.GetFrame(_animationFrameIndex);
+            StartAnimationIfNeeded();
+            _pictureBox.Visible = true;
+
+            int targetWidth = sequence.Width + Padding.Horizontal;
+            int targetHeight = sequence.Height + Padding.Vertical + _infoLabel.Height;
+            Size = new Size(
+                Math.Clamp(targetWidth, minFormWidth, maxFormWidth),
+                Math.Clamp(targetHeight, minFormHeight, maxFormHeight));
+            CenterAndClampToWorkingArea(workingArea);
+            sequence = null;
+        }
+        catch (OperationCanceledException)
+        {
+            // A newer preview replaced this one, or the popup was hidden.
+        }
+        catch
+        {
+            if (!IsDisposed && requestId == _imageLoadRequestId)
+                Hide();
+        }
+        finally
+        {
+            sequence?.Dispose();
+            if (ReferenceEquals(_imageLoadCts, loadCts))
+                _imageLoadCts = null;
+            loadCts.Dispose();
+        }
+    }
+
+    private void CancelImageLoad()
+    {
+        _imageLoadRequestId++;
+        try { _imageLoadCts?.Cancel(); } catch (ObjectDisposedException) { }
+        _imageLoadCts = null;
+    }
+
     private void ClearImagePreview()
     {
+        CancelImageLoad();
         _animationTimer.Stop();
+        _animationClock.Stop();
+        _animationFrameDeadlineMs = 0;
         _animationFrameIndex = 0;
         _pictureBox.Image = null;
         _imageSequence?.Dispose();

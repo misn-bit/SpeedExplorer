@@ -1,4 +1,5 @@
 using System.Drawing;
+using System.Threading;
 
 namespace SpeedExplorer;
 
@@ -28,11 +29,12 @@ internal sealed class ImageViewerImageLoadResult
 
 internal static class ImageViewerImageLoader
 {
-    public static ImageViewerImageLoadResult Load(string path)
+    public static ImageViewerImageLoadResult Load(string path, CancellationToken cancellationToken)
     {
-        if (ImageSharpViewerService.IsAnimatedImage(path))
-            return ImageViewerImageLoadResult.FromAnimation(ImageSharpViewerService.LoadAnimation(path));
+        cancellationToken.ThrowIfCancellationRequested();
+        if (ImageSharpViewerService.IsAnimatedImage(path, cancellationToken))
+            return ImageViewerImageLoadResult.FromAnimation(ImageSharpViewerService.LoadAnimation(path, cancellationToken));
 
-        return ImageViewerImageLoadResult.FromBitmap(ImageSharpViewerService.LoadBitmap(path));
+        return ImageViewerImageLoadResult.FromBitmap(ImageSharpViewerService.LoadBitmap(path, cancellationToken));
     }
 }

@@ -14,7 +14,11 @@ public partial class ImageViewerForm : Form
     private Image? _currentImage;
     private AnimatedImageSequence? _currentAnimation;
     private readonly System.Windows.Forms.Timer _animationTimer;
+    private readonly System.Diagnostics.Stopwatch _animationClock = new();
     private int _animationFrameIndex;
+    private long _animationFrameDeadlineMs;
+    private CancellationTokenSource? _imageLoadCts;
+    private int _imageLoadRequestId;
     
     private PictureBox _pictureBox = null!;
     private ContextMenuStrip _imageContextMenu = null!;

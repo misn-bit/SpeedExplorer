@@ -514,10 +514,13 @@ internal sealed class OverlayBlockEditDialog : Form
         {
             Dock = DockStyle.Fill,
             Multiline = true,
+            WordWrap = true,
             AcceptsReturn = true,
             AcceptsTab = true,
             ScrollBars = ScrollBars.Vertical,
-            Text = value,
+            Text = value.Replace("\r\n", "\n", StringComparison.Ordinal)
+                .Replace('\r', '\n')
+                .Replace("\n", Environment.NewLine, StringComparison.Ordinal),
             BackColor = Color.FromArgb(45, 45, 45),
             ForeColor = Color.Gainsboro,
             BorderStyle = BorderStyle.FixedSingle

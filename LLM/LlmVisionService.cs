@@ -221,6 +221,7 @@ public class LlmVisionService
         string systemPrompt =
             "You are an OCR extractor. Return strict JSON only. " +
             "Extract readable text from the image. " +
+            "Preserve spaces between words and preserve visible line breaks inside full_text and block text using newline characters. Never join adjacent words or separate visible lines together. " +
             "Be conservative with block count: merge nearby lines from the same text region and avoid duplicate/overlapping blocks. " +
             "Return blocks with coordinates x,y,w,h and optional font_size. Coordinate range is from 0 to 1, not in pixels." +
             (useReasoning ? " Include a concise thought field explaining OCR interpretation choices before the final OCR fields." : "");
@@ -230,6 +231,7 @@ public class LlmVisionService
             FormatOptionalPromptLine("Expected source language or script", sourceLanguageHint) +
             FormatOptionalPromptLine("OCR hint", ocrHint) +
             "Return text blocks in reading order.\n" +
+            "Keep the original spacing between words. Preserve every visible line break inside full_text and within a multiline block as a newline; do not flatten separate lines into one run of text.\n" +
             "Prefer fewer complete phrase blocks instead of one block per line.\n" +
             "Output JSON with: detected_language, full_text, blocks[{text,x,y,w,h,font_size?}].",
             useReasoning);
@@ -786,6 +788,7 @@ public class LlmVisionService
             "You are a translation engine. Return strict JSON only. " +
             "Translate each input text block into the requested target language. " +
             "Do not omit blocks. Preserve order exactly. " +
+            "Preserve spaces between words and preserve explicit line breaks within each input block. " +
             "Return exactly one string in the translations array for each input block. " +
             "If a single block needs multiple translated lines, keep them inside that one string using line breaks, not separate array entries.";
 

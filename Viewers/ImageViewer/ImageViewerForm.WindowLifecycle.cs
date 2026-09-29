@@ -132,6 +132,9 @@ public partial class ImageViewerForm
 
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
+        _imageLoadRequestId++;
+        try { _imageLoadCts?.Cancel(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+        _imageLoadCts = null;
         ClearAnimationState();
         _imageFolderRefreshTimer.Stop();
         _imageFolderRefreshTimer.Dispose();
@@ -144,7 +147,7 @@ public partial class ImageViewerForm
     protected override void OnShown(EventArgs e)
     {
         base.OnShown(e);
-        FitToWindow(allowUpscale: false);
+        LoadCurrentImage();
     }
 
     private void FormStateChanged(object? sender, EventArgs e)
@@ -204,9 +207,24 @@ public partial class ImageViewerForm
             return;
         }
 
-        _animationFrameIndex = (_animationFrameIndex + 1) % _currentAnimation.FrameCount;
+        long elapsedMs = _animationClock.ElapsedMilliseconds;
+        int advancedFrames = 0;
+        while (elapsedMs >= _animationFrameDeadlineMs && advancedFrames < _currentAnimation.FrameCount)
+        {
+            _animationFrameIndex = (_animationFrameIndex + 1) % _currentAnimation.FrameCount;
+            _animationFrameDeadlineMs += _currentAnimation.GetFrameDelayMs(_animationFrameIndex);
+            advancedFrames++;
+        }
+
+        if (advancedFrames == 0)
+        {
+            _animationTimer.Interval = Math.Max(1, (int)(_animationFrameDeadlineMs - elapsedMs));
+            return;
+        }
+
         _currentImage = _currentAnimation.GetFrame(_animationFrameIndex);
-        _animationTimer.Interval = _currentAnimation.GetFrameDelayMs(_animationFrameIndex);
+        long remainingMs = Math.Max(1, _animationFrameDeadlineMs - _animationClock.ElapsedMilliseconds);
+        _animationTimer.Interval = (int)Math.Min(int.MaxValue, remainingMs);
         _pictureBox.Invalidate();
     }
 
@@ -218,6 +236,8 @@ public partial class ImageViewerForm
             return;
         }
 
+        _animationClock.Restart();
+        _animationFrameDeadlineMs = _currentAnimation.GetFrameDelayMs(_animationFrameIndex);
         _animationTimer.Interval = _currentAnimation.GetFrameDelayMs(_animationFrameIndex);
         _animationTimer.Start();
     }
@@ -225,6 +245,8 @@ public partial class ImageViewerForm
     private void ClearAnimationState()
     {
         _animationTimer.Stop();
+        _animationClock.Stop();
+        _animationFrameDeadlineMs = 0;
         _animationFrameIndex = 0;
         if (_currentAnimation != null)
         {

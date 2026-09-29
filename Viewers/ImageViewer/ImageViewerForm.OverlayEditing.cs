@@ -192,9 +192,7 @@ public partial class ImageViewerForm
             preserveExplicitLineBreaks
                 ? NormalizeEditedOverlayDisplayText(block.SourceText)
                 : NormalizeOverlayDisplayText(block.SourceText),
-            preserveExplicitLineBreaks
-                ? NormalizeEditedOverlayDisplayText(translationText)
-                : NormalizeOverlayDisplayText(translationText),
+            NormalizeEditedOverlayDisplayText(translationText),
             block.NormalizedRect,
             block.NormalizedFontSize,
             block.TextColorArgb,
@@ -466,7 +464,7 @@ public partial class ImageViewerForm
             OcrText = normalizeForPersistence(block.SourceText),
             TranslationText = translationText == null
                 ? null
-                : normalizeForPersistence(translationText),
+                : NormalizeEditedOverlayDisplayText(translationText),
             NormalizedRect = block.NormalizedRect,
             NormalizedFontSize = block.NormalizedFontSize
         });

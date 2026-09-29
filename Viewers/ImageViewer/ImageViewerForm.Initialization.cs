@@ -41,7 +41,6 @@ public partial class ImageViewerForm
             e.Graphics.DrawRectangle(p, 0, 0, Width - 1, Height - 1);
         };
 
-        LoadCurrentImage();
         ApplyAiPanelToggleVisualState();
         LayoutControls();
         ApplySavedWindowState();

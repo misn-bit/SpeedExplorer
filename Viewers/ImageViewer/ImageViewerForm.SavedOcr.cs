@@ -99,6 +99,7 @@ public partial class ImageViewerForm
         if (_lastOcrResult != null && string.Equals(_ocrImagePath, imagePath, StringComparison.OrdinalIgnoreCase))
         {
             SetOverlayFromOcrResult(_lastOcrResult, null);
+            ApplyCachedOverlayOverridesForCurrentImage(invalidate: false);
             _aiOutputBox.Text = RenderOcrResult(_lastOcrResult);
             _aiOutputBox.AppendText(Environment.NewLine + Environment.NewLine + "[Translation deleted from OCR_output cache]");
         }
@@ -260,6 +261,7 @@ public partial class ImageViewerForm
         _lastTranslations = new List<string>();
         _currentOverlayFromSavedCache = true;
         SetOverlayFromOcrResult(_lastOcrResult, null);
+        ApplyCachedOverlayOverridesForCurrentImage(invalidate: false);
         string cacheLabel = TryGetExistingOcrCachePath(imagePath, out string existingCachePath)
             ? Path.GetFileName(existingCachePath)
             : Path.GetFileName(GetOcrCachePath(imagePath));
@@ -337,6 +339,7 @@ public partial class ImageViewerForm
 
         _lastTranslations = new List<string>();
         SetOverlayFromOcrResult(_lastOcrResult, null);
+        ApplyCachedOverlayOverridesForCurrentImage(invalidate: false);
         _aiOutputBox.Text = RenderOcrResult(_lastOcrResult);
         _aiOutputBox.AppendText(Environment.NewLine + Environment.NewLine + "[Loaded from OCR_output cache]");
         _currentOverlayFromSavedCache = true;

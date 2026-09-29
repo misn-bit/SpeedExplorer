@@ -4,6 +4,7 @@ using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Threading;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Formats.Gif;
 using SixLabors.ImageSharp.Formats.Png;
@@ -60,24 +61,28 @@ internal sealed class AnimatedImageSequence : IDisposable
 internal static class ImageSharpViewerService
 {
     private const int DefaultFrameDelayMs = 100;
-    private const int MinFrameDelayMs = 16;
+    private const int MinFrameDelayMs = 10;
     private const int MaxFrameDelayMs = 10_000;
 
-    public static Bitmap LoadBitmap(string path)
+    public static Bitmap LoadBitmap(string path, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         using var stream = OpenSharedRead(path);
         using Image<Bgra32> image = ImageSharpImage.Load<Bgra32>(stream);
+        cancellationToken.ThrowIfCancellationRequested();
         image.Mutate(static ctx => ctx.AutoOrient());
         return ToBitmap(image);
     }
 
-    public static Bitmap LoadBitmap(string path, int maxWidth, int maxHeight)
+    public static Bitmap LoadBitmap(string path, int maxWidth, int maxHeight, CancellationToken cancellationToken = default)
     {
         if (maxWidth <= 0) throw new ArgumentOutOfRangeException(nameof(maxWidth));
         if (maxHeight <= 0) throw new ArgumentOutOfRangeException(nameof(maxHeight));
 
+        cancellationToken.ThrowIfCancellationRequested();
         using var stream = OpenSharedRead(path);
         using Image<Bgra32> image = ImageSharpImage.Load<Bgra32>(stream);
+        cancellationToken.ThrowIfCancellationRequested();
         image.Mutate(static ctx => ctx.AutoOrient());
 
         if (image.Width > maxWidth || image.Height > maxHeight)
@@ -93,22 +98,24 @@ internal static class ImageSharpViewerService
         return ToBitmap(image);
     }
 
-    public static AnimatedImageSequence LoadAnimation(string path)
+    public static AnimatedImageSequence LoadAnimation(string path, CancellationToken cancellationToken = default)
     {
-        return LoadAnimationInternal(path, null, null);
+        return LoadAnimationInternal(path, null, null, cancellationToken);
     }
 
-    public static AnimatedImageSequence LoadAnimation(string path, int maxWidth, int maxHeight)
+    public static AnimatedImageSequence LoadAnimation(string path, int maxWidth, int maxHeight, CancellationToken cancellationToken = default)
     {
         if (maxWidth <= 0) throw new ArgumentOutOfRangeException(nameof(maxWidth));
         if (maxHeight <= 0) throw new ArgumentOutOfRangeException(nameof(maxHeight));
 
-        return LoadAnimationInternal(path, maxWidth, maxHeight);
+        return LoadAnimationInternal(path, maxWidth, maxHeight, cancellationToken);
     }
-    public static bool IsAnimatedImage(string path)
+    public static bool IsAnimatedImage(string path, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         using var stream = OpenSharedRead(path);
         var info = ImageSharpImage.Identify(stream);
+        cancellationToken.ThrowIfCancellationRequested();
         return info != null && info.FrameMetadataCollection.Count > 1;
     }
 
@@ -117,10 +124,12 @@ internal static class ImageSharpViewerService
         return new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
     }
 
-    private static AnimatedImageSequence LoadAnimationInternal(string path, int? maxWidth, int? maxHeight)
+    private static AnimatedImageSequence LoadAnimationInternal(string path, int? maxWidth, int? maxHeight, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         using var stream = OpenSharedRead(path);
         using Image<Bgra32> image = ImageSharpImage.Load<Bgra32>(stream);
+        cancellationToken.ThrowIfCancellationRequested();
         image.Mutate(static ctx => ctx.AutoOrient());
 
         if (maxWidth.HasValue && maxHeight.HasValue && (image.Width > maxWidth.Value || image.Height > maxHeight.Value))
@@ -140,6 +149,7 @@ internal static class ImageSharpViewerService
         {
             for (int i = 0; i < image.Frames.Count; i++)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 using Image<Bgra32> frame = image.Frames.CloneFrame(i);
                 frames.Add(ToBitmap(frame));
                 delays.Add(GetFrameDelayMilliseconds(frame.Frames.RootFrame.Metadata));
