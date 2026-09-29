@@ -19,7 +19,7 @@ public static class IconHelper
     private const uint SHGSI_SMALLICON = 0x000000001;
     private const uint SHGSI_LARGEICON = 0x000000000;         // Actually 0
 
-    [StructLayout(LayoutKind.Sequential)]
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct SHFILEINFO
     {
         public IntPtr hIcon;
@@ -82,7 +82,7 @@ public static class IconHelper
         public uint bmiColors;
     }
 
-    [DllImport("shell32.dll", CharSet = CharSet.Auto)]
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
     private static extern IntPtr SHGetFileInfo(string pszPath, uint dwFileAttributes, ref SHFILEINFO psfi, uint cbFileInfo, uint uFlags);
 
     [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
