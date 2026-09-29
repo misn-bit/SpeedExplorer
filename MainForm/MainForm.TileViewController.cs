@@ -241,11 +241,13 @@ public partial class MainForm
             if (total <= AsyncPopulateThreshold)
             {
                 AddTileBatch(0, total);
+                QueueIconsForVisibleItems(prioritize: true);
                 return;
             }
 
             int firstBatch = Math.Min(InitialBatchSize, total);
             AddTileBatch(0, firstBatch);
+            QueueIconsForVisibleItems(prioritize: true);
             _nextPopulateIndex = firstBatch;
             _isPopulating = true;
             _lastStatusTick = Environment.TickCount64;
@@ -337,6 +339,67 @@ public partial class MainForm
             _deferredUniqueQueue.Enqueue(key);
             EnsureDeferredUniqueLoadTimer();
             return false;
+        }
+
+        public void QueueIconsForVisibleItems(bool prioritize)
+        {
+            var lv = _owner._listView;
+            if (!_isTileView || lv == null || lv.IsDisposed || !AppSettings.Current.ShowIcons || AppSettings.Current.UseEmojiIcons)
+                return;
+
+            int itemCount = Math.Min(lv.Items.Count, State.Items.Count);
+            if (itemCount == 0)
+                return;
+
+            int top = 0;
+            int tileWidth = Math.Max(1, lv.TileSize.Width);
+            int tileHeight = Math.Max(1, lv.TileSize.Height);
+            try
+            {
+                top = lv.TopItem?.Index ?? 0;
+                if (top >= 0 && top < itemCount)
+                {
+                    Rectangle bounds = lv.GetItemRect(top, ItemBoundsPortion.Entire);
+                    if (bounds.Width > 0) tileWidth = bounds.Width;
+                    if (bounds.Height > 0) tileHeight = bounds.Height;
+                }
+            }
+            catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+
+            top = Math.Clamp(top, 0, itemCount - 1);
+            int visibleRows = Math.Max(1, (lv.ClientSize.Height + tileHeight - 1) / tileHeight + 1);
+            int visibleColumns = Math.Max(1, (lv.ClientSize.Width + tileWidth - 1) / tileWidth + 1);
+            int visibleItems = Math.Clamp((visibleRows * visibleColumns) + 8, 1, 256);
+            int limit = Math.Min(top + visibleItems, itemCount);
+
+            var settings = AppSettings.Current;
+            bool colored = settings.UseSystemIcons;
+            bool preferHighQualityLarge = _owner.GetEffectiveIconSize() >= 64;
+            for (int i = top; i < limit; i++)
+            {
+                FileItem item = State.Items[i];
+                if (item.IsShellItem || string.IsNullOrWhiteSpace(item.FullPath))
+                    continue;
+
+                bool isExeOrLnk = item.Extension.Equals(".exe", StringComparison.OrdinalIgnoreCase) ||
+                                  item.Extension.Equals(".lnk", StringComparison.OrdinalIgnoreCase) ||
+                                  item.Extension.Equals(".url", StringComparison.OrdinalIgnoreCase) ||
+                                  item.Extension.Equals(".ico", StringComparison.OrdinalIgnoreCase);
+                bool unique = (settings.ResolveUniqueIcons && isExeOrLnk) || preferHighQualityLarge;
+                bool isImage = FileSystemService.IsImageFile(item.FullPath);
+                if (!unique && !(isImage && settings.ShowThumbnails))
+                    continue;
+                if (_owner._smallIcons.Images.ContainsKey(item.FullPath))
+                    continue;
+
+                string prefix = colored ? "sys_" : "gray_";
+                string genericKey = item.IsDirectory
+                    ? $"{prefix}folder"
+                    : (isImage ? $"{prefix}image" : $"{prefix}{(string.IsNullOrWhiteSpace(item.Extension) ? ".noext" : item.Extension)}");
+                string extLookup = string.IsNullOrWhiteSpace(item.Extension) ? "file" : item.Extension;
+                _owner._iconLoadService?.EnsureGenericIcon(genericKey, extLookup, item.IsDirectory, colored);
+                _owner._iconLoadService?.QueueIconLoad(item.FullPath, item.IsDirectory, colored, prioritize: prioritize);
+            }
         }
 
         private void EnsurePopulateTimer()

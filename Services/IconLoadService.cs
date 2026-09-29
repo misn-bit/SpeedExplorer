@@ -20,6 +20,7 @@ internal sealed class IconLoadService : IDisposable
 
     private readonly Dictionary<string, long> _pending = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _prioritizedPending = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentQueue<IconLoadRequest> _visibleHighQueue = new();
     private readonly ConcurrentQueue<IconLoadRequest> _highQueue = new();
     private readonly ConcurrentQueue<IconLoadRequest> _visibleQueue = new();
     private readonly ConcurrentQueue<IconLoadRequest> _lowQueue = new();
@@ -105,6 +106,7 @@ internal sealed class IconLoadService : IDisposable
             _pending.Clear();
             _prioritizedPending.Clear();
         }
+        while (_visibleHighQueue.TryDequeue(out _)) { }
         while (_highQueue.TryDequeue(out _)) { }
         while (_visibleQueue.TryDequeue(out _)) { }
         while (_lowQueue.TryDequeue(out _)) { }
@@ -146,6 +148,20 @@ internal sealed class IconLoadService : IDisposable
 
     public void ResetVisiblePriorities()
     {
+        while (_visibleHighQueue.TryDequeue(out var req))
+        {
+            bool isCurrentRequest;
+            lock (_pending)
+            {
+                isCurrentRequest = _pending.TryGetValue(req.KeyOrPath, out long requestId) && requestId == req.RequestId;
+                if (isCurrentRequest)
+                    _prioritizedPending.Remove(req.KeyOrPath);
+            }
+
+            if (isCurrentRequest)
+                _highQueue.Enqueue(req);
+        }
+
         while (_visibleQueue.TryDequeue(out var req))
         {
             bool isCurrentRequest;
@@ -198,13 +214,12 @@ internal sealed class IconLoadService : IDisposable
         {
             if (_pending.ContainsKey(keyOrPath))
             {
-                // A thumbnail can already be waiting behind a large batch from
-                // an earlier viewport. Give the newly visible request its own
-                // queue entry and invalidate the older one by request id.
-                if (!prioritize || !effectiveLowPriority || !_prioritizedPending.Add(keyOrPath))
+                // Work already queued for an older viewport can be promoted
+                // without waiting for the background queue to reach it.
+                if (!prioritize || !_prioritizedPending.Add(keyOrPath))
                     return;
             }
-            else if (prioritize && effectiveLowPriority)
+            else if (prioritize)
             {
                 _prioritizedPending.Add(keyOrPath);
             }
@@ -224,6 +239,8 @@ internal sealed class IconLoadService : IDisposable
 
         if (prioritize && effectiveLowPriority)
             _visibleQueue.Enqueue(req);
+        else if (prioritize)
+            _visibleHighQueue.Enqueue(req);
         else if (effectiveLowPriority)
             _lowQueue.Enqueue(req);
         else
@@ -243,7 +260,7 @@ internal sealed class IconLoadService : IDisposable
         }
     }
 
-    public int QueueCount => _highQueue.Count + _visibleQueue.Count + _lowQueue.Count;
+    public int QueueCount => _visibleHighQueue.Count + _highQueue.Count + _visibleQueue.Count + _lowQueue.Count;
 
     public bool SuspendLowPriority
     {
@@ -261,7 +278,11 @@ internal sealed class IconLoadService : IDisposable
         while (!_stop)
         {
             IconLoadRequest req;
-            if (!_suspendLowPriority && _visibleQueue.TryDequeue(out req))
+            if (_visibleHighQueue.TryDequeue(out req))
+            {
+                // Stable-viewport icons go ahead of background icon requests.
+            }
+            else if (!_suspendLowPriority && _visibleQueue.TryDequeue(out req))
             {
                 // Newly visible thumbnails take precedence over queued work
                 // for rows that are no longer on screen.
@@ -324,6 +345,22 @@ internal sealed class IconLoadService : IDisposable
                     _largeIcons.ImageSize.Width > 48 ||
                     _smallIcons.ImageSize.Width > 48;
                 bool isUniqueImageThumbnail = isUnique && isImage && AppSettings.Current.ShowThumbnails;
+
+                // Large unique shell icons are expensive to extract. For tile
+                // and other high-resolution views, ask the shell once at the
+                // larger size and derive the small-list image from that result.
+                // The small and large ImageLists still receive independent bitmaps.
+                bool useSingleUniqueIconSource = isUnique &&
+                                                 !isImage &&
+                                                 needLarge &&
+                                                 _smallIcons.ImageSize.Width >= 40 &&
+                                                 _largeIcons.ImageSize.Width > _smallIcons.ImageSize.Width;
+                if (useSingleUniqueIconSource)
+                {
+                    largeIcon = IconHelper.GetIconSized(lookupPath, isDirectory, _largeIcons.ImageSize.Width, isUnique, grayscale: !colored);
+                    if (largeIcon != null)
+                        smallIcon = ResizeBitmapNoDispose(largeIcon, _smallIcons.ImageSize.Width);
+                }
 
                 if (isImage && AppSettings.Current.ShowThumbnails)
                 {

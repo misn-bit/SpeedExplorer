@@ -52,7 +52,7 @@ public partial class MainForm
                 _scrollIdleTimer.Stop();
                 _scrollInProgress = false;
                 _owner._iconLoadService?.SuspendLowPriority = false;
-                QueueIconsForVisibleRange();
+                QueueIconsForVisibleRange(prioritize: true);
                 if (_scrollRepaintPending)
                 {
                     _scrollRepaintPending = false;
@@ -74,6 +74,7 @@ public partial class MainForm
         {
             _scrollInProgress = true;
             _owner._iconLoadService?.SuspendLowPriority = true;
+            _owner._iconLoadService?.ResetVisiblePriorities();
             _scrollIdleTimer.Stop();
             _scrollIdleTimer.Start();
         }
@@ -102,7 +103,7 @@ public partial class MainForm
                             // Defer until the control has completed the current
                             // retrieval burst, then queue icons for the viewport.
                             _viewportQueuePending = false;
-                            try { _owner.BeginInvoke((Action)(() => QueueIconsForVisibleRange())); }
+                            try { _owner.BeginInvoke((Action)(() => QueueIconsForVisibleRange(prioritize: true))); }
                             catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                         }
                     }
@@ -650,9 +651,14 @@ public partial class MainForm
             }
         }
 
-        private void QueueIconsForVisibleRange(bool prioritize = false)
+        private void QueueIconsForVisibleRange(bool prioritize = true)
         {
-            if (_owner.IsTileView || (_scrollInProgress && !prioritize)) return;
+            if (_scrollInProgress) return;
+            if (_owner.IsTileView)
+            {
+                _owner._tileViewController.QueueIconsForVisibleItems(prioritize);
+                return;
+            }
             var lv = _owner._listView;
             if (lv == null || lv.IsDisposed) return;
             var items = State.Items;
@@ -713,7 +719,7 @@ public partial class MainForm
             {
                 string targetKey = item.IsDirectory ? $"{prefix}folder" : $"{prefix}{effectiveExt}";
                 if (_owner._smallIcons.Images.ContainsKey(targetKey)) return;
-                _owner._iconLoadService?.QueueIconLoad(targetKey, item.IsDirectory, colored, lookupPath: item.IsDirectory ? null : extLookup);
+                _owner._iconLoadService?.QueueIconLoad(targetKey, item.IsDirectory, colored, lookupPath: item.IsDirectory ? null : extLookup, prioritize: prioritize);
             }
         }
 
