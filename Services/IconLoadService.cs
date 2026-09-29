@@ -18,8 +18,10 @@ internal sealed class IconLoadService : IDisposable
     private readonly Action<string>? _iconApplied;
     private readonly Func<bool>? _shouldLoadLargeIcons;
 
-    private readonly HashSet<string> _pending = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, long> _pending = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _prioritizedPending = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentQueue<IconLoadRequest> _highQueue = new();
+    private readonly ConcurrentQueue<IconLoadRequest> _visibleQueue = new();
     private readonly ConcurrentQueue<IconLoadRequest> _lowQueue = new();
     private readonly ConcurrentQueue<ReadyIcon> _ready = new();
     private readonly ConcurrentDictionary<string, long> _thumbnailRetryAfter = new(StringComparer.OrdinalIgnoreCase);
@@ -28,6 +30,7 @@ internal sealed class IconLoadService : IDisposable
     private volatile bool _stop;
     private volatile bool _suspendLowPriority;
     private int _generation;
+    private long _nextRequestId;
     private int _flushScheduled;
     private Thread? _worker;
 
@@ -36,6 +39,7 @@ internal sealed class IconLoadService : IDisposable
     private struct IconLoadRequest
     {
         public int Generation;
+        public long RequestId;
         public string KeyOrPath;
         public string? LookupPath;
         public bool IsDirectory;
@@ -96,8 +100,13 @@ internal sealed class IconLoadService : IDisposable
     public void CancelPending()
     {
         Interlocked.Increment(ref _generation);
-        lock (_pending) { _pending.Clear(); }
+        lock (_pending)
+        {
+            _pending.Clear();
+            _prioritizedPending.Clear();
+        }
         while (_highQueue.TryDequeue(out _)) { }
+        while (_visibleQueue.TryDequeue(out _)) { }
         while (_lowQueue.TryDequeue(out _)) { }
         _thumbnailRetryAfter.Clear();
         DrainReadyQueue();
@@ -112,6 +121,7 @@ internal sealed class IconLoadService : IDisposable
         lock (_pending)
         {
             _pending.Remove(keyOrPath);
+            _prioritizedPending.Remove(keyOrPath);
         }
         _thumbnailRetryAfter.TryRemove(keyOrPath, out _);
 
@@ -134,6 +144,23 @@ internal sealed class IconLoadService : IDisposable
         }
     }
 
+    public void ResetVisiblePriorities()
+    {
+        while (_visibleQueue.TryDequeue(out var req))
+        {
+            bool isCurrentRequest;
+            lock (_pending)
+            {
+                isCurrentRequest = _pending.TryGetValue(req.KeyOrPath, out long requestId) && requestId == req.RequestId;
+                if (isCurrentRequest)
+                    _prioritizedPending.Remove(req.KeyOrPath);
+            }
+
+            if (isCurrentRequest)
+                _lowQueue.Enqueue(req);
+        }
+    }
+
     public void EnsureGenericIcon(string key, string extension, bool isDirectory, bool colored)
     {
         if (_smallIcons.Images.ContainsKey(key))
@@ -142,7 +169,7 @@ internal sealed class IconLoadService : IDisposable
         QueueIconLoad(key, isDirectory, colored, lowPriority: false, lookupPath: lookupPath);
     }
 
-    public void QueueIconLoad(string keyOrPath, bool isDirectory, bool colored, bool lowPriority = false, string? lookupPath = null)
+    public void QueueIconLoad(string keyOrPath, bool isDirectory, bool colored, bool lowPriority = false, string? lookupPath = null, bool prioritize = false)
     {
         if (string.IsNullOrWhiteSpace(keyOrPath))
             return;
@@ -166,24 +193,38 @@ internal sealed class IconLoadService : IDisposable
             effectiveLowPriority = true;
         }
 
+        IconLoadRequest req;
         lock (_pending)
         {
-            if (_pending.Contains(keyOrPath))
-                return;
-            _pending.Add(keyOrPath);
+            if (_pending.ContainsKey(keyOrPath))
+            {
+                // A thumbnail can already be waiting behind a large batch from
+                // an earlier viewport. Give the newly visible request its own
+                // queue entry and invalidate the older one by request id.
+                if (!prioritize || !effectiveLowPriority || !_prioritizedPending.Add(keyOrPath))
+                    return;
+            }
+            else if (prioritize && effectiveLowPriority)
+            {
+                _prioritizedPending.Add(keyOrPath);
+            }
+
+            req = new IconLoadRequest
+            {
+                Generation = _generation,
+                RequestId = Interlocked.Increment(ref _nextRequestId),
+                KeyOrPath = keyOrPath,
+                LookupPath = lookupPath,
+                IsDirectory = isDirectory,
+                Colored = colored,
+                LowPriority = effectiveLowPriority
+            };
+            _pending[keyOrPath] = req.RequestId;
         }
 
-        var req = new IconLoadRequest
-        {
-            Generation = _generation,
-            KeyOrPath = keyOrPath,
-            LookupPath = lookupPath,
-            IsDirectory = isDirectory,
-            Colored = colored,
-            LowPriority = effectiveLowPriority
-        };
-
-        if (effectiveLowPriority)
+        if (prioritize && effectiveLowPriority)
+            _visibleQueue.Enqueue(req);
+        else if (effectiveLowPriority)
             _lowQueue.Enqueue(req);
         else
             _highQueue.Enqueue(req);
@@ -202,7 +243,7 @@ internal sealed class IconLoadService : IDisposable
         }
     }
 
-    public int QueueCount => _highQueue.Count + _lowQueue.Count;
+    public int QueueCount => _highQueue.Count + _visibleQueue.Count + _lowQueue.Count;
 
     public bool SuspendLowPriority
     {
@@ -220,7 +261,12 @@ internal sealed class IconLoadService : IDisposable
         while (!_stop)
         {
             IconLoadRequest req;
-            if (!_highQueue.TryDequeue(out req))
+            if (!_suspendLowPriority && _visibleQueue.TryDequeue(out req))
+            {
+                // Newly visible thumbnails take precedence over queued work
+                // for rows that are no longer on screen.
+            }
+            else if (!_highQueue.TryDequeue(out req))
             {
                 if (_suspendLowPriority || !_lowQueue.TryDequeue(out req))
                 {
@@ -230,9 +276,9 @@ internal sealed class IconLoadService : IDisposable
             }
 
             int currentGen = _generation;
-            if (req.Generation != currentGen)
+            if (req.Generation != currentGen || !IsCurrentRequest(req))
             {
-                lock (_pending) { _pending.Remove(req.KeyOrPath); }
+                RemovePendingRequest(req);
                 continue;
             }
 
@@ -281,9 +327,9 @@ internal sealed class IconLoadService : IDisposable
 
                 if (isImage && AppSettings.Current.ShowThumbnails)
                 {
-                    if (req.Generation != _generation) continue;
+                    if (!IsCurrentRequest(req)) continue;
                     smallIcon = IconHelper.GetThumbnail(lookupPath, _smallIcons.ImageSize.Width);
-                    if (req.Generation != _generation)
+                    if (!IsCurrentRequest(req))
                     {
                         try { smallIcon?.Dispose(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                         continue;
@@ -341,6 +387,13 @@ internal sealed class IconLoadService : IDisposable
                     continue;
                 }
 
+                if (!IsCurrentRequest(req))
+                {
+                    smallIcon.Dispose();
+                    largeIcon.Dispose();
+                    continue;
+                }
+
                 _ready.Enqueue(new ReadyIcon
                 {
                     Generation = req.Generation,
@@ -355,7 +408,28 @@ internal sealed class IconLoadService : IDisposable
             catch (Exception ex) { Debug.WriteLine($"IconLoadService.WorkerLoop error for '{req.KeyOrPath}': {ex.Message}"); }
             finally
             {
-                lock (_pending) { _pending.Remove(req.KeyOrPath); }
+                RemovePendingRequest(req);
+            }
+        }
+    }
+
+    private bool IsCurrentRequest(IconLoadRequest req)
+    {
+        if (req.Generation != _generation)
+            return false;
+
+        lock (_pending)
+            return _pending.TryGetValue(req.KeyOrPath, out long requestId) && requestId == req.RequestId;
+    }
+
+    private void RemovePendingRequest(IconLoadRequest req)
+    {
+        lock (_pending)
+        {
+            if (_pending.TryGetValue(req.KeyOrPath, out long requestId) && requestId == req.RequestId)
+            {
+                _pending.Remove(req.KeyOrPath);
+                _prioritizedPending.Remove(req.KeyOrPath);
             }
         }
     }

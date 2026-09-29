@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
@@ -12,6 +13,204 @@ namespace SpeedExplorer;
 
 public partial class MainForm
 {
+    private const int NavigationBatchPublishLimit = 1024;
+    private readonly ConcurrentQueue<NavigationItemsBatch> _pendingNavigationBatches = new();
+    private System.Windows.Forms.Timer? _navigationBatchTimer;
+    private List<FileItem>? _navigationStreamingItems;
+    private string? _navigationIconSizePath;
+    private bool _navigationIconSizePending;
+    private long _activeNavigationBatchId;
+    private bool _navigationFirstBatchPublished;
+
+    private readonly record struct NavigationItemsBatch(long NavigationId, List<FileItem> Items);
+
+    private void StartNavigationBatchPublishing(long navigationId, string path)
+    {
+        while (_pendingNavigationBatches.TryDequeue(out _)) { }
+        _navigationStreamingItems = new List<FileItem>(16);
+        _navigationIconSizePath = path;
+        _navigationIconSizePending = _smallIcons.ImageSize.Width != GetEffectiveIconSize(path);
+        _navigationFirstBatchPublished = false;
+        Interlocked.Exchange(ref _activeNavigationBatchId, navigationId);
+
+        if (_navigationBatchTimer == null)
+        {
+            _navigationBatchTimer = new System.Windows.Forms.Timer { Interval = 16 };
+            _navigationBatchTimer.Tick += (s, e) => PublishNavigationBatches();
+        }
+
+        _navigationBatchTimer.Start();
+    }
+
+    private void QueueNavigationBatch(long navigationId, List<FileItem> items)
+    {
+        if (Interlocked.Read(ref _activeNavigationBatchId) != navigationId)
+            return;
+
+        _pendingNavigationBatches.Enqueue(new NavigationItemsBatch(navigationId, items));
+    }
+
+    private void PublishNavigationBatches()
+    {
+        long navigationId = Interlocked.Read(ref _activeNavigationBatchId);
+        if (navigationId == 0 || _listView == null || _listView.IsDisposed ||
+            IsTileView || !_listView.VirtualMode)
+        {
+            return;
+        }
+
+        if (_navigationStreamingItems == null ||
+            (_navigationFirstBatchPublished && !ReferenceEquals(State.Items, _navigationStreamingItems)))
+        {
+            StopNavigationBatchPublishing(navigationId);
+            return;
+        }
+
+        // Keep the prior folder on screen until there is new content to show.
+        if (!_pendingNavigationBatches.TryPeek(out _))
+            return;
+
+        if (_navigationIconSizePending && !_navigationFirstBatchPublished)
+        {
+            _navigationIconSizePending = false;
+            if (!string.IsNullOrWhiteSpace(_navigationIconSizePath) &&
+                string.Equals(State.CurrentPath, _navigationIconSizePath, StringComparison.OrdinalIgnoreCase))
+            {
+                ApplyEffectiveIconSizeIfNeeded(_navigationIconSizePath);
+            }
+        }
+
+        var streamingItems = _navigationStreamingItems;
+        bool isFirstBatch = !_navigationFirstBatchPublished;
+        int appended = 0;
+        while (appended < NavigationBatchPublishLimit &&
+               _pendingNavigationBatches.TryDequeue(out var batch))
+        {
+            if (batch.NavigationId != navigationId)
+                continue;
+
+            streamingItems.AddRange(batch.Items);
+            appended += batch.Items.Count;
+        }
+
+        if (appended == 0)
+            return;
+
+        _listView.BeginUpdate();
+        try
+        {
+            if (isFirstBatch)
+            {
+                _listView.SelectedIndices.Clear();
+                SetListSelectionAnchor(-1);
+                _listView.VirtualListSize = 0;
+                State.Items = streamingItems;
+                _navigationFirstBatchPublished = true;
+                _pendingClearFromThisPc = false;
+            }
+
+            _listView.VirtualListSize = streamingItems.Count;
+        }
+        finally
+        {
+            _listView.EndUpdate();
+        }
+        _listView.Invalidate();
+
+        if (isFirstBatch)
+        {
+            NavigationDebugLogger.Log($"NAV#{navigationId} FIRST_BATCH items={streamingItems.Count}");
+        }
+    }
+
+    private void StopNavigationBatchPublishing(long navigationId)
+    {
+        if (Interlocked.CompareExchange(ref _activeNavigationBatchId, 0, navigationId) != navigationId)
+            return;
+
+        _navigationBatchTimer?.Stop();
+        _navigationStreamingItems = null;
+        _navigationIconSizePath = null;
+        _navigationIconSizePending = false;
+        while (_pendingNavigationBatches.TryDequeue(out _)) { }
+    }
+
+    private void ClearListForNavigation()
+    {
+        _listView.BeginUpdate();
+        try
+        {
+            if (_listView.VirtualMode)
+                _listView.VirtualListSize = 0;
+            else
+                _listView.Items.Clear();
+        }
+        finally
+        {
+            _listView.EndUpdate();
+        }
+    }
+
+    private (List<string>? SelectedPaths, string? TopPath) CaptureStreamingListPosition()
+    {
+        List<string>? selectedPaths = null;
+        foreach (int index in _listView.SelectedIndices)
+        {
+            if (index < 0 || index >= State.Items.Count)
+                continue;
+
+            selectedPaths ??= new List<string>();
+            selectedPaths.Add(State.Items[index].FullPath);
+        }
+
+        string? topPath = null;
+        try
+        {
+            int topIndex = _listView.TopItem?.Index ?? -1;
+            if (topIndex >= 0 && topIndex < State.Items.Count)
+                topPath = State.Items[topIndex].FullPath;
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"CaptureStreamingListPosition failed: {ex.Message}");
+        }
+
+        return (selectedPaths, topPath);
+    }
+
+    private async Task ApplyEffectiveIconSizeAfterNextPaintIfNeededAsync(
+        string path,
+        CancellationToken ct,
+        bool forcePaintOpportunity = false)
+    {
+        if (!forcePaintOpportunity && _smallIcons.ImageSize.Width == GetEffectiveIconSize(path))
+            return;
+
+        // Icon-list recreation is synchronous UI work. Give the grouped path
+        // update one normal paint opportunity before doing that work.
+        var paintedOpportunity = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var timer = new System.Windows.Forms.Timer { Interval = 16 };
+        EventHandler tick = (s, e) =>
+        {
+            timer.Stop();
+            paintedOpportunity.TrySetResult(true);
+        };
+        timer.Tick += tick;
+        timer.Start();
+
+        try
+        {
+            await paintedOpportunity.Task.WaitAsync(ct);
+        }
+        finally
+        {
+            timer.Stop();
+            timer.Tick -= tick;
+        }
+
+        ApplyEffectiveIconSizeIfNeeded(path);
+    }
+
     private async Task<T> AwaitWithCancellation<T>(Task<T> task, CancellationToken ct)
     {
         var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -111,6 +310,9 @@ public partial class MainForm
         bool shouldFocusListView = ShouldFocusListView();
         NavigationDebugLogger.Log($"NAV#{navTraceId} ENTER");
         _nav.IsNavigating = true;
+        _loadCts?.Cancel();
+        _loadCts = new CancellationTokenSource();
+        CancellationToken navigationToken = _loadCts.Token;
         BeginNavigationFreezeVisual();
         try
         {
@@ -253,14 +455,7 @@ public partial class MainForm
             }
 
             State.CurrentPath = path;
-            ApplyEffectiveIconSizeIfNeeded(path);
             UpdateWatcher(path);
-            if (!isShellPath &&
-                path != ThisPcPath &&
-                !string.Equals(path, previousPath, StringComparison.OrdinalIgnoreCase))
-            {
-                TryRegisterFolderInWindowsRecent(path);
-            }
             UpdateBreadcrumbs(path);
             _addressTextBox.Text = path;
             _statusLabel.Text = Localization.T("status_loading");
@@ -288,6 +483,7 @@ public partial class MainForm
             if (TryTakePendingTabCache(path, out var cachedItems, out var cachedAllItems))
             {
                 NavigationDebugLogger.Log($"NAV#{navTraceId} CACHE_HIT count={cachedItems.Count} all={cachedAllItems.Count}");
+                bool updateIconSize = _smallIcons.ImageSize.Width != GetEffectiveIconSize(path);
 
                 State.AllItems = cachedAllItems;
                 State.Items = cachedItems;
@@ -297,32 +493,20 @@ public partial class MainForm
                 else
                     SetupFileColumns(_listView);
 
-                // Let the newly selected tab/title/address chrome paint before the cached list bind,
-                // otherwise large cached restores can make the UI look staged.
-                await Task.Yield();
-                try
-                {
-                    _addressBar?.Refresh();
-                    _tabStrip?.Refresh();
-                    _titleBar?.Refresh();
-                    _statusBar?.Refresh();
-                }
-                catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
-
                 BindItemsToListView(navTraceId, cacheIsSearchSnapshot ? "NAVCACHE_SEARCH" : "NAVCACHE", path, pathsToSelect, totalSw, gcStart);
+                if (updateIconSize)
+                {
+                    EndNavigationFreezeVisual();
+                    try
+                    {
+                        await ApplyEffectiveIconSizeAfterNextPaintIfNeededAsync(path, navigationToken);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        return;
+                    }
+                }
                 return;
-            }
-
-            // Fix: Immediately clear items if we are switching context (e.g. from This PC to a folder)
-            // This prevents the "stuck" look where Drives are shown with File columns if load fails or takes time.
-            if (leavingThisPc || (isShellPath && !State.IsShellMode) || (!isShellPath && State.IsShellMode))
-            {
-                _listView.BeginUpdate();
-                State.Items = new List<FileItem>();
-                State.AllItems = new List<FileItem>();
-                _listView.VirtualListSize = 0;
-                _listView.EndUpdate();
-                _listView.Invalidate();
             }
 
             // If we are leaving "This PC", defer clearing until we have new items
@@ -335,10 +519,35 @@ public partial class MainForm
                 _retryLoadTimer.Start();
             }
 
+            // Keep existing rows during a same-folder reload until its completed,
+            // sorted result is ready. New-folder details navigation can stream its
+            // first batch; other uncached destinations clear before loading.
+            bool isSameDirectoryReload = string.Equals(path, previousPath, StringComparison.OrdinalIgnoreCase);
+            bool keepCurrentItemsUntilFinalBind = isSameDirectoryReload &&
+                path != ThisPcPath && !isShellPath;
+            bool streamIntoDetailsView = !keepCurrentItemsUntilFinalBind &&
+                path != ThisPcPath && !isShellPath &&
+                !_tileViewController.IsTileView && _listView.VirtualMode;
+            if (!streamIntoDetailsView && !keepCurrentItemsUntilFinalBind)
+            {
+                State.Items = new List<FileItem>();
+                State.AllItems = new List<FileItem>();
+                ClearListForNavigation();
+            }
+
             if (path == ThisPcPath)
             {
                 NavigationDebugLogger.Log($"NAV#{navTraceId} LOAD_DRIVES");
                 SetupDriveColumns(_listView);
+                EndNavigationFreezeVisual();
+                try
+                {
+                    await ApplyEffectiveIconSizeAfterNextPaintIfNeededAsync(path, navigationToken, forcePaintOpportunity: true);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
                 LoadDrives();
                 NavigationDebugLogger.Log($"NAV#{navTraceId} DONE drives totalMs={totalSw.ElapsedMilliseconds} items={State.Items.Count}");
                 return;
@@ -348,6 +557,15 @@ public partial class MainForm
             {
                 NavigationDebugLogger.Log($"NAV#{navTraceId} LOAD_SHELL shellPath=\"{TraceText(path)}\"");
                 SetupFileColumns(_listView);
+                EndNavigationFreezeVisual();
+                try
+                {
+                    await ApplyEffectiveIconSizeAfterNextPaintIfNeededAsync(path, navigationToken, forcePaintOpportunity: true);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
                 await LoadShellFolder(path);
                 NavigationDebugLogger.Log($"NAV#{navTraceId} DONE shell totalMs={totalSw.ElapsedMilliseconds} items={State.Items.Count}");
                 return;
@@ -363,31 +581,65 @@ public partial class MainForm
             _statusLabel.Text = Localization.T("status_loading_items");
             try { _statusBar?.Invalidate(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
 
-            // Cancel previous load
-            _loadCts?.Cancel();
-            _loadCts = new CancellationTokenSource();
+            // Commit the new path chrome while retaining the current rows until
+            // the first batch for the destination is ready.
+            EndNavigationFreezeVisual();
+            NavigationDebugLogger.Log($"NAV#{navTraceId} CHROME_COMMIT ms={totalSw.ElapsedMilliseconds}");
+            if (!streamIntoDetailsView)
+            {
+                try
+                {
+                    await ApplyEffectiveIconSizeAfterNextPaintIfNeededAsync(path, navigationToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
+            }
+            if (streamIntoDetailsView)
+                StartNavigationBatchPublishing(navTraceId, path);
 
             try
             {
                 var swEnum = Stopwatch.StartNew();
                 // Wrap in AwaitWithCancellation so we can force-cancel even if GetFilesAsync hangs on I/O
-                State.AllItems = await AwaitWithCancellation(FileSystemService.GetFilesAsync(path, _loadCts.Token), _loadCts.Token);
+                Task<List<FileItem>> enumerationTask = streamIntoDetailsView
+                    ? FileSystemService.GetFilesAsync(path, navigationToken, batch => QueueNavigationBatch(navTraceId, batch))
+                    : FileSystemService.GetFilesAsync(path, navigationToken);
+                State.AllItems = await AwaitWithCancellation(
+                    enumerationTask,
+                    navigationToken);
                 swEnum.Stop();
                 NavigationDebugLogger.Log($"NAV#{navTraceId} ENUM ms={swEnum.ElapsedMilliseconds} count={State.AllItems.Count}");
+                if (!string.Equals(path, previousPath, StringComparison.OrdinalIgnoreCase))
+                    ObserveTask(Task.Run(() => TryRegisterFolderInWindowsRecent(path)), $"NAV#{navTraceId} recent registration");
                 QueueGenericIconsWarmup(State.AllItems);
 
                 // Sort and clone off the UI thread to avoid long freezes on huge folders
                 var swSort = Stopwatch.StartNew();
-                State.Items = await Task.Factory.StartNew(() =>
+                var sortedItems = await Task.Factory.StartNew(() =>
                 {
                     FileSystemService.SortItems(State.AllItems, State.SortColumn, State.SortDirection, State.TaggedFilesOnTop);
                     return new List<FileItem>(State.AllItems);
-                }, _loadCts.Token, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+                }, navigationToken, TaskCreationOptions.LongRunning, TaskScheduler.Default);
                 swSort.Stop();
-                NavigationDebugLogger.Log($"NAV#{navTraceId} SORT ms={swSort.ElapsedMilliseconds} count={State.Items.Count} sort={State.SortColumn}/{State.SortDirection}");
+                NavigationDebugLogger.Log($"NAV#{navTraceId} SORT ms={swSort.ElapsedMilliseconds} count={sortedItems.Count} sort={State.SortColumn}/{State.SortDirection}");
+
+                List<string>? finalSelectionPaths = pathsToSelect;
+                string? finalTopPath = null;
+                if ((streamIntoDetailsView && _navigationFirstBatchPublished) || keepCurrentItemsUntilFinalBind)
+                {
+                    var position = CaptureStreamingListPosition();
+                    finalSelectionPaths ??= position.SelectedPaths;
+                    if (!string.Equals(_pendingTabTopRestorePath, path, StringComparison.OrdinalIgnoreCase))
+                        finalTopPath = position.TopPath;
+                }
+
+                StopNavigationBatchPublishing(navTraceId);
+                State.Items = sortedItems;
 
                 // Bind items to list view and restore selection
-                BindItemsToListView(navTraceId, "NAV", path, pathsToSelect, totalSw, gcStart);
+                BindItemsToListView(navTraceId, "NAV", path, finalSelectionPaths, totalSw, gcStart, finalTopPath);
             }
             catch (OperationCanceledException)
             {
@@ -396,7 +648,10 @@ public partial class MainForm
 
                 // If cancelled but list is still empty, trigger a retry (common in background wake scenarios)
                 // But ONLY if we don't have a pending navigation waiting (which caused the cancel)
-                if (State.Items.Count == 0 && !string.IsNullOrEmpty(State.CurrentPath) && State.CurrentPath != ThisPcPath && _nav.PendingPath == null)
+                if ((State.Items.Count == 0 ||
+                     (streamIntoDetailsView && !_navigationFirstBatchPublished) ||
+                     keepCurrentItemsUntilFinalBind) &&
+                    !string.IsNullOrEmpty(State.CurrentPath) && State.CurrentPath != ThisPcPath && _nav.PendingPath == null)
                 {
                     _retryLoadPath = State.CurrentPath;
                     _retryLoadPending = true;
@@ -412,7 +667,10 @@ public partial class MainForm
                 _statusLabel.Text = string.Format(Localization.T("status_error"), ex.Message);
                 // If load failed and list is empty, trigger a retry
                 // But ONLY if we don't have a pending navigation
-                if (State.Items.Count == 0 && !string.IsNullOrEmpty(State.CurrentPath) && State.CurrentPath != ThisPcPath && _nav.PendingPath == null)
+                if ((State.Items.Count == 0 ||
+                     (streamIntoDetailsView && !_navigationFirstBatchPublished) ||
+                     keepCurrentItemsUntilFinalBind) &&
+                    !string.IsNullOrEmpty(State.CurrentPath) && State.CurrentPath != ThisPcPath && _nav.PendingPath == null)
                 {
                     _retryLoadPath = State.CurrentPath;
                     _retryLoadPending = true;
@@ -423,6 +681,7 @@ public partial class MainForm
         }
         finally
         {
+            StopNavigationBatchPublishing(navTraceId);
             EndNavigationFreezeVisual();
             // Run a post-unfreeze viewport guard once the list is visible again.
             // Some virtual list glitches only manifest after visibility is restored.
@@ -553,7 +812,8 @@ public partial class MainForm
         string path,
         List<string>? pathsToSelect,
         Stopwatch totalSw,
-        (int, int, int, long)? gcStart)
+        (int, int, int, long)? gcStart,
+        string? preferredTopPath = null)
     {
         var swBind = Stopwatch.StartNew();
         LogUiQueueDelayAsync(navTraceId, scope, "pre-bind");
@@ -698,6 +958,25 @@ public partial class MainForm
         catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
         if (!_navigationFreezeActive && ListViewportNeedsRepair())
             EnsureListViewportAndPaint($"{scope}-post");
+
+        if (!IsTileView && !string.IsNullOrWhiteSpace(preferredTopPath))
+        {
+            int topIndex = State.Items.FindIndex(item =>
+                string.Equals(item.FullPath, preferredTopPath, StringComparison.OrdinalIgnoreCase));
+            if (topIndex >= 0 && topIndex < _listView.VirtualListSize)
+            {
+                try
+                {
+                    _listView.TopItem = _listView.Items[topIndex];
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"Restore streaming top row failed: {ex.Message}");
+                    try { _listView.EnsureVisible(topIndex); } catch (Exception __ex) { Debug.WriteLine(__ex); }
+                }
+            }
+        }
+
         NavigationDebugLogger.Log($"{scope}#{navTraceId} DONE totalMs={totalSw.ElapsedMilliseconds} items={State.Items.Count}");
         if (_retryLoadPending && !IsDriveItemsOnly()) _retryLoadPending = false;
     }

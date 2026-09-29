@@ -204,12 +204,36 @@ public class FileSystemService
         catch { return false; }
     }
 
-    public static async Task<List<FileItem>> GetFilesAsync(string path, CancellationToken ct = default)
+    public static Task<List<FileItem>> GetFilesAsync(string path, CancellationToken ct = default)
+        => GetFilesAsync(path, ct, onBatch: null);
+
+    public static Task<List<FileItem>> GetFilesAsync(
+        string path,
+        CancellationToken ct,
+        Action<List<FileItem>>? onBatch)
     {
-        return await Task.Factory.StartNew(() =>
+        return Task.Factory.StartNew(() =>
         {
             var items = new List<FileItem>();
+            var currentBatch = onBatch == null ? null : new List<FileItem>(16);
+            bool firstBatchSent = false;
             var dirInfo = new DirectoryInfo(path);
+
+            void AddItem(FileItem item)
+            {
+                items.Add(item);
+                if (currentBatch == null)
+                    return;
+
+                currentBatch.Add(item);
+                int batchSize = firstBatchSent ? 64 : 16;
+                if (currentBatch.Count >= batchSize)
+                {
+                    onBatch!(currentBatch);
+                    firstBatchSent = true;
+                    currentBatch = new List<FileItem>(64);
+                }
+            }
 
             if (!dirInfo.Exists)
                 throw new DirectoryNotFoundException($"Directory not found: {path}");
@@ -222,7 +246,7 @@ public class FileSystemService
                     ct.ThrowIfCancellationRequested();
                     try
                     {
-                        items.Add(new FileItem
+                        AddItem(new FileItem
                         {
                             FullPath = dir.FullName,
                             Name = dir.Name,
@@ -248,7 +272,7 @@ public class FileSystemService
                     ct.ThrowIfCancellationRequested();
                     try
                     {
-                        items.Add(new FileItem
+                        AddItem(new FileItem
                         {
                             FullPath = file.FullName,
                             Name = file.Name,
@@ -263,6 +287,9 @@ public class FileSystemService
                 }
             }
             catch (UnauthorizedAccessException) { throw; }
+
+            if (currentBatch is { Count: > 0 })
+                onBatch!(currentBatch);
 
             return items;
         }, ct, TaskCreationOptions.LongRunning, TaskScheduler.Default);

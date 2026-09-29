@@ -122,6 +122,7 @@ public partial class MainForm : Form, IFileOperationsHost, IShellActionsHost, IO
     private bool _fastStartup = false;
     private long _navigationTraceSeq = 0;
     private bool _navigationFreezeActive = false;
+    private List<Control>? _navigationFrozenControls;
     private static readonly object SearchProgressRowTag = new object();
     private string? _pendingTabTopRestorePath;
     private int _pendingTabTopRestoreIndex = -1;
@@ -222,7 +223,6 @@ public partial class MainForm : Form, IFileOperationsHost, IShellActionsHost, IO
         try
         {
             SetNavigationCommitRedraw(enabled: true);
-            FlushNavigationChromeCommit();
         }
         catch (Exception ex) { Debug.WriteLine($"EndNavigationFreezeVisual listView restore failed: {ex.Message}"); }
     }
@@ -231,36 +231,76 @@ public partial class MainForm : Form, IFileOperationsHost, IShellActionsHost, IO
     {
         const uint RDW_INVALIDATE = 0x0001;
         const uint RDW_ALLCHILDREN = 0x0080;
-        const uint RDW_UPDATENOW = 0x0100;
 
-        foreach (var control in new Control?[] { _sidebar, _addressBar, _titleBar, _statusBar, _listView })
+        var roots = new Control?[] { _navPanel, _sidebar, _titleBar, _statusBar, _listView };
+        if (!enabled)
         {
-            if (control == null || control.IsDisposed || !control.IsHandleCreated)
+            var controlsToFreeze = CollectNavigationRedrawControls(roots);
+            foreach (var control in controlsToFreeze)
+            {
+                if (control.IsDisposed || !control.IsHandleCreated)
+                    continue;
+
+                try
+                {
+                    SendMessage(control.Handle, WM_SETREDRAW, 0, 0);
+                }
+                catch (Exception ex) { Debug.WriteLine($"SetNavigationCommitRedraw failed: {ex.Message}"); }
+            }
+
+            _navigationFrozenControls = controlsToFreeze;
+            return;
+        }
+
+        // Re-enable exactly the controls that were frozen. Breadcrumb controls can
+        // be replaced during navigation, so invalidating the current root trees
+        // below also paints any children created during the freeze.
+        foreach (var control in _navigationFrozenControls ?? new List<Control>())
+        {
+            if (control.IsDisposed || !control.IsHandleCreated)
                 continue;
 
             try
             {
-                SendMessage(control.Handle, WM_SETREDRAW, enabled ? 1 : 0, 0);
-                if (enabled)
-                    RedrawWindow(control.Handle, IntPtr.Zero, IntPtr.Zero, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+                SendMessage(control.Handle, WM_SETREDRAW, 1, 0);
             }
             catch (Exception ex) { Debug.WriteLine($"SetNavigationCommitRedraw failed: {ex.Message}"); }
         }
+
+        // Re-enable everything before invalidating the form and all descendants in
+        // one native call. Avoid synchronous per-control paints so the new path
+        // chrome can be presented as one frame.
+        if (IsDisposed || !IsHandleCreated)
+            return;
+
+        try
+        {
+            RedrawWindow(Handle, IntPtr.Zero, IntPtr.Zero, RDW_INVALIDATE | RDW_ALLCHILDREN);
+        }
+        catch (Exception ex) { Debug.WriteLine($"SetNavigationCommitRedraw invalidate failed: {ex.Message}"); }
+
+        _navigationFrozenControls = null;
     }
 
-    private void FlushNavigationChromeCommit()
+    private static List<Control> CollectNavigationRedrawControls(IEnumerable<Control?> roots)
     {
-        foreach (var control in new Control?[] { _sidebar, _addressBar, _tabStrip, _titleBar, _statusBar })
-        {
-            if (control == null || control.IsDisposed || !control.IsHandleCreated)
-                continue;
+        var controls = new List<Control>();
+        var seen = new HashSet<Control>();
 
-            try
-            {
-                control.Refresh();
-            }
-            catch (Exception ex) { Debug.WriteLine($"FlushNavigationChromeCommit failed: {ex.Message}"); }
+        void AddTree(Control? control)
+        {
+            if (control == null || control.IsDisposed || !seen.Add(control))
+                return;
+
+            controls.Add(control);
+            foreach (Control child in control.Controls)
+                AddTree(child);
         }
+
+        foreach (var root in roots)
+            AddTree(root);
+
+        return controls;
     }
 
     private void ForceListViewportTopAndRedraw(int preferredIndex, string reason, int pass)

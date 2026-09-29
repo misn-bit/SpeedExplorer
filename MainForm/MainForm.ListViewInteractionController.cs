@@ -102,7 +102,7 @@ public partial class MainForm
                             // Defer until the control has completed the current
                             // retrieval burst, then queue icons for the viewport.
                             _viewportQueuePending = false;
-                            try { _owner.BeginInvoke((Action)QueueIconsForVisibleRange); }
+                            try { _owner.BeginInvoke((Action)(() => QueueIconsForVisibleRange())); }
                             catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                         }
                     }
@@ -650,9 +650,9 @@ public partial class MainForm
             }
         }
 
-        private void QueueIconsForVisibleRange()
+        private void QueueIconsForVisibleRange(bool prioritize = false)
         {
-            if (_owner.IsTileView || _scrollInProgress) return;
+            if (_owner.IsTileView || (_scrollInProgress && !prioritize)) return;
             var lv = _owner._listView;
             if (lv == null || lv.IsDisposed) return;
             var items = State.Items;
@@ -673,13 +673,13 @@ public partial class MainForm
             int visibleRows = Math.Max(1, (lv.ClientSize.Height / rowHeight) + 3);
             int limit = Math.Min(top + visibleRows + 8, items.Count);
             for (int i = top; i < limit; i++)
-                QueueIconsForItem(items[i]);
+                QueueIconsForItem(items[i], prioritize);
         }
 
         // Side-effect mirror of BuildListViewItem's icon decision: only queues
         // loads whose keys are missing from the ImageList (dedup is also done
         // inside IconLoadService). Keep in sync with that method.
-        private void QueueIconsForItem(FileItem item)
+        private void QueueIconsForItem(FileItem item, bool prioritize = false)
         {
             var s = AppSettings.Current;
             if (!s.ShowIcons || s.UseEmojiIcons || item.IsShellItem) return;
@@ -707,7 +707,7 @@ public partial class MainForm
                     ? $"{prefix}folder"
                     : (isImage ? $"{prefix}image" : $"{prefix}{effectiveExt}");
                 _owner._iconLoadService?.EnsureGenericIcon(genericKey, extLookup, item.IsDirectory, colored);
-                _owner._iconLoadService?.QueueIconLoad(item.FullPath, item.IsDirectory, colored);
+                _owner._iconLoadService?.QueueIconLoad(item.FullPath, item.IsDirectory, colored, prioritize: prioritize);
             }
             else
             {
@@ -1291,7 +1291,18 @@ public partial class MainForm
                 FileSystemService.SortItems(State.AllItems, State.SortColumn, State.SortDirection, State.TaggedFilesOnTop);
             sw.Stop();
 
+            // A header click ends the scrollbar/wheel interaction. Don't let
+            // its idle debounce hold thumbnails for the newly sorted viewport.
+            _scrollIdleTimer.Stop();
+            _scrollInProgress = false;
+            _scrollRepaintPending = false;
+            _owner._iconLoadService?.SuspendLowPriority = true;
+            _owner._iconLoadService?.ResetVisiblePriorities();
+
+            InvalidateRowCache();
             _owner._listView.Invalidate();
+            QueueIconsForVisibleRange(prioritize: true);
+            _owner._iconLoadService?.SuspendLowPriority = false;
             if (_owner._headerHandle != IntPtr.Zero)
                 InvalidateRect(_owner._headerHandle, IntPtr.Zero, true);
             _owner._statusLabel.Text = string.Format(Localization.T("status_sorted"), sw.ElapsedMilliseconds);
