@@ -34,14 +34,8 @@ public partial class MainForm
             _owner._addressTextBox.GotFocus += (s, e) => _owner._addressTextBox.SelectAll();
             _owner._addressTextBox.LostFocus += (s, e) =>
             {
-                _owner.BeginInvoke(new Action(() =>
-                {
-                    if (!_owner._addressTextBox.Focused)
-                    {
-                        _owner._addressTextBox.Visible = false;
-                        _owner._breadcrumbPanel.Visible = true;
-                    }
-                }));
+                if (_owner.IsHandleCreated && !_owner.IsDisposed)
+                    _owner.BeginInvoke(new Action(RestoreBreadcrumbView));
             };
 
             _owner._addressTextBox.KeyDown += (s, e) =>
@@ -117,6 +111,9 @@ public partial class MainForm
 
         public void EnableAddressEdit()
         {
+            if (_owner._nav.IsNavigating)
+                return;
+
             if (MainForm.IsShellPath(State.CurrentPath))
             {
                 _owner._statusLabel.Text = Localization.T("status_address_unavailable");
@@ -128,6 +125,32 @@ public partial class MainForm
             _owner._addressTextBox.Text = State.CurrentPath;
             _owner._addressTextBox.Focus();
             _owner._addressTextBox.SelectAll();
+        }
+
+        private void RestoreBreadcrumbView()
+        {
+            if (_owner.IsDisposed || _owner._addressTextBox.IsDisposed || _owner._breadcrumbPanel.IsDisposed)
+                return;
+            if (_owner._addressTextBox.Focused)
+                return;
+
+            _owner._addressTextBox.Visible = false;
+            _owner._breadcrumbPanel.Visible = true;
+            _owner._breadcrumbPanel.BringToFront();
+        }
+
+        public void ShowBreadcrumbs(string path)
+        {
+            UpdateBreadcrumbs(path);
+            EnsureBreadcrumbView(path);
+        }
+
+        public void EnsureBreadcrumbView(string path)
+        {
+            _owner._addressTextBox.Text = path;
+            _owner._addressTextBox.Visible = false;
+            _owner._breadcrumbPanel.Visible = true;
+            _owner._breadcrumbPanel.BringToFront();
         }
 
         public void UpdateBreadcrumbs(string path)

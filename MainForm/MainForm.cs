@@ -12,6 +12,9 @@ namespace SpeedExplorer;
 
 public partial class MainForm : Form, IFileOperationsHost, IShellActionsHost, IOpenTargetHost, ISelectionOpenHost, IQuickLookHost, ISearchHost, ISettingsLauncherHost, INavigationHost
 {
+    private const int WM_DISPLAYCHANGE = 0x007E;
+    private bool _refreshingMaximizedBounds;
+
     private void RefreshFrame()
         => _windowChromeController.RefreshFrame();
 
@@ -418,6 +421,62 @@ public partial class MainForm : Form, IFileOperationsHost, IShellActionsHost, IO
     {
         base.OnDpiChanged(e);
         UpdateScale();
+        QueueMaximizedBoundsRefresh(forceFullscreenReapply: true);
+    }
+
+    private void QueueMaximizedBoundsRefresh(bool forceFullscreenReapply = false)
+    {
+        if (!IsHandleCreated || IsDisposed || Disposing)
+            return;
+
+        try
+        {
+            BeginInvoke((Action)(() =>
+            {
+                if (!IsHandleCreated || IsDisposed || Disposing)
+                    return;
+
+                try
+                {
+                    RefreshMaximizedBoundsForCurrentDisplay(forceFullscreenReapply);
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"Maximized bounds refresh failed: {ex.Message}");
+                }
+            }));
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"Maximized bounds refresh dispatch failed: {ex.Message}");
+        }
+    }
+
+    private void RefreshMaximizedBoundsForCurrentDisplay(bool forceFullscreenReapply)
+    {
+        if (WindowState != FormWindowState.Maximized || !IsHandleCreated)
+            return;
+
+        bool isFullscreen = MaximizedBounds == Rectangle.Empty;
+        Rectangle currentDisplayBounds = isFullscreen
+            ? Rectangle.Empty
+            : Screen.FromHandle(Handle).WorkingArea;
+
+        bool boundsChanged = MaximizedBounds != currentDisplayBounds;
+        if (!boundsChanged && !(isFullscreen && forceFullscreenReapply))
+            return;
+
+        MaximizedBounds = currentDisplayBounds;
+        _refreshingMaximizedBounds = true;
+        try
+        {
+            WindowState = FormWindowState.Normal;
+            WindowState = FormWindowState.Maximized;
+        }
+        finally
+        {
+            _refreshingMaximizedBounds = false;
+        }
     }
 
     private void LoadDrives()
@@ -525,6 +584,10 @@ public partial class MainForm : Form, IFileOperationsHost, IShellActionsHost, IO
 
         this.Shown += (s, e) =>
         {
+            // The screen selected during construction can be stale during startup
+            // if Windows has not finished bringing the display online yet.
+            QueueMaximizedBoundsRefresh();
+
             // Safety: if load never completes, force visibility after a delay.
             var t = new System.Windows.Forms.Timer { Interval = 1500 };
             t.Tick += (s2, e2) =>
@@ -694,6 +757,10 @@ public partial class MainForm : Form, IFileOperationsHost, IShellActionsHost, IO
     private void EnableAddressEdit() => _addressBarController.EnableAddressEdit();
 
     private void UpdateBreadcrumbs(string path) => _addressBarController.UpdateBreadcrumbs(path);
+
+    private void ShowBreadcrumbs(string path) => _addressBarController.ShowBreadcrumbs(path);
+
+    private void EnsureBreadcrumbView(string path) => _addressBarController.EnsureBreadcrumbView(path);
 
     private void AddBreadcrumb(string text, string targetPath) => _addressBarController.AddBreadcrumb(text, targetPath);
 

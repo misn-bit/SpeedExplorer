@@ -490,8 +490,7 @@ public partial class MainForm
                 UpdateWindowTitle(path, State.CurrentDisplayPath);
                 SyncSidebarSelection(path);
                 _owner.UpdateWatcher(path);
-                _owner.UpdateBreadcrumbs(path);
-                _owner._addressTextBox.Text = path;
+                _owner.ShowBreadcrumbs(path);
                 _owner.ApplyEffectiveIconSizeIfNeeded(path);
                 _owner._tileViewController.ApplyViewModeForNavigation();
 

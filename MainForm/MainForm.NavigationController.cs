@@ -456,8 +456,7 @@ public partial class MainForm
 
             State.CurrentPath = path;
             UpdateWatcher(path);
-            UpdateBreadcrumbs(path);
-            _addressTextBox.Text = path;
+            ShowBreadcrumbs(path);
             _statusLabel.Text = Localization.T("status_loading");
             _tabsController.SyncActiveTabPath(State.CurrentPath, State.CurrentDisplayPath);
             // Invalidate chrome promptly, but don't block folder enumeration on synchronous repaints.
@@ -472,7 +471,8 @@ public partial class MainForm
             {
                 bool preserveAiPanelFocus = _llmChatPanel != null && _llmChatPanel.IsExpanded;
                 bool isRenaming = _renameTextBox != null && !_renameTextBox.IsDisposed;
-                if (shouldFocusListView && !preserveAiPanelFocus && !isRenaming && _listView.Visible && _listView.CanFocus)
+                if (shouldFocusListView && ShouldFocusListView() &&
+                    !preserveAiPanelFocus && !isRenaming && _listView.Visible && _listView.CanFocus)
                     _listView.Focus();
             }
             catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
@@ -682,6 +682,7 @@ public partial class MainForm
         finally
         {
             StopNavigationBatchPublishing(navTraceId);
+            EnsureBreadcrumbView(State.CurrentPath);
             EndNavigationFreezeVisual();
             // Run a post-unfreeze viewport guard once the list is visible again.
             // Some virtual list glitches only manifest after visibility is restored.
@@ -693,7 +694,8 @@ public partial class MainForm
                 {
                     bool preserveAiPanelFocus = _llmChatPanel != null && _llmChatPanel.IsExpanded;
                     bool isRenaming = _renameTextBox != null && !_renameTextBox.IsDisposed;
-                    if (shouldFocusListView && !preserveAiPanelFocus && !isRenaming &&
+                    if (shouldFocusListView && ShouldFocusListView() &&
+                        !preserveAiPanelFocus && !isRenaming &&
                         _listView.Visible && _listView.CanFocus)
                     {
                         _listView.Focus();
@@ -746,7 +748,8 @@ public partial class MainForm
     {
         try
         {
-            return Form.ActiveForm == this || ContainsFocus;
+            return IsHandleCreated && GetForegroundWindow() == Handle &&
+                (Form.ActiveForm == this || ContainsFocus);
         }
         catch
         {
