@@ -37,7 +37,6 @@ public partial class MainForm
             if (_owner.IsTileView)
                 _owner.UpdateTileViewMetrics();
             _owner.RescaleListViewColumns();
-            _owner.UpdateSearchOverlayTextAndStyle();
 
             // 5. Scale Chat Panel if exists
             if (_owner._llmChatPanel != null)
@@ -127,7 +126,6 @@ public partial class MainForm
 
                 _owner._listView.SmallImageList = _owner._smallIcons;
                 _owner._listView.LargeImageList = _owner._largeIcons;
-                _owner.UpdateSearchOverlayTextAndStyle();
                 if (_owner.IsTileView)
                 {
                     _owner.PopulateTileItems();
@@ -159,7 +157,7 @@ public partial class MainForm
                 _owner._splitContainer.Panel1Collapsed = !s.ShowSidebar;
             }
             _owner._llmChatPanel?.UpdateFromSettings(); // Update LLM panel visibility and settings
-            _owner.RefreshSearchOverlayVisibility();
+            _owner._searchController.RefreshProgressRow();
             _owner.EnsureListViewportAndPaint("SETTINGS-apply");
             if (!refreshCurrent)
                 return;

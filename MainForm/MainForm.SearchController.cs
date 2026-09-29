@@ -13,7 +13,9 @@ public partial class MainForm
 {
     BrowserState ISearchHost.BrowserState => State;
     ListView ISearchHost.FileListView => _listView;
+    string ISearchHost.SearchText => _searchBox?.Text ?? "";
     ToolStripStatusLabel ISearchHost.StatusLabel => _statusLabel;
+    ToolStripStatusLabel ISearchHost.SearchSpinnerLabel => _searchSpinnerLabel;
     bool ISearchHost.IsDisposed => IsDisposed;
     bool ISearchHost.Disposing => Disposing;
     bool ISearchHost.IsHandleCreated => IsHandleCreated;
@@ -21,14 +23,13 @@ public partial class MainForm
     void ISearchHost.Invoke(Action action) => Invoke(action);
     void ISearchHost.SetupDriveColumns(ListView listView) => SetupDriveColumns(listView);
     void ISearchHost.SetupFileColumns(ListView listView) => SetupFileColumns(listView);
+    void ISearchHost.InvalidatePendingSearchRestore() => _tabsController.InvalidatePendingSearchRestore();
     void ISearchHost.UpdateActiveTabTitle() => UpdateActiveTabTitle();
-    void ISearchHost.RefreshSearchOverlayVisibility() => RefreshSearchOverlayVisibility();
     void ISearchHost.ResetListViewportTopAsync(int preferredIndex, string reason)
         => ResetListViewportTopAsync(preferredIndex, reason);
     void ISearchHost.LogListViewState(string scope, string stage) => LogListViewState(scope, stage);
     void ISearchHost.InvalidateListItem(int index) => InvalidateListItem(index);
 
-    private Font? _searchOverlayFont;
     private void UpdateSearchTagToggleButtonState()
     {
         if (_searchTagToggleBtn == null || _searchTagToggleBtn.IsDisposed)
@@ -54,64 +55,11 @@ public partial class MainForm
     }
 
 
-    private void InitializeSearchOverlay()
-    {
-        _searchingOverlay = new Label
-        {
-            Dock = DockStyle.Fill,
-            Visible = false,
-            AutoSize = false,
-            TextAlign = ContentAlignment.MiddleCenter,
-            BackColor = ListBackColor,
-            ForeColor = MutedForeColor
-        };
-
-        UpdateSearchOverlayTextAndStyle();
-        _listView.Controls.Add(_searchingOverlay);
-        _searchingOverlay.BringToFront();
-    }
-
-    private void UpdateSearchOverlayTextAndStyle()
-    {
-        if (_searchingOverlay == null || _searchingOverlay.IsDisposed || _listView == null)
-            return;
-
-        _searchingOverlay.Text = Localization.T("search_overlay_searching");
-        _searchingOverlay.BackColor = ListBackColor;
-        _searchingOverlay.ForeColor = MutedForeColor;
-
-        float targetSize = Math.Max(18f, _listView.Font.Size * 2.1f);
-        if (_searchOverlayFont == null ||
-            Math.Abs(_searchOverlayFont.Size - targetSize) > 0.1f)
-        {
-            var oldFont = _searchOverlayFont;
-            _searchOverlayFont = new Font("Segoe UI", targetSize, FontStyle.Bold, GraphicsUnit.Point);
-            _searchingOverlay.Font = _searchOverlayFont;
-            oldFont?.Dispose();
-        }
-    }
-
-    private void RefreshSearchOverlayVisibility()
-    {
-        if (_searchingOverlay == null || _searchingOverlay.IsDisposed)
-            return;
-
-        bool show = _searchController.IsSearchMode &&
-                    _searchController.IsSearchInProgress &&
-                    State.Items.Count == 0;
-
-        if (_searchingOverlay.Visible != show)
-            _searchingOverlay.Visible = show;
-
-        if (show)
-            _searchingOverlay.BringToFront();
-    }
-
     private sealed class SearchController
     {
         private readonly ISearchHost _owner;
         private BrowserState State => _owner.BrowserState;
-        private readonly string[] _spinnerFrames = new[] { "|", "/", "-", "\\" };
+        private readonly string[] _spinnerFrames = new[] { "│", "╱", "─", "╲" };
         private const int LivePublishMinIntervalMs = 120;
         private const int LivePublishMinResultsDelta = 40;
         private System.Windows.Forms.Timer? _spinnerTimer;
@@ -119,14 +67,21 @@ public partial class MainForm
         private int _spinnerFrameIndex = 0;
 
         private CancellationTokenSource? _cts;
+        private string? _searchPath;
+        private string? _searchQuery;
         private bool _userScrolledDuringSearch;
         private System.Windows.Forms.Timer? _debounceTimer;
         private string _debounceQuery = "";
+        private long _debounceGeneration;
+        private long _scheduledDebounceGeneration;
 
         public bool IsSearchMode { get; private set; }
         public bool IsSearchInProgress { get; private set; }
         public bool IsTagSearchOnly { get; private set; }
-        private bool HasProgressRow => IsSearchMode && IsSearchInProgress && _owner.FileListView != null && _owner.FileListView.VirtualMode && State.Items.Count > 0;
+        private bool HasProgressRow => IsSearchActiveForPath(State.CurrentPath) && IsSearchInProgress && _owner.FileListView != null && _owner.FileListView.VirtualMode;
+
+        public bool IsSearchActiveForPath(string path)
+            => IsSearchMode && string.Equals(_searchPath, path, StringComparison.OrdinalIgnoreCase);
 
         public SearchController(ISearchHost owner)
         {
@@ -150,19 +105,31 @@ public partial class MainForm
         public void CancelActive()
         {
             _debounceTimer?.Stop();
+            _debounceGeneration++;
             try { _cts?.Cancel(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
         }
 
         public bool TryCancelActiveSearch()
         {
             if (!IsSearchMode || _cts == null) return false;
-            try { _cts.Cancel(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+            CancelActive();
             return true;
         }
 
         public void StartSearch(string query)
         {
+            if (string.IsNullOrWhiteSpace(query))
+            {
+                if (string.IsNullOrWhiteSpace(_owner.SearchText))
+                    ClearSearch();
+                return;
+            }
+
+            if (!IsSearchInputCurrent(query))
+                return;
+
             _debounceTimer?.Stop();
+            _debounceGeneration++;
             _ = PerformSearchAsync(query);
         }
 
@@ -174,18 +141,26 @@ public partial class MainForm
                 _debounceTimer.Tick += (s, e) =>
                 {
                     _debounceTimer.Stop();
+                    if (_scheduledDebounceGeneration != _debounceGeneration)
+                        return;
                     StartSearch(_debounceQuery);
                 };
             }
             _debounceQuery = query;
+            _scheduledDebounceGeneration = ++_debounceGeneration;
             _debounceTimer.Stop();
             _debounceTimer.Start();
         }
 
         public void RestoreCachedSearchState(string query)
         {
+            if (!IsSearchInputCurrent(query))
+                return;
+
             CancelActive();
             _cts = null;
+            _searchPath = State.CurrentPath;
+            _searchQuery = query;
             IsSearchMode = true;
             IsSearchInProgress = false;
             StopStatusSpinner();
@@ -200,8 +175,8 @@ public partial class MainForm
             }
 
                 int scanned = Math.Max(State.Items.Count, State.AllItems.Count);
-                _owner.StatusLabel.Text = string.Format(Localization.T("status_search_done"), State.Items.Count, scanned);
-            _owner.RefreshSearchOverlayVisibility();
+            _owner.StatusLabel.Text = string.Format(Localization.T("status_search_done"), State.Items.Count, scanned);
+            RefreshProgressRow();
         }
 
         public bool TryBuildProgressVirtualItem(int index, out ListViewItem item)
@@ -221,17 +196,28 @@ public partial class MainForm
             return true;
         }
 
+        public void RefreshProgressRow()
+        {
+            RefreshVirtualListSize();
+            if (_owner.FileListView != null && !_owner.FileListView.IsDisposed)
+                _owner.FileListView.Invalidate();
+        }
+
         public void ClearSearch()
         {
             CancelActive();
             _cts = null;
+            _searchPath = null;
+            _searchQuery = null;
             IsSearchInProgress = false;
             StopStatusSpinner();
+            _owner.InvalidatePendingSearchRestore();
 
             // Always restore list from current folder snapshot even if search mode flag desynced.
             if (!IsSearchMode && State.Items.Count > 0)
             {
-                _owner.RefreshSearchOverlayVisibility();
+                RefreshProgressRow();
+                _owner.UpdateActiveTabTitle();
                 return;
             }
 
@@ -280,7 +266,7 @@ public partial class MainForm
             }));
 
             _owner.StatusLabel.Text = string.Format(Localization.T("status_ready_items"), State.Items.Count);
-            _owner.RefreshSearchOverlayVisibility();
+            RefreshProgressRow();
             _owner.UpdateActiveTabTitle();
         }
 
@@ -288,10 +274,12 @@ public partial class MainForm
         {
             CancelActive();
             _cts = null;
+            _searchPath = null;
+            _searchQuery = null;
             IsSearchMode = false;
             IsSearchInProgress = false;
             StopStatusSpinner();
-            _owner.RefreshSearchOverlayVisibility();
+            RefreshProgressRow();
             _owner.UpdateActiveTabTitle();
         }
 
@@ -312,12 +300,14 @@ public partial class MainForm
             CancelActive();
             var cts = new CancellationTokenSource();
             _cts = cts;
+            _searchPath = State.CurrentPath;
+            _searchQuery = query;
             _userScrolledDuringSearch = false;
 
             IsSearchMode = true;
             IsSearchInProgress = false;
             StopStatusSpinner();
-            _owner.RefreshSearchOverlayVisibility();
+            RefreshProgressRow();
             _owner.UpdateActiveTabTitle();
             _owner.LogListViewState("SEARCH", "start-before-reset");
             _owner.ResetListViewportTopAsync(0, "SEARCH-start");
@@ -329,11 +319,11 @@ public partial class MainForm
 
             IsSearchInProgress = true;
             State.Items = new List<FileItem>();
-            _owner.FileListView.VirtualListSize = 0;
+            RefreshVirtualListSize();
             _owner.LogListViewState("SEARCH", "begin-empty-before-reset");
             _owner.ResetListViewportTopAsync(0, "SEARCH-empty");
             SetSearchStatus(Localization.T("status_searching_progress"), 0, 0);
-            _owner.RefreshSearchOverlayVisibility();
+            RefreshProgressRow();
             if (_owner.FileListView.Columns.Count == 0 ||
                 (_owner.FileListView.Columns[0].Tag as ColumnMeta)?.Key != "col_name")
             {
@@ -389,7 +379,7 @@ public partial class MainForm
                     publishedCount = availableCount;
                     lastLivePublishTick = now;
                     _owner.FileListView.Invalidate();
-                    _owner.RefreshSearchOverlayVisibility();
+                    RefreshProgressRow();
                 }
 
                 var uiUpdateAction = new Action<List<FileItem>>(foundBatch =>
@@ -508,7 +498,7 @@ public partial class MainForm
                 _owner.LogListViewState("SEARCH", "done-before-reset");
                 if (!_userScrolledDuringSearch)
                     _owner.ResetListViewportTopAsync(0, "SEARCH-done");
-                _owner.RefreshSearchOverlayVisibility();
+                RefreshProgressRow();
             }
             catch (OperationCanceledException)
             {
@@ -528,7 +518,7 @@ public partial class MainForm
                             if (!_userScrolledDuringSearch)
                                 _owner.ResetListViewportTopAsync(0, "SEARCH-stopped");
                             _owner.FileListView.Invalidate();
-                            _owner.RefreshSearchOverlayVisibility();
+                            RefreshProgressRow();
                         }
                     });
                 }
@@ -539,20 +529,30 @@ public partial class MainForm
                 StopStatusSpinner();
                 _owner.StatusLabel.Text = string.Format(Localization.T("status_error"), ex.Message);
                 IsSearchInProgress = false;
-                _owner.RefreshSearchOverlayVisibility();
+                RefreshProgressRow();
             }
         }
 
         private bool IsCurrentSearch(CancellationTokenSource cts)
         {
-            return ReferenceEquals(cts, _cts) && IsSearchMode;
+            return ReferenceEquals(cts, _cts) &&
+                   IsSearchActiveForPath(State.CurrentPath) &&
+                   IsSearchInputCurrent(_searchQuery);
+        }
+
+        private bool IsSearchInputCurrent(string? query)
+        {
+            return !string.IsNullOrWhiteSpace(query) &&
+                   !string.Equals(query, Localization.T("search_placeholder"), StringComparison.Ordinal) &&
+                   string.Equals(query, _owner.SearchText, StringComparison.Ordinal);
         }
 
         private void SetSearchStatus(string format, params object[] args)
         {
             _searchStatusBase = args.Length == 0 ? format : string.Format(format, args);
+            _owner.StatusLabel.Text = _searchStatusBase;
+            _owner.SearchSpinnerLabel.Text = _spinnerFrames[_spinnerFrameIndex];
             EnsureStatusSpinnerRunning();
-            _owner.StatusLabel.Text = $"{_searchStatusBase} {_spinnerFrames[_spinnerFrameIndex]}";
         }
 
         private void EnsureStatusSpinnerRunning()
@@ -569,7 +569,7 @@ public partial class MainForm
                     }
 
                     _spinnerFrameIndex = (_spinnerFrameIndex + 1) % _spinnerFrames.Length;
-                    _owner.StatusLabel.Text = $"{_searchStatusBase} {_spinnerFrames[_spinnerFrameIndex]}";
+                    _owner.SearchSpinnerLabel.Text = _spinnerFrames[_spinnerFrameIndex];
                     if (HasProgressRow)
                         _owner.InvalidateListItem(State.Items.Count);
                 };
@@ -584,6 +584,7 @@ public partial class MainForm
             _spinnerTimer?.Stop();
             _searchStatusBase = "";
             _spinnerFrameIndex = 0;
+            _owner.SearchSpinnerLabel.Text = "";
         }
 
         private void RefreshVirtualListSize()

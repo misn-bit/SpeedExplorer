@@ -314,7 +314,8 @@ public partial class MainForm
 
         private async Task LoadTabStateAsync(TabState tab, int requestId)
         {
-            _owner.LogListViewState("TAB", $"load-begin req={requestId} path=\"{TraceText(tab.CurrentPath)}\" search={tab.IsSearchMode}");
+            string requestedPath = tab.CurrentPath;
+            _owner.LogListViewState("TAB", $"load-begin req={requestId} path=\"{TraceText(requestedPath)}\" search={tab.IsSearchMode}");
             bool restoreSearchMode = tab.IsSearchMode;
             string restoreSearchText = tab.SearchText;
             _pendingSearchRestoreTabId = restoreSearchMode ? tab.Id : null;
@@ -401,6 +402,11 @@ public partial class MainForm
             if (_activeTabIndex < 0 || _activeTabIndex >= _tabs.Count)
                 return;
             if (!ReferenceEquals(_tabs[_activeTabIndex], tab))
+                return;
+            if (!string.Equals(State.CurrentPath, requestedPath, StringComparison.OrdinalIgnoreCase))
+                return;
+            if (restoreSearchMode &&
+                !string.Equals(_pendingSearchRestoreTabId, tab.Id, StringComparison.Ordinal))
                 return;
             _owner.LogListViewState("TAB", $"load-after-nav req={requestId}");
 
@@ -534,7 +540,7 @@ public partial class MainForm
                 }
 
                 SyncActiveTabPath(State.CurrentPath, State.CurrentDisplayPath);
-                _owner.RefreshSearchOverlayVisibility();
+                _owner._searchController.RefreshProgressRow();
             }
             finally
             {
@@ -823,6 +829,18 @@ public partial class MainForm
             tab.SearchText = tab.IsSearchMode ? _owner._searchBox.Text : "";
             tab.Title = GetTabTitleForPath(State.CurrentPath, tab.IsSearchMode);
             UpdateTabStripVisuals();
+        }
+
+        public void InvalidatePendingSearchRestore()
+        {
+            // A tab load can finish asynchronously and restore its saved search
+            // after the user has explicitly cleared the search box. Invalidate
+            // that continuation and release its temporary title state.
+            if (_pendingSearchRestoreTabId == null)
+                return;
+
+            _tabLoadRequestId++;
+            _pendingSearchRestoreTabId = null;
         }
 
         public void SyncActiveTabPath(string currentPath, string currentDisplayPath)

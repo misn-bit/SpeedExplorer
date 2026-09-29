@@ -35,13 +35,13 @@ public partial class MainForm : Form, IFileOperationsHost, IShellActionsHost, IO
     private TextBox _searchBox = null!;
     private Button _searchTagToggleBtn = null!;
     private Button _searchClearBtn = null!;
-    private Label _searchingOverlay = null!;
     private TreeView _sidebar;
     private SidebarController _sidebarController;
     private readonly Panel _titleBar;
     private readonly StatusStrip _statusBar;
     private ToolStripStatusLabel _pathLabel;
     private ToolStripStatusLabel _statusLabel;
+    private ToolStripStatusLabel _searchSpinnerLabel = null!;
     private ToolStripStatusLabel _viewToggleLabel = null!;
     private readonly ImageList _smallIcons;
     private readonly ImageList _largeIcons;
@@ -568,7 +568,6 @@ public partial class MainForm : Form, IFileOperationsHost, IShellActionsHost, IO
         _sidebar.ItemHeight = Scale(24);
         
         _listView = CreateListView();
-        InitializeSearchOverlay();
         _listView.Visible = false;
         _statusBar = CreateStatusBar();
         _pathLabel = (ToolStripStatusLabel)_statusBar.Items[0];

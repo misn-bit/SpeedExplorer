@@ -183,7 +183,17 @@ public partial class MainForm
             ApplyNavButtonTextOffset(clearBtn, -_owner.Scale(0));
             clearBtn.Click += (s, e) =>
             {
-                _owner._searchBox.Text = "";
+                _owner._suppressSearchTextChanged = true;
+                try
+                {
+                    _owner._searchBox.Text = "";
+                    _owner._searchBox.ForeColor = _owner.ForeColor_Dark;
+                }
+                finally
+                {
+                    _owner._suppressSearchTextChanged = false;
+                }
+                _owner._searchController.ClearSearch();
                 _owner._searchBox.Focus();
             };
 
@@ -225,6 +235,14 @@ public partial class MainForm
                 BorderStyle = Border3DStyle.Etched
             };
 
+            _owner._searchSpinnerLabel = new ToolStripStatusLabel("")
+            {
+                AutoSize = false,
+                Width = _owner.Scale(20),
+                TextAlign = ContentAlignment.MiddleCenter,
+                Margin = new Padding(0)
+            };
+
             _owner._viewToggleLabel = new ToolStripStatusLabel(Localization.T("view_tiles"))
             {
                 AutoSize = true,
@@ -236,6 +254,7 @@ public partial class MainForm
 
             status.Items.Add(_owner._pathLabel);
             status.Items.Add(_owner._statusLabel);
+            status.Items.Add(_owner._searchSpinnerLabel);
             status.Items.Add(_owner._viewToggleLabel);
 
             return status;
