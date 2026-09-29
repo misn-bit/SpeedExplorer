@@ -577,7 +577,7 @@ public partial class MainForm
                 _owner.SaveFolderSettings();
                 TagManager.Instance.Flush(); // Commit any pending debounced tag saves.
                 _owner._loadCts?.Cancel();
-                _owner._searchController.CancelActive();
+                _owner._searchController.CancelAllSearches();
                 _owner._repaintTimer?.Stop();
                 try { _owner._watcherController.Dispose(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                 try { _owner._dragDropController.Dispose(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }

@@ -34,6 +34,9 @@ public partial class MainForm
 
         public int Count => _tabs.Count;
         public int ActiveIndex => _activeTabIndex;
+        public string ActiveTabId => _activeTabIndex >= 0 && _activeTabIndex < _tabs.Count
+            ? _tabs[_activeTabIndex].Id
+            : "";
 
         public TabsController(MainForm owner)
         {
@@ -246,6 +249,9 @@ public partial class MainForm
                 return;
             }
 
+            if (index == _activeTabIndex)
+                SaveCurrentTabState();
+            _owner._searchController.CloseTabSearch(_tabs[index].Id);
             _tabs.RemoveAt(index);
             if (_activeTabIndex >= _tabs.Count) _activeTabIndex = _tabs.Count - 1;
             RebuildTabStrip();
@@ -261,6 +267,7 @@ public partial class MainForm
             _owner.LogListViewState("TAB", $"switch-begin target={index} current={_activeTabIndex}");
 
             if (saveCurrent) SaveCurrentTabState();
+            _owner._searchController.DetachForTabSwitch();
             _activeTabIndex = index;
 
             if (ShouldShowTabOverflow())
@@ -830,6 +837,12 @@ public partial class MainForm
             UpdateTabStripVisuals();
         }
 
+        public void RefreshTabTitle(string tabId)
+        {
+            if (_tabs.Any(tab => string.Equals(tab.Id, tabId, StringComparison.Ordinal)))
+                UpdateTabStripVisuals();
+        }
+
         public void InvalidatePendingSearchRestore()
         {
             // A tab load can finish asynchronously and restore its saved search
@@ -1235,7 +1248,7 @@ public partial class MainForm
 
                 var title = new Label
                 {
-                    Text = tab.Title,
+                    Text = GetDisplayedTabTitle(tab),
                     ForeColor = _owner.ForeColor_Dark,
                     AutoEllipsis = true,
                     Font = new Font("Segoe UI Semibold", 10),
@@ -1301,7 +1314,7 @@ public partial class MainForm
                 {
                     if (c is Label lbl && (lbl.Tag as string) == "title")
                     {
-                        lbl.Text = tab.Title;
+                        lbl.Text = GetDisplayedTabTitle(tab);
                         lbl.ForeColor = _owner.ForeColor_Dark;
                     }
                     else if (c is Label close && close.Text == "×")
@@ -1332,6 +1345,11 @@ public partial class MainForm
             _titleBar?.Invalidate();
             _tabStrip.ResumeLayout();
         }
+
+        private string GetDisplayedTabTitle(TabState tab)
+            => _owner._searchController.IsTabSearchInProgress(tab.Id)
+                ? $"... {tab.Title}"
+                : tab.Title;
 
         private void UpdateTabStripLayout()
         {

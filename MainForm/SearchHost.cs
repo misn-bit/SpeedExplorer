@@ -6,6 +6,7 @@ namespace SpeedExplorer;
 internal interface ISearchHost
 {
     BrowserState BrowserState { get; }
+    string ActiveTabId { get; }
     ListView FileListView { get; }
     string SearchText { get; }
     ToolStripStatusLabel StatusLabel { get; }
@@ -20,6 +21,7 @@ internal interface ISearchHost
     void SetupFileColumns(ListView listView);
     void InvalidatePendingSearchRestore();
     void UpdateActiveTabTitle();
+    void RefreshTabTitle(string tabId);
     void ResetListViewportTopAsync(int preferredIndex, string reason);
     void LogListViewState(string scope, string stage);
     void InvalidateListItem(int index);
