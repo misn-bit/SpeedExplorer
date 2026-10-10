@@ -202,6 +202,16 @@ public partial class MainForm
             RecolorContainer(_owner._searchControl, theme.ControlBackground, theme.Foreground);
             RecolorContainer(_owner._addressBar, theme.ControlBackground, theme.Foreground);
 
+            // RecolorContainer(_navPanel) above repaints the _addressBar and
+            // _searchControl panel surfaces (and hence their padding strips)
+            // with the darker band color while the fix-up passes only recolor
+            // their children. Restore the control-surface color so the whole
+            // field interior reads as one light color.
+            if (_owner._addressBar is { IsDisposed: false })
+                _owner._addressBar.BackColor = theme.ControlBackground;
+            if (_owner._searchControl is { IsDisposed: false })
+                _owner._searchControl.BackColor = theme.ControlBackground;
+
             if (_owner._titleBar != null)
             {
                 foreach (Control control in _owner._titleBar.Controls)
