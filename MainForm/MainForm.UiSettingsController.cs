@@ -8,27 +8,47 @@ public partial class MainForm
     private sealed class UiSettingsController
     {
         private readonly MainForm _owner;
+        private int _appliedListViewFontSize;
         private BrowserState State => _owner.State;
 
         public UiSettingsController(MainForm owner)
         {
             _owner = owner;
+            _appliedListViewFontSize = AppSettings.Current.FontSize;
         }
 
         public void UpdateScale()
         {
             // 1. Scale ImageLists
             int iconSize = _owner.GetEffectiveIconSize();
-            int largeSize = Math.Min(iconSize * 2, 256);
-            _owner._smallIcons.ImageSize = new Size(iconSize, iconSize);
-            _owner._largeIcons.ImageSize = new Size(largeSize, largeSize);
+            int largeSize = Math.Min(iconSize * 2, MaxImageListIconSize);
+            bool iconSizeChanged = _owner._smallIcons.ImageSize.Width != iconSize ||
+                                   _owner._largeIcons.ImageSize.Width != largeSize;
+
+            if (iconSizeChanged)
+            {
+                // Cached icon bitmaps were fetched at the old pixel size; the
+                // ImageList would just stretch them (blurry). Drop them and
+                // re-fetch visible icons/thumbnails at the new physical size.
+                _owner._iconLoadService?.CancelPending();
+                _owner.RebuildDefaultIconSets();
+                if (_owner.IsTileView)
+                    _owner._tileViewController.PopulateTileItems();
+                else
+                {
+                    // Cached virtual rows may still point at icons removed
+                    // from the old-size ImageList; rebuild them against the
+                    // new generic placeholders before queuing thumbnails.
+                    _owner._listViewInteractionController.InvalidateRowCache();
+                    _owner._listViewInteractionController.RequeueVisibleIcons();
+                }
+                if (_owner._listView != null && !_owner._listView.IsDisposed)
+                    _owner._listView.Invalidate();
+            }
 
             // 2. Scale Layout Panels
-            _owner._titleBar.Height = _owner.Scale(34);
-            _owner._navPanel.Height = _owner.Scale(37);
-            _owner._navPanel.Padding = _owner.Scale(new System.Windows.Forms.Padding(10, 5, 10, 5));
-            _owner._searchControl.Width = _owner.Scale(250);
-            _owner.ApplySidebarSplit();
+            _owner._titleBar.Height = _owner.Scale(LogicalTitleBarHeight);
+            _owner._layoutController.UpdateNavLayoutForDpi();
 
             // 3. Scale Sidebar
             _owner._sidebar.ItemHeight = _owner.Scale(24);
@@ -37,6 +57,12 @@ public partial class MainForm
             if (_owner.IsTileView)
                 _owner.UpdateTileViewMetrics();
             _owner.RescaleListViewColumns();
+            if (_owner._splitContainer != null && !_owner._splitContainer.IsDisposed)
+            {
+                _owner._splitContainer.SplitterWidth = _owner.Scale(3);
+                _owner._splitContainer.Panel1MinSize = _owner.Scale(120);
+                _owner.ApplySidebarSplit();
+            }
 
             // 5. Scale Chat Panel if exists
             if (_owner._llmChatPanel != null)
@@ -45,10 +71,9 @@ public partial class MainForm
             }
 
             // 6. Rescale Title Bar Buttons (Fixed positions)
-            if (_owner._navButtonsPanel != null)
-            {
-                _owner._navButtonsPanel.Height = _owner.Scale(37);
-            }
+            _owner._windowChromeController.UpdateLayoutForDpi();
+            _owner._tabsController.UpdateLayoutForDpi();
+            _owner._layoutController.UpdateStatusBarForDpi();
 
             _owner.RefreshFrame();
         }
@@ -78,51 +103,18 @@ public partial class MainForm
                 {
                     _owner._tileViewController.ApplyViewModeForNavigation();
                 }
-                _owner._listView.Font = new Font("Segoe UI Emoji", s.FontSize);
-
-                // Recreate ImageLists
-                _owner._smallIcons.Images.Clear();
-                _owner._largeIcons.Images.Clear();
-                _owner._iconLoadService?.CancelPending(); // Clear pending async loads
-
-                int iconSize = _owner.GetEffectiveIconSize();
-                int largeSize = Math.Min(iconSize * 2, 256);
-                _owner._smallIcons.ImageSize = new Size(iconSize, iconSize);
-                _owner._largeIcons.ImageSize = new Size(largeSize, largeSize); // Cap at 256 (ImageList limit)
-
-                // Reload defaults (Internal)
-                _owner._smallIcons.Images.Add("folder", _owner.CreateFolderIcon(iconSize));
-                _owner._smallIcons.Images.Add("file", _owner.CreateFileIcon(iconSize));
-                _owner._smallIcons.Images.Add("image", _owner.CreateImageIcon(iconSize));
-                _owner._smallIcons.Images.Add("drive", _owner.CreateDriveIcon(iconSize));
-                _owner._smallIcons.Images.Add("usb", _owner.CreateUsbIcon(iconSize));
-                _owner._smallIcons.Images.Add("computer", _owner.CreateComputerIcon(iconSize));
-
-                _owner._largeIcons.Images.Add("folder", _owner.CreateFolderIcon(largeSize));
-                _owner._largeIcons.Images.Add("file", _owner.CreateFileIcon(largeSize));
-                _owner._largeIcons.Images.Add("image", _owner.CreateImageIcon(largeSize));
-                _owner._largeIcons.Images.Add("drive", _owner.CreateDriveIcon(largeSize));
-                _owner._largeIcons.Images.Add("usb", _owner.CreateUsbIcon(largeSize));
-                _owner._largeIcons.Images.Add("computer", _owner.CreateComputerIcon(largeSize));
-
-                // Pre-load System Folder icons (Colored & Gray) to avoid async delay/pop-in
-                // Use dummy path for generic folder icon
-                string folderPath = "C:\\DummyFolder";
-                try
+                // Zoom and other settings refreshes also pass through here.
+                // Reassigning the raw settings size on each refresh discards
+                // WinForms' DPI-scaled font after a monitor DPI change.
+                if (_appliedListViewFontSize != s.FontSize)
                 {
-                    // Colored "sys_folder"
-                    var smallSys = IconHelper.GetIconSized(folderPath, true, _owner._smallIcons.ImageSize.Width, false, grayscale: false);
-                    var largeSys = IconHelper.GetIconSized(folderPath, true, _owner._largeIcons.ImageSize.Width, false, grayscale: false);
-                    if (smallSys != null) _owner._smallIcons.Images.Add("sys_folder", smallSys);
-                    if (largeSys != null) _owner._largeIcons.Images.Add("sys_folder", largeSys);
-
-                    // Grayscale "gray_folder"
-                    var smallGray = IconHelper.GetIconSized(folderPath, true, _owner._smallIcons.ImageSize.Width, false, grayscale: true);
-                    var largeGray = IconHelper.GetIconSized(folderPath, true, _owner._largeIcons.ImageSize.Width, false, grayscale: true);
-                    if (smallGray != null) _owner._smallIcons.Images.Add("gray_folder", smallGray);
-                    if (largeGray != null) _owner._largeIcons.Images.Add("gray_folder", largeGray);
+                    _owner._listView.Font = new Font("Segoe UI Emoji", s.FontSize);
+                    _appliedListViewFontSize = s.FontSize;
                 }
-                catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+
+                // Recreate ImageLists at the DPI-scaled icon size
+                _owner._iconLoadService?.CancelPending(); // Clear pending async loads
+                _owner.RebuildDefaultIconSets();
 
                 _owner._listView.SmallImageList = _owner._smallIcons;
                 _owner._listView.LargeImageList = _owner._largeIcons;

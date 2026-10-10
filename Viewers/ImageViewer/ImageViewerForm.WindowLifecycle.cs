@@ -112,6 +112,64 @@ public partial class ImageViewerForm
         Invalidate();
     }
 
+    protected override void OnDpiChanged(DpiChangedEventArgs e)
+    {
+        base.OnDpiChanged(e);
+        if (WindowState == FormWindowState.Maximized && !_isFullscreen)
+            MaximizedBounds = Screen.FromHandle(Handle).WorkingArea;
+        UpdateLayoutForDpi();
+        ClampNormalBoundsToCurrentWorkingArea();
+    }
+
+    private void ClampNormalBoundsToCurrentWorkingArea()
+    {
+        if (WindowState != FormWindowState.Normal || !IsHandleCreated)
+            return;
+
+        var workArea = Screen.FromHandle(Handle).WorkingArea;
+        int width = Math.Min(Width, workArea.Width);
+        int height = Math.Min(Height, workArea.Height);
+        int left = Math.Clamp(Left, workArea.Left, workArea.Right - width);
+        int top = Math.Clamp(Top, workArea.Top, workArea.Bottom - height);
+        var bounds = new Rectangle(left, top, width, height);
+        if (Bounds != bounds)
+            Bounds = bounds;
+    }
+
+    private void QueueDisplayMetricsRefresh()
+    {
+        if (!IsHandleCreated || IsDisposed || Disposing)
+            return;
+
+        try
+        {
+            BeginInvoke((Action)(() =>
+            {
+                if (!IsHandleCreated || IsDisposed || Disposing)
+                    return;
+
+                if (WindowState == FormWindowState.Maximized)
+                {
+                    MaximizedBounds = _isFullscreen
+                        ? Rectangle.Empty
+                        : Screen.FromHandle(Handle).WorkingArea;
+                    WindowState = FormWindowState.Normal;
+                    WindowState = FormWindowState.Maximized;
+                }
+                else
+                {
+                    ClampNormalBoundsToCurrentWorkingArea();
+                }
+
+                UpdateLayoutForDpi();
+            }));
+        }
+        catch (Exception __ex)
+        {
+            System.Diagnostics.Debug.WriteLine(__ex);
+        }
+    }
+
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
         SaveImageViewerAiSettings();
@@ -147,6 +205,16 @@ public partial class ImageViewerForm
     protected override void OnShown(EventArgs e)
     {
         base.OnShown(e);
+        if (WindowState == FormWindowState.Normal)
+        {
+            var workArea = Screen.FromHandle(Handle).WorkingArea;
+            int width = Math.Min(Scale(Math.Max(400, _settings.ImageViewerWidth)), workArea.Width);
+            int height = Math.Min(Scale(Math.Max(300, _settings.ImageViewerHeight)), workArea.Height);
+            int left = workArea.Left + (workArea.Width - width) / 2;
+            int top = workArea.Top + (workArea.Height - height) / 2;
+            Bounds = new Rectangle(left, top, width, height);
+        }
+        UpdateLayoutForDpi();
         LoadCurrentImage();
     }
 
@@ -185,8 +253,8 @@ public partial class ImageViewerForm
         _settings.ImageViewerMaximized = WindowState == FormWindowState.Maximized;
         if (WindowState == FormWindowState.Normal)
         {
-            _settings.ImageViewerWidth = Width;
-            _settings.ImageViewerHeight = Height;
+            _settings.ImageViewerWidth = Unscale(Width);
+            _settings.ImageViewerHeight = Unscale(Height);
         }
         _settings.Save();
     }

@@ -145,6 +145,27 @@ public partial class MainForm
             EnsureBreadcrumbView(path);
         }
 
+        public void UpdateLayoutForDpi()
+        {
+            if (_owner._addressBar == null || _owner._addressBar.IsDisposed)
+                return;
+
+            _owner._addressBar.Padding = _owner.Scale(new Padding(2, 0, 2, 0));
+            foreach (Control child in _owner._addressBar.Controls)
+            {
+                if (child is Panel contentWrapper)
+                    contentWrapper.Padding = _owner.Scale(new Padding(0, 2, 0, 0));
+                else if (child is Label iconLabel)
+                {
+                    iconLabel.Width = _owner.Scale(32);
+                    iconLabel.Padding = new Padding(0, 0, 0, _owner.Scale(3));
+                }
+            }
+
+            if (_owner._breadcrumbPanel.Visible)
+                UpdateBreadcrumbs(State.CurrentPath);
+        }
+
         public void EnsureBreadcrumbView(string path)
         {
             _owner._addressTextBox.Text = path;

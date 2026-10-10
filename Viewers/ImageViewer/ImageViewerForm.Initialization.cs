@@ -44,6 +44,7 @@ public partial class ImageViewerForm
         ApplyAiPanelToggleVisualState();
         LayoutControls();
         ApplySavedWindowState();
+        UpdateLayoutForDpi();
     }
 
 }

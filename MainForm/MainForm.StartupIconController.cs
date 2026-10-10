@@ -187,6 +187,18 @@ public partial class MainForm
             list.Images.Add("usb", CreateUsbIcon(size));
             list.Images.Add("computer", CreateComputerIcon(size));
 
+            // Keep a correctly styled Windows image-file placeholder ready
+            // before thumbnail requests begin. This avoids flashing the
+            // internal gray drawing while an image thumbnail is generated.
+            try
+            {
+                var systemImage = IconHelper.GetStockImageFileIconSized(size);
+                var grayImage = IconHelper.GetStockImageFileIconSized(size, grayscale: true);
+                if (systemImage != null) list.Images.Add("sys_image", systemImage);
+                if (grayImage != null) list.Images.Add("gray_image", grayImage);
+            }
+            catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+
             return list;
         }
 

@@ -84,7 +84,7 @@ public partial class MainForm
             _addTabButton = new Button
             {
                 Text = "+",
-                Size = new Size(_owner.Scale(30), _owner.Scale(38)),
+                Size = new Size(_owner.Scale(30), _owner.Scale(LogicalTabHeight)),
                 FlatStyle = FlatStyle.Flat,
                 BackColor = Color.Transparent,
                 ForeColor = _owner.ForeColor_Dark,
@@ -94,13 +94,13 @@ public partial class MainForm
             };
             _addTabButton.FlatAppearance.BorderSize = 0;
             _addTabButton.FlatAppearance.MouseOverBackColor = _owner.ControlHoverColor;
-            ApplyButtonTextOffset(_addTabButton, "+", -_owner.Scale(5));
+            ApplyButtonTextOffset(_addTabButton, "+", -_owner.Scale(2));
             _addTabButton.Click += (s, e) => AddNewTab();
 
             _tabOverflowButton = new Button
             {
                 Text = "⋯",
-                Size = new Size(_owner.Scale(30), _owner.Scale(38)),
+                Size = new Size(_owner.Scale(30), _owner.Scale(LogicalTabHeight)),
                 FlatStyle = FlatStyle.Flat,
                 BackColor = Color.Transparent,
                 ForeColor = _owner.ForeColor_Dark,
@@ -112,6 +112,27 @@ public partial class MainForm
             _tabOverflowButton.FlatAppearance.BorderSize = 0;
             _tabOverflowButton.FlatAppearance.MouseOverBackColor = _owner.ControlHoverColor;
             _tabOverflowButton.Click += (s, e) => ShowTabOverflowMenu();
+
+            RebuildTabStrip();
+        }
+
+        public void UpdateLayoutForDpi()
+        {
+            if (_tabStrip == null)
+                return;
+
+            var actionSize = new Size(_owner.Scale(30), _owner.Scale(LogicalTabHeight));
+            var actionMargin = _owner.Scale(new Padding(1, 1, 0, 0));
+            if (_addTabButton != null)
+            {
+                _addTabButton.Size = actionSize;
+                _addTabButton.Margin = actionMargin;
+            }
+            if (_tabOverflowButton != null)
+            {
+                _tabOverflowButton.Size = actionSize;
+                _tabOverflowButton.Margin = actionMargin;
+            }
 
             RebuildTabStrip();
         }
@@ -1224,6 +1245,8 @@ public partial class MainForm
         {
             if (_tabStrip == null) return;
             _tabStrip.SuspendLayout();
+            foreach (var panel in _tabPanelsById.Values)
+                panel.Dispose();
             _tabStrip.Controls.Clear();
             _tabPanelsById.Clear();
 
@@ -1238,9 +1261,9 @@ public partial class MainForm
 
                 var tabPanel = new Panel
                 {
-                    Height = _owner.Scale(38),
+                    Height = _owner.Scale(LogicalTabHeight),
                     Width = tabWidth,
-                    Margin = new Padding(i == startIndex ? 0 : _owner.Scale(1), _owner.Scale(1), 0, 0),
+                    Margin = _owner.Scale(new Padding(i == startIndex ? 0 : 1, 1, 0, 0)),
                     BackColor = isActive ? _owner.ActiveTabBackColor : _owner.InactiveTabBackColor
                 };
                 tabPanel.Tag = tab.Id;
@@ -1362,10 +1385,36 @@ public partial class MainForm
             int tabWidth = GetTabPanelWidth();
             bool showOverflow = ShouldShowTabOverflow();
             if (_tabOverflowButton != null) _tabOverflowButton.Visible = showOverflow;
+            GetVisibleTabRange(out int visibleStartIndex, out int visibleCount);
+            string? firstVisibleTabId = _tabs.Count > 0 ? _tabs[visibleStartIndex].Id : null;
+
+            bool visibleTabsMatch = _tabPanelsById.Count == visibleCount;
+            if (visibleTabsMatch)
+            {
+                for (int i = 0; i < visibleCount; i++)
+                {
+                    if (!_tabPanelsById.ContainsKey(_tabs[visibleStartIndex + i].Id))
+                    {
+                        visibleTabsMatch = false;
+                        break;
+                    }
+                }
+            }
+            if (!visibleTabsMatch)
+            {
+                RebuildTabStrip();
+                return;
+            }
 
             foreach (var kvp in _tabPanelsById)
             {
                 var panel = kvp.Value;
+                panel.Height = _owner.Scale(LogicalTabHeight);
+                panel.Margin = _owner.Scale(new Padding(
+                    kvp.Key == firstVisibleTabId ? 0 : 1,
+                    1,
+                    0,
+                    0));
                 panel.Width = tabWidth;
                 foreach (Control c in panel.Controls)
                 {
@@ -1376,6 +1425,7 @@ public partial class MainForm
                     }
                     else if (c is Label close && close.Text == "×")
                     {
+                        close.Size = new Size(_owner.Scale(20), _owner.Scale(20));
                         close.Location = new Point(panel.Width - _owner.Scale(25), _owner.Scale(5));
                     }
                 }

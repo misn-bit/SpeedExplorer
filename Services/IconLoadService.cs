@@ -392,7 +392,7 @@ internal sealed class IconLoadService : IDisposable
                     if (isImage && !isDirectory)
                         smallIcon = IconHelper.GetStockImageFileIconSized(_smallIcons.ImageSize.Width, grayscale: !colored);
                     smallIcon ??= IconHelper.GetIconSized(lookupPath, isDirectory, _smallIcons.ImageSize.Width, isUnique, grayscale: !colored);
-                    smallIcon ??= GetFallbackIconBitmap(lookupPath, isDirectory, _smallIcons.ImageSize.Width);
+                    smallIcon ??= GetFallbackIconBitmap(lookupPath, isDirectory, _smallIcons.ImageSize.Width, colored);
                 }
                 if (largeIcon == null)
                 {
@@ -401,7 +401,7 @@ internal sealed class IconLoadService : IDisposable
                         if (isImage && !isDirectory)
                             largeIcon = IconHelper.GetStockImageFileIconSized(_largeIcons.ImageSize.Width, grayscale: !colored);
                         largeIcon ??= IconHelper.GetIconSized(lookupPath, isDirectory, _largeIcons.ImageSize.Width, isUnique, grayscale: !colored);
-                        largeIcon ??= GetFallbackIconBitmap(lookupPath, isDirectory, _largeIcons.ImageSize.Width);
+                        largeIcon ??= GetFallbackIconBitmap(lookupPath, isDirectory, _largeIcons.ImageSize.Width, colored);
                     }
                     else if (smallIcon != null)
                         largeIcon ??= ResizeBitmapNoDispose(smallIcon, _largeIcons.ImageSize.Width);
@@ -586,17 +586,20 @@ internal sealed class IconLoadService : IDisposable
         return result;
     }
 
-    private Bitmap? GetFallbackIconBitmap(string lookupPath, bool isDirectory, int targetSize)
+    private Bitmap? GetFallbackIconBitmap(string lookupPath, bool isDirectory, int targetSize, bool colored)
     {
+        bool isImage = !isDirectory && FileSystemService.IsImageFile(lookupPath);
         string key = isDirectory
             ? "folder"
-            : (FileSystemService.IsImageFile(lookupPath) ? "image" : "file");
+            : (isImage ? (colored ? "sys_image" : "gray_image") : "file");
 
         try
         {
             Image? img = null;
             if (_smallIcons.Images.ContainsKey(key))
                 img = _smallIcons.Images[key];
+            if (img == null && isImage && _smallIcons.Images.ContainsKey("image"))
+                img = _smallIcons.Images["image"];
             if ((img == null || img.Width <= 0 || img.Height <= 0) && _largeIcons.Images.ContainsKey(key))
                 img = _largeIcons.Images[key];
             if (img == null)

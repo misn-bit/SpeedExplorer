@@ -75,7 +75,7 @@ public partial class MainForm
         {
             var titleBar = new Panel
             {
-                Height = _owner.Scale(40),
+                Height = _owner.Scale(LogicalTitleBarHeight),
                 BackColor = _owner.TitleBarColor
             };
             titleBar.Padding = new Padding(_owner.Scale(1), 0, _owner.Scale(1), 0);
@@ -126,14 +126,6 @@ public partial class MainForm
             _owner._windowMinButton.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             _owner._windowMinButton.Click += (s, e) => _owner.WindowState = FormWindowState.Minimized;
 
-            void PositionWindowButtons()
-            {
-                if (_owner._windowButtonsPanel == null) return;
-                _owner._windowCloseButton.Location = new Point(_owner._windowButtonsPanel.Width - _owner.Scale(46), 0);
-                _owner._windowMaxButton.Location = new Point(_owner._windowButtonsPanel.Width - _owner.Scale(92), 0);
-                _owner._windowMinButton.Location = new Point(_owner._windowButtonsPanel.Width - _owner.Scale(138), 0);
-            }
-
             _owner._windowButtonsPanel.Resize += (s, e) => PositionWindowButtons();
             PositionWindowButtons();
             _owner._windowButtonsPanel.Controls.AddRange(new Control[] { _owner._windowMinButton, _owner._windowMaxButton, _owner._windowCloseButton });
@@ -143,6 +135,32 @@ public partial class MainForm
             _owner._tabsController.AttachTabStrip(_owner._tabStrip, titleBar, _owner._windowButtonsPanel);
 
             return titleBar;
+        }
+
+        public void UpdateLayoutForDpi()
+        {
+            if (_owner._titleBar == null || _owner._windowButtonsPanel == null)
+                return;
+
+            _owner._titleBar.Height = _owner.Scale(LogicalTitleBarHeight);
+            _owner._titleBar.Padding = _owner.Scale(new Padding(1, 0, 1, 0));
+            _owner._windowButtonsPanel.Width = _owner.Scale(138);
+
+            var buttonSize = new Size(_owner.Scale(46), _owner.Scale(34));
+            _owner._windowMinButton.Size = buttonSize;
+            _owner._windowMaxButton.Size = buttonSize;
+            _owner._windowCloseButton.Size = buttonSize;
+            PositionWindowButtons();
+        }
+
+        private void PositionWindowButtons()
+        {
+            if (_owner._windowButtonsPanel == null)
+                return;
+
+            _owner._windowCloseButton.Location = new Point(_owner._windowButtonsPanel.Width - _owner.Scale(46), 0);
+            _owner._windowMaxButton.Location = new Point(_owner._windowButtonsPanel.Width - _owner.Scale(92), 0);
+            _owner._windowMinButton.Location = new Point(_owner._windowButtonsPanel.Width - _owner.Scale(138), 0);
         }
 
         public Button CreateWindowButton(string text, string tooltip)

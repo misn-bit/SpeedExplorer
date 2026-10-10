@@ -10,8 +10,11 @@ public partial class ImageViewerForm
     {
         // Form setup
         Text = "Speed Explorer"; // Generic title for taskbar
-        var savedWidth = Math.Max(Scale(400), _settings.ImageViewerWidth);
-        var savedHeight = Math.Max(Scale(300), _settings.ImageViewerHeight);
+        var workArea = Screen.FromPoint(Cursor.Position).WorkingArea;
+        var savedWidth = Math.Min(Scale(Math.Max(400, _settings.ImageViewerWidth)), workArea.Width);
+        var savedHeight = Math.Min(Scale(Math.Max(300, _settings.ImageViewerHeight)), workArea.Height);
+        savedWidth = Math.Max(Scale(400), savedWidth);
+        savedHeight = Math.Max(Scale(300), savedHeight);
         Size = new Size(savedWidth, savedHeight);
         MinimumSize = new Size(Scale(400), Scale(300));
         StartPosition = FormStartPosition.CenterScreen;
@@ -89,25 +92,19 @@ public partial class ImageViewerForm
         _closeBtn.FlatAppearance.MouseOverBackColor = Color.FromArgb(232, 17, 35);
         _closeBtn.Click += (s, e) => Close();
 
-        var maxBtn = CreateWindowButton("[ ]", "Maximize");
-        maxBtn.Click += (s, e) => ToggleMaximize();
+        _maximizeBtn = CreateWindowButton("[ ]", "Maximize");
+        _maximizeBtn.Click += (s, e) => ToggleMaximize();
 
-        var minBtn = CreateWindowButton("_", "Minimize");
-        minBtn.Click += (s, e) => WindowState = FormWindowState.Minimized;
+        _minimizeBtn = CreateWindowButton("_", "Minimize");
+        _minimizeBtn.Click += (s, e) => WindowState = FormWindowState.Minimized;
 
         // Manual positioning to match MainForm exactly
-        _titleBar.Resize += (s, e) =>
-        {
-            _closeBtn.Location = new Point(_titleBar.Width - _closeBtn.Width, 0);
-            maxBtn.Location = new Point(_closeBtn.Left - maxBtn.Width, 0);
-            minBtn.Location = new Point(maxBtn.Left - minBtn.Width, 0);
-            _titleLabel.Width = Math.Max(Scale(80), minBtn.Left - Scale(12));
-        };
+        _titleBar.Resize += (s, e) => LayoutTitleBar();
 
         // Add buttons
         _titleBar.Controls.Add(_closeBtn);
-        _titleBar.Controls.Add(maxBtn);
-        _titleBar.Controls.Add(minBtn);
+        _titleBar.Controls.Add(_maximizeBtn);
+        _titleBar.Controls.Add(_minimizeBtn);
 
         // --- Picture Box ---
         _pictureBox = new PictureBox
@@ -117,6 +114,7 @@ public partial class ImageViewerForm
             SizeMode = PictureBoxSizeMode.Zoom
         };
         _pictureBox.Paint += PictureBox_Paint;
+        _pictureBox.SizeChanged += (s, e) => ApplyAutoFitIfEnabled();
         _pictureBox.MouseDown += PictureBox_MouseDown;
         _pictureBox.MouseMove += PictureBox_MouseMove;
         _pictureBox.MouseUp += PictureBox_MouseUp;
@@ -131,5 +129,17 @@ public partial class ImageViewerForm
             BackColor = BackColor_Dark
         };
 
+    }
+
+    private void LayoutTitleBar()
+    {
+        if (_titleBar == null || _titleLabel == null || _closeBtn == null ||
+            _maximizeBtn == null || _minimizeBtn == null)
+            return;
+
+        _closeBtn.Location = new Point(_titleBar.Width - _closeBtn.Width, 0);
+        _maximizeBtn.Location = new Point(_closeBtn.Left - _maximizeBtn.Width, 0);
+        _minimizeBtn.Location = new Point(_maximizeBtn.Left - _minimizeBtn.Width, 0);
+        _titleLabel.Width = Math.Max(Scale(80), _minimizeBtn.Left - Scale(12));
     }
 }

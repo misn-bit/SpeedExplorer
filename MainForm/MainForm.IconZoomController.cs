@@ -56,7 +56,7 @@ public partial class MainForm
                 notches = e.Delta > 0 ? 1 : -1;
 
             if (_baseSize == 0)
-                _baseSize = _owner.GetEffectiveIconSize();
+                _baseSize = _owner.GetLogicalIconSize();
 
             QueueZoomDelta(Math.Sign(notches), Math.Abs(notches));
         }
@@ -67,19 +67,23 @@ public partial class MainForm
                 return;
 
             if (_baseSize == 0)
-                _baseSize = _owner.GetEffectiveIconSize();
+                _baseSize = _owner.GetLogicalIconSize();
 
             QueueZoomDelta(direction, 1);
         }
 
         private void QueueZoomDelta(int direction, int count)
         {
+            int min = MinIconSize;
+            int max = MaxIconSize;
             int nextSteps = _steps;
 
             for (int i = 0; i < count; i++)
             {
                 int proposed = _baseSize + ((nextSteps + direction) * IconStep);
-                if (proposed < MinIconSize || proposed > MaxIconSize)
+                int current = Math.Clamp(_baseSize + (nextSteps * IconStep), min, max);
+                int bounded = Math.Clamp(proposed, min, max);
+                if (bounded == current)
                 {
                     // Ignore overscroll beyond bounds.
                     break;
@@ -87,12 +91,20 @@ public partial class MainForm
                 nextSteps += direction;
             }
 
+            // A rejected step at a limit must not create a delayed commit.
+            if (nextSteps == _steps)
+            {
+                if (_steps == 0)
+                    _baseSize = 0;
+                return;
+            }
+
             _steps = nextSteps;
 
             int target = _baseSize + (_steps * IconStep);
-            _pendingSize = Math.Clamp(target, MinIconSize, MaxIconSize);
+            _pendingSize = Math.Clamp(target, min, max);
 
-            ShowZoomPreview(_pendingSize);
+            ShowZoomPreview(_owner.GetEffectiveIconSizeForLogicalSize(_pendingSize));
 
             _applyTimer.Stop();
             _applyTimer.Start();
@@ -109,7 +121,7 @@ public partial class MainForm
             if (_previewOverlay != null && !_previewOverlay.IsDisposed)
                 return;
 
-            _previewOverlay = new ZoomSizePreviewOverlay { Visible = false };
+            _previewOverlay = new ZoomSizePreviewOverlay(_owner) { Visible = false };
         }
 
         private void ShowZoomPreview(int size)
@@ -127,7 +139,8 @@ public partial class MainForm
 
             _previewOverlay.PreviewSize = size;
 
-            int overlayWidth = Math.Max(_owner.Scale(150), _owner.Scale(size) + _owner.Scale(70));
+            // size is already in physical pixels; only the fixed padding needs scaling.
+            int overlayWidth = Math.Max(_owner.Scale(150), size + _owner.Scale(70));
             int overlayHeight = overlayWidth;
             int x = _owner._listView.Left + ((_owner._listView.Width - overlayWidth) / 2);
             int y = _owner._listView.Top + ((_owner._listView.Height - overlayHeight) / 2);
@@ -149,11 +162,13 @@ public partial class MainForm
         {
             try { HideZoomPreview(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
 
-            int target = _pendingSize > 0 ? _pendingSize : _owner.GetEffectiveIconSize();
+            bool hasZoomChange = _steps != 0;
+            int target = _pendingSize > 0 ? _pendingSize : _owner.GetLogicalIconSize();
 
-            _owner.SaveIconSizeForCurrentPath(target);
+            if (hasZoomChange)
+                _owner.SaveIconSizeForCurrentPath(target);
 
-            if (applyUi && _owner != null && !_owner.IsDisposed && !_owner.Disposing)
+            if (hasZoomChange && applyUi && !_owner.IsDisposed && !_owner.Disposing)
             {
                 _owner.ApplySettings();
                 if (_owner.IsTileView)
@@ -165,11 +180,24 @@ public partial class MainForm
             _pendingSize = 0;
         }
 
+        public void CommitPendingZoomForDpiChange()
+        {
+            // The pending value is logical, so committing is independent of
+            // whether WinForms has already updated DeviceDpi for this event.
+            _applyTimer.Stop();
+            CommitPendingZoom(applyUi: false);
+        }
+
         private sealed class ZoomSizePreviewOverlay : Control
         {
             private const int WM_NCHITTEST = 0x0084;
             private static readonly IntPtr HTTRANSPARENT = new IntPtr(-1);
+            private readonly MainForm _owner;
             private int _previewSize = MinIconSize;
+
+            // Preview sizes are physical pixels; clamp against DPI-scaled bounds.
+            private int ScaledMinIconSize => _owner.GetEffectiveIconSizeForLogicalSize(MinIconSize);
+            private int ScaledMaxIconSize => _owner.GetEffectiveIconSizeForLogicalSize(MaxIconSize);
 
             [Browsable(false)]
             [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
@@ -178,15 +206,16 @@ public partial class MainForm
                 get => _previewSize;
                 set
                 {
-                    int clamped = Math.Clamp(value, MinIconSize, MaxIconSize);
+                    int clamped = Math.Clamp(value, ScaledMinIconSize, ScaledMaxIconSize);
                     if (_previewSize == clamped) return;
                     _previewSize = clamped;
                     Invalidate();
                 }
             }
 
-            public ZoomSizePreviewOverlay()
+            public ZoomSizePreviewOverlay(MainForm owner)
             {
+                _owner = owner;
                 SetStyle(ControlStyles.AllPaintingInWmPaint |
                          ControlStyles.OptimizedDoubleBuffer |
                          ControlStyles.ResizeRedraw |
@@ -223,7 +252,8 @@ public partial class MainForm
                     e.Graphics.DrawPath(panelBorder, panelPath);
                 }
 
-                int mapped = 28 + (int)Math.Round((PreviewSize - MinIconSize) * (112.0 / (MaxIconSize - MinIconSize)));
+                int range = Math.Max(1, ScaledMaxIconSize - ScaledMinIconSize);
+                int mapped = 28 + (int)Math.Round((PreviewSize - ScaledMinIconSize) * (112.0 / range));
                 mapped = Math.Clamp(mapped, 28, Math.Min(full.Width - 40, full.Height - 70));
 
                 int docX = (full.Width - mapped) / 2;

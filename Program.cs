@@ -694,6 +694,10 @@ static class Program
                 preloaded.Opacity = 0;
                 ShowNext(preloaded);
                 preloaded.ApplyStoredWindowStateForDisplay();
+                // A tray form can sit hidden while display scaling changes.
+                // Refresh after showing/positioning it so DPI-dependent
+                // ImageLists and layout use the active monitor's current DPI.
+                preloaded.RefreshScaleForCurrentDpi();
                 preloaded.RevealPreloadedWindow();
                 return;
             }

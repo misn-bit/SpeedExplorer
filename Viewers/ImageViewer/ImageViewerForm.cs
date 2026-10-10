@@ -36,6 +36,20 @@ public partial class ImageViewerForm : Form
     private TrackBar _zoomSlider = null!;
     private Label _zoomLabel = null!;
     private Panel _aiPanel = null!;
+    private FlowLayoutPanel _aiActionRow = null!;
+    private Panel _aiLangRow = null!;
+    private Panel _aiSourceHintRow = null!;
+    private Panel _aiOcrHintRow = null!;
+    private Panel _aiContextHintRow = null!;
+    private FlowLayoutPanel _aiManualModeRow = null!;
+    private FlowLayoutPanel _aiReasoningRow = null!;
+    private FlowLayoutPanel _aiToolsRow = null!;
+    private FlowLayoutPanel _aiSavedToggleRow = null!;
+    private FlowLayoutPanel _aiSavedActionRow = null!;
+    private Label _targetLanguageLabel = null!;
+    private Label _sourceLanguageLabel = null!;
+    private Label _ocrHintLabel = null!;
+    private Label _contextHintLabel = null!;
     private RichTextBox _aiOutputBox = null!;
     private Label _aiStatusLabel = null!;
     private TextBox _targetLanguageBox = null!;
@@ -69,6 +83,8 @@ public partial class ImageViewerForm : Form
     private Button _cancelCurrentJobBtn = null!;
     private Button _openSavedOcrFileBtn = null!;
     private Button _closeBtn = null!;
+    private Button _maximizeBtn = null!;
+    private Button _minimizeBtn = null!;
     private ToolStripMenuItem _editOverlayBlockMenuItem = null!;
     private readonly LlmService _llmService = new();
     private CancellationTokenSource? _aiCts;
@@ -135,6 +151,7 @@ public partial class ImageViewerForm : Form
     private static readonly Color DefaultOverlayTextOutlineColor = Color.FromArgb(255, 0, 0, 0);
 
     private int Scale(int pixels) => (int)(pixels * (this.DeviceDpi / 96.0));
+    private int Unscale(int pixels) => (int)Math.Round(pixels * (96.0 / Math.Max(1, DeviceDpi)));
     private Padding Scale(Padding p) => new Padding(Scale(p.Left), Scale(p.Top), Scale(p.Right), Scale(p.Bottom));
     private int TitleBarHeight => Scale(32);
     private int ControlPanelHeight => Scale(38);

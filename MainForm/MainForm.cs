@@ -148,8 +148,36 @@ public partial class MainForm : Form, IFileOperationsHost, IShellActionsHost, IO
 
     private void TitleBarMouseMove(Control surface, MouseEventArgs e) => _windowChromeController.TitleBarMouseMove(surface, e);
 
-    private int Scale(int pixels) => (int)(pixels * (this.DeviceDpi / 96.0));
-    private int Unscale(int pixels) => (int)Math.Round(pixels * (96.0 / this.DeviceDpi));
+    // Icon sizes are persisted (app + per-folder settings) as logical
+    // (96-DPI) pixels and scaled to the active monitor's DPI at use time, so
+    // the same value renders proportionally on 1080p and 4K/high-scaling
+    // displays. The icon loader fetches icons at this physical size, so
+    // high-DPI displays get genuinely larger (non-stretched) sources.
+    private const int LogicalMinIconSize = 16;
+    private const int LogicalMaxIconSize = 192;
+    private const int MaxImageListIconSize = 256; // ImageList.ImageSize hard limit
+    private const int LogicalTitleBarHeight = 34;
+    private const int LogicalNavBarHeight = 37;
+    private const int LogicalNavBarVerticalPadding = 5;
+    private const int LogicalTabHeight = 33;
+
+    private int CurrentDpi
+    {
+        get
+        {
+            if (IsHandleCreated)
+            {
+                uint windowDpi = GetDpiForWindow(Handle);
+                if (windowDpi > 0)
+                    return (int)windowDpi;
+            }
+
+            return DeviceDpi > 0 ? DeviceDpi : 96;
+        }
+    }
+
+    private int Scale(int pixels) => (int)(pixels * (CurrentDpi / 96.0));
+    private int Unscale(int pixels) => (int)Math.Round(pixels * (96.0 / CurrentDpi));
     private static bool CanPersistFolderIconSizeForPath(string? path)
         => !string.IsNullOrWhiteSpace(path) &&
            !string.Equals(path, ThisPcPath, StringComparison.OrdinalIgnoreCase) &&
@@ -167,16 +195,25 @@ public partial class MainForm : Form, IFileOperationsHost, IShellActionsHost, IO
         return true;
     }
 
-    private int GetEffectiveIconSize(string? path = null)
+    private int GetLogicalIconSize(string? path = null)
     {
         if (TryGetFolderIconSizeOverride(path ?? State.CurrentPath, out var iconSize))
             return iconSize;
-        return Math.Clamp(AppSettings.Current.IconSize, 16, 192);
+        return Math.Clamp(AppSettings.Current.IconSize, LogicalMinIconSize, LogicalMaxIconSize);
     }
 
-    private void SaveIconSizeForCurrentPath(int iconSize)
+    private int GetEffectiveIconSize(string? path = null)
+        => GetEffectiveIconSizeForLogicalSize(GetLogicalIconSize(path));
+
+    private int GetEffectiveIconSizeForLogicalSize(int logicalIconSize)
+        => Math.Min(Scale(Math.Clamp(logicalIconSize, LogicalMinIconSize, LogicalMaxIconSize)), MaxImageListIconSize);
+
+    private void SaveIconSizeForCurrentPath(int logicalIconSize)
     {
-        int clamped = Math.Clamp(iconSize, 16, 192);
+        // Keep the user's logical zoom level intact across DPI changes. The
+        // effective ImageList size can be capped at 256 physical pixels, so
+        // converting that rendered size back to logical pixels loses data.
+        int clamped = Math.Clamp(logicalIconSize, LogicalMinIconSize, LogicalMaxIconSize);
         if (CanPersistFolderIconSizeForPath(State.CurrentPath))
         {
             _nav.FolderIconSizeOverrides[State.CurrentPath] = clamped;
@@ -419,6 +456,7 @@ public partial class MainForm : Form, IFileOperationsHost, IShellActionsHost, IO
 
     protected override void OnDpiChanged(DpiChangedEventArgs e)
     {
+        _iconZoomController.CommitPendingZoomForDpiChange();
         base.OnDpiChanged(e);
         UpdateScale();
         QueueMaximizedBoundsRefresh(forceFullscreenReapply: true);
@@ -659,6 +697,14 @@ public partial class MainForm : Form, IFileOperationsHost, IShellActionsHost, IO
         Opacity = 1;
     }
 
+    internal void RefreshScaleForCurrentDpi()
+    {
+        if (IsDisposed || Disposing)
+            return;
+
+        UpdateScale();
+    }
+
     internal bool IsPreloadOnly => _preloadOnly;
 
     internal void ApplyStoredWindowStateForDisplay()
@@ -727,6 +773,69 @@ public partial class MainForm : Form, IFileOperationsHost, IShellActionsHost, IO
 
     private ImageList CreateIconList(int size)
         => _startupIconController.CreateIconList(size);
+
+    /// Rebuilds both ImageLists at the current effective (DPI-scaled) icon size.
+    /// Previously loaded bitmaps are dropped because they were fetched for the
+    /// previous pixel size (stretching them would look blurry). Callers must
+    /// re-queue icon loads for visible items afterwards.
+    private void RebuildDefaultIconSets()
+    {
+        int iconSize = GetEffectiveIconSize();
+        int largeSize = Math.Min(iconSize * 2, MaxImageListIconSize);
+
+        _smallIcons.Images.Clear();
+        _largeIcons.Images.Clear();
+        _smallIcons.ImageSize = new Size(iconSize, iconSize);
+        _largeIcons.ImageSize = new Size(largeSize, largeSize);
+
+        // Default (internal) icons.
+        _smallIcons.Images.Add("folder", CreateFolderIcon(iconSize));
+        _smallIcons.Images.Add("file", CreateFileIcon(iconSize));
+        _smallIcons.Images.Add("image", CreateImageIcon(iconSize));
+        _smallIcons.Images.Add("drive", CreateDriveIcon(iconSize));
+        _smallIcons.Images.Add("usb", CreateUsbIcon(iconSize));
+        _smallIcons.Images.Add("computer", CreateComputerIcon(iconSize));
+
+        _largeIcons.Images.Add("folder", CreateFolderIcon(largeSize));
+        _largeIcons.Images.Add("file", CreateFileIcon(largeSize));
+        _largeIcons.Images.Add("image", CreateImageIcon(largeSize));
+        _largeIcons.Images.Add("drive", CreateDriveIcon(largeSize));
+        _largeIcons.Images.Add("usb", CreateUsbIcon(largeSize));
+        _largeIcons.Images.Add("computer", CreateComputerIcon(largeSize));
+
+        // Pre-load System Folder icons (Colored & Gray) to avoid async delay/pop-in.
+        // Use dummy path for generic folder icon.
+        string folderPath = "C:\\DummyFolder";
+        try
+        {
+            var smallSys = IconHelper.GetIconSized(folderPath, true, _smallIcons.ImageSize.Width, false, grayscale: false);
+            var largeSys = IconHelper.GetIconSized(folderPath, true, _largeIcons.ImageSize.Width, false, grayscale: false);
+            if (smallSys != null) _smallIcons.Images.Add("sys_folder", smallSys);
+            if (largeSys != null) _largeIcons.Images.Add("sys_folder", largeSys);
+
+            var smallGray = IconHelper.GetIconSized(folderPath, true, _smallIcons.ImageSize.Width, false, grayscale: true);
+            var largeGray = IconHelper.GetIconSized(folderPath, true, _largeIcons.ImageSize.Width, false, grayscale: true);
+            if (smallGray != null) _smallIcons.Images.Add("gray_folder", smallGray);
+            if (largeGray != null) _largeIcons.Images.Add("gray_folder", largeGray);
+        }
+        catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+
+        // Image thumbnails load asynchronously. Keep a correctly sized,
+        // settings-aware Windows image icon visible until each thumbnail
+        // arrives instead of briefly showing the internal gray fallback.
+        try
+        {
+            var smallSysImage = IconHelper.GetStockImageFileIconSized(_smallIcons.ImageSize.Width);
+            var largeSysImage = IconHelper.GetStockImageFileIconSized(_largeIcons.ImageSize.Width);
+            var smallGrayImage = IconHelper.GetStockImageFileIconSized(_smallIcons.ImageSize.Width, grayscale: true);
+            var largeGrayImage = IconHelper.GetStockImageFileIconSized(_largeIcons.ImageSize.Width, grayscale: true);
+            if (smallSysImage != null) _smallIcons.Images.Add("sys_image", smallSysImage);
+            if (largeSysImage != null) _largeIcons.Images.Add("sys_image", largeSysImage);
+            if (smallGrayImage != null) _smallIcons.Images.Add("gray_image", smallGrayImage);
+            if (largeGrayImage != null) _largeIcons.Images.Add("gray_image", largeGrayImage);
+        }
+        catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+    }
 
     private void ApplySettings(bool refreshCurrent = true)
         => _uiSettingsController.ApplySettings(refreshCurrent);

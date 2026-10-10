@@ -16,6 +16,7 @@ public static class IconHelper
     private const uint SHGFI_LARGEICON = 0x000000000;         // Actually 0
     private const uint SHGFI_TYPENAME = 0x000000400;
     private const uint SHGSI_ICON = 0x000000100;
+    private const uint SHGSI_SYSICONINDEX = 0x000004000;
     private const uint SHGSI_SMALLICON = 0x000000001;
     private const uint SHGSI_LARGEICON = 0x000000000;         // Actually 0
 
@@ -286,6 +287,8 @@ public static class IconHelper
         lock (IconApiLock)
         {
             IntPtr hIcon = IntPtr.Zero;
+            IntPtr jumboIcon = IntPtr.Zero;
+            IImageList? jumboImageList = null;
             try
             {
                 var info = new SHSTOCKICONINFO
@@ -293,16 +296,34 @@ public static class IconHelper
                     cbSize = (uint)Marshal.SizeOf<SHSTOCKICONINFO>()
                 };
 
-                uint flags = SHGSI_ICON | (size <= 16 ? SHGSI_SMALLICON : SHGSI_LARGEICON);
+                uint flags = SHGSI_ICON | SHGSI_SYSICONINDEX | (size <= 16 ? SHGSI_SMALLICON : SHGSI_LARGEICON);
                 int hr = SHGetStockIconInfo(SHSTOCKICONID.SIID_IMAGEFILES, flags, ref info);
                 if (hr != 0 || info.hIcon == IntPtr.Zero)
                     return null;
 
                 hIcon = info.hIcon;
+
+                // SHGetStockIconInfo's HICON is usually only the standard
+                // small/large size. Use the shell's jumbo image list for
+                // larger placeholders so zooming does not enlarge a 32px
+                // Windows icon into a visibly blurry bitmap.
+                if (size > 32 && info.iSysImageIndex >= 0 &&
+                    SHGetImageList(SHIL_JUMBO, IImageListGuid, out jumboImageList!) == 0 &&
+                    jumboImageList != null &&
+                    jumboImageList.GetIcon(info.iSysImageIndex, ILD_TRANSPARENT, ref jumboIcon) == 0 &&
+                    jumboIcon != IntPtr.Zero)
+                {
+                    using var jumbo = Icon.FromHandle(jumboIcon);
+                    using var jumboClone = (Icon)jumbo.Clone();
+                    var jumboBitmap = jumboClone.ToBitmap();
+                    var jumboSized = RenderBitmapToRequestedSize(jumboBitmap, size);
+                    return grayscale ? ToGrayscale(jumboSized) : jumboSized;
+                }
+
                 using var icon = Icon.FromHandle(hIcon);
                 using var cloned = (Icon)icon.Clone();
                 var baseBmp = cloned.ToBitmap();
-                var sized = size == baseBmp.Width ? baseBmp : RenderBitmapToRequestedSize(baseBmp, size);
+                var sized = size == baseBmp.Width ? baseBmp : RenderBitmapToRequestedSize(baseBmp, size, allowUpscale: true);
 
                 if (grayscale)
                     return ToGrayscale(sized);
@@ -317,6 +338,12 @@ public static class IconHelper
             {
                 if (hIcon != IntPtr.Zero)
                     DestroyIcon(hIcon);
+                if (jumboIcon != IntPtr.Zero)
+                    DestroyIcon(jumboIcon);
+                if (jumboImageList != null)
+                {
+                    try { Marshal.ReleaseComObject(jumboImageList); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+                }
             }
         }
     }
@@ -698,7 +725,7 @@ public static class IconHelper
         return result;
     }
 
-    private static Bitmap RenderBitmapToRequestedSize(Bitmap source, int size)
+    private static Bitmap RenderBitmapToRequestedSize(Bitmap source, int size, bool allowUpscale = false)
     {
         var result = new Bitmap(size, size, PixelFormat.Format32bppArgb);
         try
@@ -713,7 +740,7 @@ public static class IconHelper
                 srcRect = new Rectangle(0, 0, source.Width, source.Height);
 
             float scale = Math.Min((float)size / srcRect.Width, (float)size / srcRect.Height);
-            if (scale > 1f) scale = 1f; // keep small native icons crisp
+            if (!allowUpscale && scale > 1f) scale = 1f; // keep small native icons crisp
             int w = Math.Max(1, (int)Math.Round(srcRect.Width * scale));
             int h = Math.Max(1, (int)Math.Round(srcRect.Height * scale));
             int x = (size - w) / 2;

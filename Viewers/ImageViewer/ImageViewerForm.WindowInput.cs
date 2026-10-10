@@ -168,6 +168,7 @@ public partial class ImageViewerForm
         const int HTBOTTOMLEFT = 16;
         const int HTBOTTOMRIGHT = 17;
         const int WM_WINDOWPOSCHANGED = 0x0047;
+        const int WM_DISPLAYCHANGE = 0x007E;
 
         var previousWindowState = m.Msg == WM_WINDOWPOSCHANGED ? WindowState : FormWindowState.Normal;
 
@@ -211,6 +212,8 @@ public partial class ImageViewerForm
             return;
         }
         base.WndProc(ref m);
+        if (m.Msg == WM_DISPLAYCHANGE)
+            QueueDisplayMetricsRefresh();
         if (m.Msg == WM_WINDOWPOSCHANGED && WindowState != previousWindowState)
         {
             SaveWindowState();

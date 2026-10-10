@@ -5,6 +5,115 @@ namespace SpeedExplorer;
 
 public partial class ImageViewerForm
 {
+    private void UpdateLayoutForDpi()
+    {
+        if (_controlPanel == null || _titleBar == null)
+            return;
+
+        Padding = (WindowState == FormWindowState.Maximized || _isFullscreen)
+            ? Padding.Empty
+            : WindowFramePadding;
+        MinimumSize = new Size(Scale(400), Scale(300));
+
+        _titleBar.Height = TitleBarHeight;
+        _titleBar.Padding = Scale(new Padding(8, 0, 0, 0));
+        _titleLabel.Height = TitleBarHeight;
+        var titleButtonSize = new Size(Scale(46), TitleBarHeight);
+        _minimizeBtn.Size = titleButtonSize;
+        _maximizeBtn.Size = titleButtonSize;
+        _closeBtn.Size = titleButtonSize;
+        LayoutTitleBar();
+
+        _controlPanel.Height = ControlPanelHeight;
+        _controlPanel.Padding = Scale(new Padding(8, 4, 8, 4));
+        _prevBtn.Size = new Size(Scale(50), ControlButtonHeight);
+        _nextBtn.Size = new Size(Scale(50), ControlButtonHeight);
+        _zoomOutBtn.Size = new Size(Scale(35), ControlButtonHeight);
+        _zoomInBtn.Size = new Size(Scale(35), ControlButtonHeight);
+        _fitBtn.Size = new Size(Scale(50), ControlButtonHeight);
+        _actualBtn.Size = new Size(Scale(50), ControlButtonHeight);
+        _rotateBtn.Size = new Size(Scale(38), ControlButtonHeight);
+        _fullscreenBtn.Size = new Size(Scale(40), ControlButtonHeight);
+        _aiToggleBtn.Size = new Size(Scale(42), ControlButtonHeight);
+        _zoomLabel.Size = new Size(Scale(48), ControlButtonHeight);
+        _zoomSlider.Width = Scale(150);
+        UpdateAiPanelLayoutForDpi();
+        foreach (Control tag in _tagsPanel.Controls)
+        {
+            tag.Padding = Scale(new Padding(5, 1, 5, 1));
+            tag.Margin = Scale(new Padding(0, 1, 4, 0));
+        }
+
+        LayoutControls();
+        if (_autoFitEnabled)
+        {
+            if (_autoFitBySmallerDimension)
+                FitToWindowBySmallerDimension(allowUpscale: false);
+            else
+                FitToWindow(allowUpscale: false);
+        }
+        _pictureBox.Invalidate();
+    }
+
+    private void UpdateAiPanelLayoutForDpi()
+    {
+        if (_aiPanel == null || _aiPanel.IsDisposed)
+            return;
+
+        _aiPanel.Width = Scale(360);
+        _aiPanel.Padding = Scale(new Padding(8));
+
+        _aiActionRow.Height = Scale(30);
+        SetAiButtonSize(_ocrBtn, 58);
+        SetAiButtonSize(_translateBtn, 82);
+        SetAiButtonSize(_drawOcrBoxBtn, 102);
+        SetAiButtonSize(_clearManualOcrBoxesBtn, 82);
+        SetAiButtonSize(_tagBtn, 58);
+
+        _aiLangRow.Height = Scale(28);
+        _aiSourceHintRow.Height = Scale(28);
+        _aiOcrHintRow.Height = Scale(46);
+        _aiContextHintRow.Height = Scale(46);
+        LayoutAiHintRow(_aiLangRow, _targetLanguageLabel, _targetLanguageBox, 248);
+        LayoutAiHintRow(_aiSourceHintRow, _sourceLanguageLabel, _sourceLanguageHintBox, 248);
+        LayoutAiHintRow(_aiOcrHintRow, _ocrHintLabel, _ocrHintBox, 248, 38);
+        LayoutAiHintRow(_aiContextHintRow, _contextHintLabel, _translationContextHintBox, 248, 38);
+
+        _aiManualModeRow.Height = Scale(24);
+        _aiReasoningRow.Height = Scale(24);
+        _aiToolsRow.Height = Scale(28);
+        _aiSavedToggleRow.Height = Scale(24);
+        _aiSavedActionRow.Height = Scale(28);
+        _manualMaxEffortCheck.Margin = new Padding(0, Scale(3), 0, 0);
+        _ocrReasoningCheck.Margin = new Padding(0, Scale(3), Scale(12), 0);
+        _translationReasoningCheck.Margin = new Padding(0, Scale(3), 0, 0);
+        _overlayToggle.Margin = Scale(new Padding(0, 5, 8, 0));
+        _showSavedOcrCheck.Margin = new Padding(0, Scale(3), Scale(10), 0);
+        _showSavedTranslationCheck.Margin = new Padding(0, Scale(3), 0, 0);
+
+        SetAiButtonSize(_copyResultBtn, 56);
+        SetAiButtonSize(_abortBtn, 56);
+        SetAiButtonSize(_cancelCurrentJobBtn, 78);
+        SetAiButtonSize(_openSavedOcrFileBtn, 54);
+        SetAiButtonSize(_deleteSavedTranslationBtn, 118);
+        SetAiButtonSize(_clearOverlayBtn, 104);
+        _aiStatusLabel.Height = Scale(20);
+        _aiStatusLabel.Padding = new Padding(0, 0, 0, Scale(2));
+    }
+
+    private void LayoutAiHintRow(Panel row, Label label, TextBox input, int logicalWidth, int logicalHeight = 0)
+    {
+        label.Location = new Point(Scale(2), Scale(6));
+        input.Location = new Point(Scale(86), Scale(3));
+        input.Width = Scale(logicalWidth);
+        if (logicalHeight > 0)
+            input.Height = Scale(logicalHeight);
+        row.PerformLayout();
+    }
+
+    private void SetAiButtonSize(Button button, int logicalWidth)
+        => button.Size = new Size(Scale(logicalWidth), ControlButtonHeight);
+
     private void LayoutControls()
     {
         if (_controlPanel == null)

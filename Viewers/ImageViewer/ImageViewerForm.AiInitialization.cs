@@ -18,7 +18,7 @@ public partial class ImageViewerForm
             Visible = false
         };
 
-        var aiActionRow = new FlowLayoutPanel
+        _aiActionRow = new FlowLayoutPanel
         {
             Dock = DockStyle.Top,
             Height = Scale(30),
@@ -32,19 +32,19 @@ public partial class ImageViewerForm
         _drawOcrBoxBtn = CreateButton("Draw OCR Box", Scale(102));
         _clearManualOcrBoxesBtn = CreateButton("Clear Boxes", Scale(82));
         _tagBtn = CreateButton("Tag", Scale(58));
-        aiActionRow.Controls.Add(_ocrBtn);
-        aiActionRow.Controls.Add(_translateBtn);
-        aiActionRow.Controls.Add(_drawOcrBoxBtn);
-        aiActionRow.Controls.Add(_clearManualOcrBoxesBtn);
-        aiActionRow.Controls.Add(_tagBtn);
+        _aiActionRow.Controls.Add(_ocrBtn);
+        _aiActionRow.Controls.Add(_translateBtn);
+        _aiActionRow.Controls.Add(_drawOcrBoxBtn);
+        _aiActionRow.Controls.Add(_clearManualOcrBoxesBtn);
+        _aiActionRow.Controls.Add(_tagBtn);
 
-        var langRow = new Panel
+        _aiLangRow = new Panel
         {
             Dock = DockStyle.Top,
             Height = Scale(28),
             BackColor = Color.Transparent
         };
-        var langLabel = new Label
+        _targetLanguageLabel = new Label
         {
             AutoSize = true,
             Text = "Translate to:",
@@ -64,16 +64,16 @@ public partial class ImageViewerForm
             Location = new Point(Scale(86), Scale(3)),
             Width = Scale(248)
         };
-        langRow.Controls.Add(langLabel);
-        langRow.Controls.Add(_targetLanguageBox);
+        _aiLangRow.Controls.Add(_targetLanguageLabel);
+        _aiLangRow.Controls.Add(_targetLanguageBox);
 
-        var sourceHintRow = new Panel
+        _aiSourceHintRow = new Panel
         {
             Dock = DockStyle.Top,
             Height = Scale(28),
             BackColor = Color.Transparent
         };
-        var sourceHintLabel = new Label
+        _sourceLanguageLabel = new Label
         {
             AutoSize = true,
             Text = "Source hint:",
@@ -91,16 +91,16 @@ public partial class ImageViewerForm
             Location = new Point(Scale(86), Scale(3)),
             Width = Scale(248)
         };
-        sourceHintRow.Controls.Add(sourceHintLabel);
-        sourceHintRow.Controls.Add(_sourceLanguageHintBox);
+        _aiSourceHintRow.Controls.Add(_sourceLanguageLabel);
+        _aiSourceHintRow.Controls.Add(_sourceLanguageHintBox);
 
-        var ocrHintRow = new Panel
+        _aiOcrHintRow = new Panel
         {
             Dock = DockStyle.Top,
             Height = Scale(46),
             BackColor = Color.Transparent
         };
-        var ocrHintLabel = new Label
+        _ocrHintLabel = new Label
         {
             AutoSize = true,
             Text = "OCR hint:",
@@ -121,16 +121,16 @@ public partial class ImageViewerForm
             Multiline = true,
             ScrollBars = ScrollBars.Vertical
         };
-        ocrHintRow.Controls.Add(ocrHintLabel);
-        ocrHintRow.Controls.Add(_ocrHintBox);
+        _aiOcrHintRow.Controls.Add(_ocrHintLabel);
+        _aiOcrHintRow.Controls.Add(_ocrHintBox);
 
-        var contextHintRow = new Panel
+        _aiContextHintRow = new Panel
         {
             Dock = DockStyle.Top,
             Height = Scale(46),
             BackColor = Color.Transparent
         };
-        var contextHintLabel = new Label
+        _contextHintLabel = new Label
         {
             AutoSize = true,
             Text = "Context:",
@@ -151,10 +151,10 @@ public partial class ImageViewerForm
             Multiline = true,
             ScrollBars = ScrollBars.Vertical
         };
-        contextHintRow.Controls.Add(contextHintLabel);
-        contextHintRow.Controls.Add(_translationContextHintBox);
+        _aiContextHintRow.Controls.Add(_contextHintLabel);
+        _aiContextHintRow.Controls.Add(_translationContextHintBox);
 
-        var manualModeRow = new FlowLayoutPanel
+        _aiManualModeRow = new FlowLayoutPanel
         {
             Dock = DockStyle.Top,
             Height = Scale(24),
@@ -174,9 +174,9 @@ public partial class ImageViewerForm
             BackColor = Color.Transparent,
             Margin = new Padding(0, Scale(3), 0, 0)
         };
-        manualModeRow.Controls.Add(_manualMaxEffortCheck);
+        _aiManualModeRow.Controls.Add(_manualMaxEffortCheck);
 
-        var reasoningRow = new FlowLayoutPanel
+        _aiReasoningRow = new FlowLayoutPanel
         {
             Dock = DockStyle.Top,
             Height = Scale(24),
@@ -206,10 +206,10 @@ public partial class ImageViewerForm
             BackColor = Color.Transparent,
             Margin = new Padding(0, Scale(3), 0, 0)
         };
-        reasoningRow.Controls.Add(_ocrReasoningCheck);
-        reasoningRow.Controls.Add(_translationReasoningCheck);
+        _aiReasoningRow.Controls.Add(_ocrReasoningCheck);
+        _aiReasoningRow.Controls.Add(_translationReasoningCheck);
 
-        var aiToolsRow = new FlowLayoutPanel
+        _aiToolsRow = new FlowLayoutPanel
         {
             Dock = DockStyle.Top,
             Height = Scale(28),
@@ -238,12 +238,12 @@ public partial class ImageViewerForm
         _cancelCurrentJobBtn.Visible = false;
         _cancelCurrentJobBtn.Click += (s, e) => CancelAiJobForCurrentImage();
 
-        aiToolsRow.Controls.Add(_overlayToggle);
-        aiToolsRow.Controls.Add(_copyResultBtn);
-        aiToolsRow.Controls.Add(_cancelCurrentJobBtn);
-        aiToolsRow.Controls.Add(_abortBtn);
+        _aiToolsRow.Controls.Add(_overlayToggle);
+        _aiToolsRow.Controls.Add(_copyResultBtn);
+        _aiToolsRow.Controls.Add(_cancelCurrentJobBtn);
+        _aiToolsRow.Controls.Add(_abortBtn);
 
-        var savedToggleRow = new FlowLayoutPanel
+        _aiSavedToggleRow = new FlowLayoutPanel
         {
             Dock = DockStyle.Bottom,
             Height = Scale(24),
@@ -274,10 +274,10 @@ public partial class ImageViewerForm
             Margin = new Padding(0, Scale(3), 0, 0)
         };
         _showSavedTranslationPreferred = _showSavedTranslationCheck.Checked;
-        savedToggleRow.Controls.Add(_showSavedOcrCheck);
-        savedToggleRow.Controls.Add(_showSavedTranslationCheck);
+        _aiSavedToggleRow.Controls.Add(_showSavedOcrCheck);
+        _aiSavedToggleRow.Controls.Add(_showSavedTranslationCheck);
 
-        var savedActionRow = new FlowLayoutPanel
+        _aiSavedActionRow = new FlowLayoutPanel
         {
             Dock = DockStyle.Bottom,
             Height = Scale(28),
@@ -290,9 +290,9 @@ public partial class ImageViewerForm
         _openSavedOcrFileBtn = CreateButton("Show", Scale(54));
         _deleteSavedTranslationBtn = CreateButton("Delete Translation", Scale(118));
         _clearOverlayBtn = CreateButton("Delete OCR", Scale(104));
-        savedActionRow.Controls.Add(_openSavedOcrFileBtn);
-        savedActionRow.Controls.Add(_deleteSavedTranslationBtn);
-        savedActionRow.Controls.Add(_clearOverlayBtn);
+        _aiSavedActionRow.Controls.Add(_openSavedOcrFileBtn);
+        _aiSavedActionRow.Controls.Add(_deleteSavedTranslationBtn);
+        _aiSavedActionRow.Controls.Add(_clearOverlayBtn);
 
         _aiStatusLabel = new Label
         {
@@ -319,17 +319,17 @@ public partial class ImageViewerForm
         };
 
         _aiPanel.Controls.Add(_aiOutputBox);
-        _aiPanel.Controls.Add(savedActionRow);
-        _aiPanel.Controls.Add(savedToggleRow);
+        _aiPanel.Controls.Add(_aiSavedActionRow);
+        _aiPanel.Controls.Add(_aiSavedToggleRow);
         _aiPanel.Controls.Add(_aiStatusLabel);
-        _aiPanel.Controls.Add(aiToolsRow);
-        _aiPanel.Controls.Add(reasoningRow);
-        _aiPanel.Controls.Add(manualModeRow);
-        _aiPanel.Controls.Add(contextHintRow);
-        _aiPanel.Controls.Add(ocrHintRow);
-        _aiPanel.Controls.Add(sourceHintRow);
-        _aiPanel.Controls.Add(langRow);
-        _aiPanel.Controls.Add(aiActionRow);
+        _aiPanel.Controls.Add(_aiToolsRow);
+        _aiPanel.Controls.Add(_aiReasoningRow);
+        _aiPanel.Controls.Add(_aiManualModeRow);
+        _aiPanel.Controls.Add(_aiContextHintRow);
+        _aiPanel.Controls.Add(_aiOcrHintRow);
+        _aiPanel.Controls.Add(_aiSourceHintRow);
+        _aiPanel.Controls.Add(_aiLangRow);
+        _aiPanel.Controls.Add(_aiActionRow);
         _aiPanel.Visible = _settings.ImageViewerAiPanelVisible;
 
         _ocrBtn.Click += async (s, e) => await RunViewerOcrAsync(false);

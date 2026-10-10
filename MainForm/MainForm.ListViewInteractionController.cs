@@ -420,7 +420,24 @@ public partial class MainForm
                                 }
                                 else
                                 {
-                                    imageKey = item.IsDirectory ? "folder" : (isImage ? "image" : "file");
+                                    if (item.IsDirectory)
+                                    {
+                                        imageKey = "folder";
+                                    }
+                                    else if (isImage)
+                                    {
+                                        // Thumbnails are asynchronous. Prefer the
+                                        // Windows image-file icon in the selected
+                                        // color mode while the thumbnail loads.
+                                        string fallbackImageKey = colored ? "sys_image" : "gray_image";
+                                        imageKey = _owner._smallIcons.Images.ContainsKey(fallbackImageKey)
+                                            ? fallbackImageKey
+                                            : "image";
+                                    }
+                                    else
+                                    {
+                                        imageKey = "file";
+                                    }
                                     pendingResolvedKey = genericKey;
                                 }
                                 pendingUniqueKey = uniqueKey;
@@ -621,6 +638,10 @@ public partial class MainForm
             ClearRowCache();
             _viewportQueuePending = true;
         }
+
+        // Re-queues icon loads for the currently visible items after an
+        // ImageList rebuild. Rows are lazily recreated and bind to new loads.
+        public void RequeueVisibleIcons() => QueueIconsForVisibleRange(prioritize: true);
 
         private void ClearRowCache()
         {

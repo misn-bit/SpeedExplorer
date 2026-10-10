@@ -10,6 +10,7 @@ public partial class MainForm
     private sealed class LayoutController
     {
         private readonly MainForm _owner;
+        private Font? _statusBarDpiFont;
         private BrowserState State => _owner.State;
 
         public LayoutController(MainForm owner)
@@ -41,7 +42,7 @@ public partial class MainForm
             var btn = new Button
             {
                 Text = text,
-                Size = new Size(_owner.Scale(36), _owner.Scale(31)),
+                Size = new Size(_owner.Scale(36), _owner.Scale(27)),
                 FlatStyle = FlatStyle.Flat,
                 BackColor = Color.Transparent,
                 ForeColor = _owner.ForeColor_Dark,
@@ -61,6 +62,7 @@ public partial class MainForm
         public void ApplyNavButtonTextOffset(Button btn, int offsetY)
         {
             string text = btn.Text;
+            int logicalOffsetY = _owner.Unscale(offsetY);
             btn.Text = "";
             btn.Tag = text;
             btn.Paint += (s, e) =>
@@ -69,11 +71,55 @@ public partial class MainForm
                 if (b.Tag is not string t)
                     return;
                 var rect = b.ClientRectangle;
-                rect.Offset(0, offsetY);
+                rect.Offset(0, _owner.Scale(logicalOffsetY));
                 var color = b.Enabled ? b.ForeColor : SystemColors.GrayText;
                 TextRenderer.DrawText(e.Graphics, t, b.Font, rect, color,
                     TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
             };
+        }
+
+        public void UpdateNavLayoutForDpi()
+        {
+            if (_owner._navPanel == null || _owner._navPanel.IsDisposed)
+                return;
+
+            _owner._navPanel.Height = _owner.Scale(LogicalNavBarHeight);
+            _owner._navPanel.Padding = _owner.Scale(new Padding(10, LogicalNavBarVerticalPadding, 10, LogicalNavBarVerticalPadding));
+            _owner._navButtonsPanel.Width = _owner.Scale(200);
+            _owner._navButtonsPanel.Height = _owner.Scale(LogicalNavBarHeight);
+
+            var buttonSize = new Size(_owner.Scale(36), _owner.Scale(27));
+            var buttonMargin = _owner.Scale(new Padding(2, 0, 2, 0));
+            foreach (var button in new[]
+            {
+                _owner._backBtn, _owner._fwdBtn, _owner._upBtn,
+                _owner._refreshBtn, _owner._settingsBtn
+            })
+            {
+                if (button == null || button.IsDisposed)
+                    continue;
+                button.Size = buttonSize;
+                button.Margin = buttonMargin;
+            }
+
+            if (_owner._searchControl != null && !_owner._searchControl.IsDisposed)
+                _owner._searchControl.Width = _owner.Scale(250);
+            if (_owner._searchTagToggleBtn != null && !_owner._searchTagToggleBtn.IsDisposed)
+            {
+                _owner._searchTagToggleBtn.Width = _owner.Scale(26);
+                _owner._searchTagToggleBtn.Margin = _owner.Scale(new Padding(6, 8, 0, 0));
+            }
+            if (_owner._searchClearBtn != null && !_owner._searchClearBtn.IsDisposed)
+                _owner._searchClearBtn.Width = _owner.Scale(24);
+
+            foreach (Control child in _owner._navPanel.Controls)
+            {
+                if (child != _owner._searchControl && child.Dock == DockStyle.Right)
+                    child.Width = _owner.Scale(10);
+            }
+
+            _owner._addressBarController.UpdateLayoutForDpi();
+            _owner._navPanel.PerformLayout();
         }
 
         public Panel CreateSearchControl()
@@ -214,17 +260,24 @@ public partial class MainForm
 
         public StatusStrip CreateStatusBar()
         {
+            _statusBarDpiFont = CreateStatusBarDpiFont();
             var status = new StatusStrip
             {
                 BackColor = _owner.BackColor_Dark,
                 ForeColor = _owner.ForeColor_Dark,
-                SizingGrip = true
+                Font = _statusBarDpiFont,
+                SizingGrip = true,
+                AutoSize = false,
+                Height = _owner.Scale(24),
+                Padding = _owner.Scale(new Padding(1, 0, 1, 0))
             };
 
             _owner._pathLabel = new ToolStripStatusLabel("")
             {
                 Spring = true,
-                TextAlign = ContentAlignment.MiddleLeft
+                TextAlign = ContentAlignment.MiddleLeft,
+                Font = _statusBarDpiFont,
+                Margin = _owner.Scale(new Padding(0, 1, 0, 2))
             };
 
             _owner._statusLabel = new ToolStripStatusLabel(Localization.T("status_loading"))
@@ -232,7 +285,9 @@ public partial class MainForm
                 AutoSize = true,
                 TextAlign = ContentAlignment.MiddleRight,
                 BorderSides = ToolStripStatusLabelBorderSides.Left,
-                BorderStyle = Border3DStyle.Etched
+                BorderStyle = Border3DStyle.Etched,
+                Font = _statusBarDpiFont,
+                Margin = _owner.Scale(new Padding(0, 1, 0, 2))
             };
 
             _owner._searchSpinnerLabel = new ToolStripStatusLabel("")
@@ -240,17 +295,19 @@ public partial class MainForm
                 AutoSize = false,
                 Width = _owner.Scale(20),
                 TextAlign = ContentAlignment.MiddleCenter,
+                Font = _statusBarDpiFont,
                 Margin = new Padding(0)
             };
 
             _owner._viewToggleLabel = new ToolStripStatusLabel(Localization.T("view_tiles"))
             {
                 AutoSize = true,
+                Font = _statusBarDpiFont,
                 IsLink = false
             };
             _owner._viewToggleLabel.Click += (s, e) => _owner.ToggleTileView();
             _owner._viewToggleLabel.ForeColor = _owner.MutedForeColor;
-            _owner._viewToggleLabel.Margin = new Padding(10, 0, 10, 0);
+            _owner._viewToggleLabel.Margin = _owner.Scale(new Padding(10, 0, 10, 0));
 
             status.Items.Add(_owner._pathLabel);
             status.Items.Add(_owner._statusLabel);
@@ -260,6 +317,38 @@ public partial class MainForm
             return status;
         }
 
+        public void UpdateStatusBarForDpi()
+        {
+            var status = _owner._statusBar;
+            if (status == null || status.IsDisposed)
+                return;
+
+            var newFont = CreateStatusBarDpiFont();
+            var oldFont = _statusBarDpiFont;
+            _statusBarDpiFont = newFont;
+            status.Font = newFont;
+            foreach (ToolStripItem item in status.Items)
+                item.Font = newFont;
+
+            status.Height = _owner.Scale(24);
+            status.Padding = _owner.Scale(new Padding(1, 0, 1, 0));
+            _owner._pathLabel.Margin = _owner.Scale(new Padding(0, 1, 0, 2));
+            _owner._statusLabel.Margin = _owner.Scale(new Padding(0, 1, 0, 2));
+            _owner._searchSpinnerLabel.Width = _owner.Scale(20);
+            _owner._viewToggleLabel.Margin = _owner.Scale(new Padding(10, 0, 10, 0));
+            status.PerformLayout();
+            status.Invalidate();
+            oldFont?.Dispose();
+        }
+
+        private Font CreateStatusBarDpiFont()
+        {
+            // ToolStripItems keep their own cached font handles across monitor
+            // changes. Use a pixel font sized for the current window DPI so the
+            // status text follows the strip's manually refreshed dimensions.
+            return new Font("Segoe UI", _owner.Scale(12), FontStyle.Regular, GraphicsUnit.Pixel);
+        }
+
         private void BuildMainLayout()
         {
             _owner._titleBar.Dock = DockStyle.Top;
@@ -267,9 +356,9 @@ public partial class MainForm
             _owner._navPanel = new Panel
             {
                 Dock = DockStyle.Top,
-                Height = _owner.Scale(47),
+                Height = _owner.Scale(LogicalNavBarHeight),
                 BackColor = _owner.BackColor_Dark,
-                Padding = _owner.Scale(new Padding(10, 5, 10, 5))
+                Padding = _owner.Scale(new Padding(10, LogicalNavBarVerticalPadding, 10, LogicalNavBarVerticalPadding))
             };
 
             _owner._addressBar.Dock = DockStyle.Fill;
@@ -282,7 +371,7 @@ public partial class MainForm
             };
 
             _owner._backBtn = CreateNavButton("<", Localization.T("tooltip_back"));
-            ApplyNavButtonTextOffset(_owner._backBtn, -_owner.Scale(4));
+            ApplyNavButtonTextOffset(_owner._backBtn, -_owner.Scale(2));
             _owner._backBtn.Click += (s, e) => _owner.GoBack();
             _owner._backBtn.MouseUp += (s, e) =>
             {
@@ -294,7 +383,7 @@ public partial class MainForm
             };
 
             _owner._fwdBtn = CreateNavButton(">", Localization.T("tooltip_forward"));
-            ApplyNavButtonTextOffset(_owner._fwdBtn, -_owner.Scale(4));
+            ApplyNavButtonTextOffset(_owner._fwdBtn, -_owner.Scale(2));
             _owner._fwdBtn.Click += (s, e) => _owner.GoForward();
             _owner._fwdBtn.MouseUp += (s, e) =>
             {
@@ -306,7 +395,7 @@ public partial class MainForm
             };
 
             _owner._upBtn = CreateNavButton("^", Localization.T("tooltip_up"));
-            ApplyNavButtonTextOffset(_owner._upBtn, -_owner.Scale(1));
+            ApplyNavButtonTextOffset(_owner._upBtn, _owner.Scale(1));
             _owner._upBtn.Click += (s, e) => _owner.GoUp();
             _owner._upBtn.MouseUp += (s, e) =>
             {
@@ -316,11 +405,11 @@ public partial class MainForm
             };
 
             _owner._refreshBtn = CreateNavButton("R", Localization.T("tooltip_refresh"));
-            ApplyNavButtonTextOffset(_owner._refreshBtn, -_owner.Scale(4));
+            ApplyNavButtonTextOffset(_owner._refreshBtn, -_owner.Scale(2));
             _owner._refreshBtn.Click += (s, e) => _ = _owner.RefreshCurrentAsync();
 
             _owner._settingsBtn = CreateNavButton("⚙", Localization.T("tooltip_settings"));
-            ApplyNavButtonTextOffset(_owner._settingsBtn, -_owner.Scale(3));
+            ApplyNavButtonTextOffset(_owner._settingsBtn, -_owner.Scale(1));
             _owner._settingsBtn.Click += (s, e) => _owner.OpenSettings();
 
             var navFlow = new FlowLayoutPanel
@@ -586,6 +675,12 @@ public partial class MainForm
                 try { _owner._headerTailController.Dispose(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                 try { _owner._iconLoadService?.Dispose(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
                 try { _owner._shellNav.Dispose(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
+            };
+
+            _owner.FormClosed += (s, e) =>
+            {
+                _statusBarDpiFont?.Dispose();
+                _statusBarDpiFont = null;
             };
         }
 
