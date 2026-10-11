@@ -396,6 +396,12 @@ public class SettingsForm : Form
         panel.Controls.Add(CreateLabel("GPT-5.5", Point.Empty));
         panel.Controls.Add(CreateLabel("GPT-5.6 Luna, Terra", Point.Empty));
         panel.Controls.Add(CreateLabel("GPT-6 Luna", Point.Empty));
+
+        panel.Controls.Add(new Panel { Height = Scale(14), Width = Scale(1), BackColor = tab.BackColor });
+
+        panel.Controls.Add(CreateLabel(Localization.T("honorable_mention"), Point.Empty));
+        panel.Controls.Add(CreateLabel(Localization.T("ran_locally"), Point.Empty));
+
         panel.Controls.Add(new Panel { Height = Scale(14), Width = Scale(1), BackColor = tab.BackColor });
 
         panel.Controls.Add(CreateLabel(Localization.T("directed_by"), Point.Empty));
