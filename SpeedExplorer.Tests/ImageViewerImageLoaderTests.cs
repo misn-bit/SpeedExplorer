@@ -19,7 +19,7 @@ public sealed class ImageViewerImageLoaderTests
                 source.Save(path, ImageFormat.Png);
             }
 
-            result = ImageViewerImageLoader.Load(path);
+            result = ImageViewerImageLoader.Load(path, CancellationToken.None);
 
             Assert.False(result.IsAnimated);
             Assert.NotNull(result.Bitmap);

@@ -171,16 +171,19 @@ internal static class ImageSharpViewerService
     {
         int delayMs = 0;
 
-        if (metadata.TryGetGifMetadata(out GifFrameMetadata? gif))
+        if (metadata.DecodedImageFormat is GifFormat)
         {
+            GifFrameMetadata gif = metadata.GetFormatMetadata<GifMetadata, GifFrameMetadata>(GifFormat.Instance);
             delayMs = gif.FrameDelay * 10;
         }
-        else if (metadata.TryGetWebpFrameMetadata(out WebpFrameMetadata? webp))
+        else if (metadata.DecodedImageFormat is WebpFormat)
         {
+            WebpFrameMetadata webp = metadata.GetFormatMetadata<WebpMetadata, WebpFrameMetadata>(WebpFormat.Instance);
             delayMs = webp.FrameDelay > int.MaxValue ? int.MaxValue : (int)webp.FrameDelay;
         }
-        else if (metadata.TryGetPngMetadata(out PngFrameMetadata? png))
+        else if (metadata.DecodedImageFormat is PngFormat)
         {
+            PngFrameMetadata png = metadata.GetFormatMetadata<PngMetadata, PngFrameMetadata>(PngFormat.Instance);
             double seconds = png.FrameDelay.ToDouble();
             if (!double.IsNaN(seconds) && !double.IsInfinity(seconds))
             {
