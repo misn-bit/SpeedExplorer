@@ -156,10 +156,10 @@ public partial class MainForm : Form, IFileOperationsHost, IShellActionsHost, IO
     private const int LogicalMinIconSize = 16;
     private const int LogicalMaxIconSize = 192;
     private const int MaxImageListIconSize = 256; // ImageList.ImageSize hard limit
-    private const int LogicalTitleBarHeight = 34;
-    private const int LogicalNavBarHeight = 37;
-    private const int LogicalNavBarVerticalPadding = 5;
-    private const int LogicalTabHeight = 33;
+    private const int LogicalTitleBarHeight = 30;
+    private const int LogicalNavBarHeight = 33;
+    private const int LogicalNavBarVerticalPadding = 3;
+    private const int LogicalTabHeight = 29;
 
     private int CurrentDpi
     {

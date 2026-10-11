@@ -1275,7 +1275,7 @@ public partial class MainForm
                     ForeColor = _owner.ForeColor_Dark,
                     AutoEllipsis = true,
                     Font = new Font("Segoe UI Semibold", 10),
-                    Location = new Point(_owner.Scale(10), _owner.Scale(5)),
+                    Location = new Point(_owner.Scale(10), _owner.Scale(3)),
                     Size = new Size(Math.Max(_owner.Scale(40), tabPanel.Width - _owner.Scale(40)), _owner.Scale(20)),
                     Cursor = Cursors.Hand
                 };
@@ -1289,7 +1289,7 @@ public partial class MainForm
                     TextAlign = ContentAlignment.MiddleCenter,
                     Font = new Font("Segoe UI Symbol", 11, FontStyle.Bold),
                     Size = new Size(_owner.Scale(20), _owner.Scale(20)),
-                    Location = new Point(tabPanel.Width - _owner.Scale(25), _owner.Scale(5)),
+                    Location = new Point(tabPanel.Width - _owner.Scale(25), _owner.Scale(3)),
                     Cursor = Cursors.Hand
                 };
 
@@ -1420,13 +1420,13 @@ public partial class MainForm
                 {
                     if (c is Label lbl && (lbl.Tag as string) == "title")
                     {
-                        lbl.Location = new Point(_owner.Scale(10), _owner.Scale(5));
+                        lbl.Location = new Point(_owner.Scale(10), _owner.Scale(3));
                         lbl.Size = new Size(Math.Max(_owner.Scale(40), panel.Width - _owner.Scale(40)), _owner.Scale(20));
                     }
                     else if (c is Label close && close.Text == "×")
                     {
                         close.Size = new Size(_owner.Scale(20), _owner.Scale(20));
-                        close.Location = new Point(panel.Width - _owner.Scale(25), _owner.Scale(5));
+                        close.Location = new Point(panel.Width - _owner.Scale(25), _owner.Scale(3));
                     }
                 }
             }

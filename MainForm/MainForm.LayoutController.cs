@@ -284,7 +284,7 @@ public partial class MainForm
                 Font = _statusBarDpiFont,
                 SizingGrip = true,
                 AutoSize = false,
-                Height = _owner.Scale(24),
+                Height = _owner.Scale(20),
                 Padding = _owner.Scale(new Padding(1, 0, 1, 0))
             };
 
@@ -346,7 +346,7 @@ public partial class MainForm
             foreach (ToolStripItem item in status.Items)
                 item.Font = newFont;
 
-            status.Height = _owner.Scale(24);
+            status.Height = _owner.Scale(20);
             status.Padding = _owner.Scale(new Padding(1, 0, 1, 0));
             _owner._pathLabel.Margin = _owner.Scale(new Padding(0, 1, 0, 2));
             _owner._statusLabel.Margin = _owner.Scale(new Padding(0, 1, 0, 2));

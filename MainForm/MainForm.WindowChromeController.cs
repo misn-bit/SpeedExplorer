@@ -146,7 +146,7 @@ public partial class MainForm
             _owner._titleBar.Padding = _owner.Scale(new Padding(1, 0, 1, 0));
             _owner._windowButtonsPanel.Width = _owner.Scale(138);
 
-            var buttonSize = new Size(_owner.Scale(46), _owner.Scale(34));
+            var buttonSize = new Size(_owner.Scale(46), _owner.Scale(LogicalTitleBarHeight));
             _owner._windowMinButton.Size = buttonSize;
             _owner._windowMaxButton.Size = buttonSize;
             _owner._windowCloseButton.Size = buttonSize;
@@ -168,7 +168,7 @@ public partial class MainForm
             var btn = new Button
             {
                 Text = text,
-                Size = new Size(_owner.Scale(46), _owner.Scale(34)),
+                Size = new Size(_owner.Scale(46), _owner.Scale(LogicalTitleBarHeight)),
                 FlatStyle = FlatStyle.Flat,
                 BackColor = Color.Transparent,
                 ForeColor = _owner.ForeColor_Dark,
