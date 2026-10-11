@@ -73,7 +73,7 @@ public partial class ImageViewerForm
 
         _zoomLabel = new Label { Text = "100%", AutoSize = false, Size = new Size(Scale(48), ControlButtonHeight), ForeColor = ForeColor_Dark, Font = new Font("Segoe UI", 8), TextAlign = ContentAlignment.MiddleCenter };
 
-        _zoomSlider = new TrackBar { Minimum = 10, Maximum = 500, Value = 100, Width = Scale(150), TickStyle = TickStyle.None, AutoSize = true, TickFrequency = 50, BackColor = ControlPanelColor };
+        _zoomSlider = new TrackBar { Minimum = 1, Maximum = 1000, Value = 100, Width = Scale(150), TickStyle = TickStyle.None, AutoSize = true, TickFrequency = 50, BackColor = ControlPanelColor };
         _zoomSlider.ValueChanged += (s, e) =>
         {
             if (_suppressZoomSliderEvent)

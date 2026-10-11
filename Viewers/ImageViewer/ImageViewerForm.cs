@@ -142,9 +142,9 @@ public partial class ImageViewerForm : Form
     private const string OcrCacheJsonSeparator = "###__OCR_CACHE_JSON__###";
     
     private static readonly Color BackColor_Dark = Color.FromArgb(20, 20, 20);
-    private static readonly Color ControlPanelColor = Color.FromArgb(40, 40, 40);
+    private static readonly Color ControlPanelColor = Color.FromArgb(25, 25, 25);
     private static readonly Color ForeColor_Dark = Color.FromArgb(240, 240, 240);
-    private static readonly Color TitleBarColor = Color.FromArgb(32, 32, 32);
+    private static readonly Color TitleBarColor = Color.FromArgb(25, 25, 25);
     private static readonly Color DefaultOverlayFillColor = Color.FromArgb(242, 7, 19, 36);
     private static readonly Color DefaultOverlayBorderColor = Color.FromArgb(220, 125, 198, 255);
     private static readonly Color DefaultOverlayTextColor = Color.FromArgb(250, 250, 250);
