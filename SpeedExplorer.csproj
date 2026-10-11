@@ -13,9 +13,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Remove="ImageSharp-3.1.12\**" />
-    <EmbeddedResource Remove="ImageSharp-3.1.12\**" />
-    <None Remove="ImageSharp-3.1.12\**" />
     <Compile Remove="SpeedExplorer.Tests\**" />
     <EmbeddedResource Remove="SpeedExplorer.Tests\**" />
     <None Remove="SpeedExplorer.Tests\**" />
