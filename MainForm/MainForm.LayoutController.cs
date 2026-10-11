@@ -103,7 +103,13 @@ public partial class MainForm
             }
 
             if (_owner._searchControl != null && !_owner._searchControl.IsDisposed)
+            {
                 _owner._searchControl.Width = _owner.Scale(250);
+                _owner._searchControl.Padding = _owner.Scale(new Padding(2));
+                foreach (Control child in _owner._searchControl.Controls)
+                    if (child is Panel { Dock: DockStyle.Fill })
+                        child.Padding = _owner.Scale(new Padding(0, 2, 0, 0));
+            }
             if (_owner._searchTagToggleBtn != null && !_owner._searchTagToggleBtn.IsDisposed)
             {
                 _owner._searchTagToggleBtn.Width = _owner.Scale(26);
@@ -250,7 +256,17 @@ public partial class MainForm
                 Padding = _owner.Scale(new Padding(2))
             };
 
-            panel.Controls.Add(_owner._searchBox);
+            // Mirrors the address bar's content wrapper: the 2px top padding
+            // pushes the text down so it sits vertically centered, without
+            // shrinking the docked buttons.
+            var searchContentWrapper = new Panel
+            {
+                Dock = DockStyle.Fill,
+                Padding = _owner.Scale(new Padding(0, 2, 0, 0)),
+                BackColor = _owner.ControlBackColor
+            };
+            searchContentWrapper.Controls.Add(_owner._searchBox);
+            panel.Controls.Add(searchContentWrapper);
             panel.Controls.Add(tagToggleBtn);
             panel.Controls.Add(clearBtn);
 
