@@ -7,8 +7,9 @@ obj/
 .agent/
 .dotnet_cli/
 skills/
-.opencode
-.pi
+.opencode/
+.pi/
+SettingsDemo3/
 
 # Local outputs
 publish_output/

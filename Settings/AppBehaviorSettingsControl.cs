@@ -1,64 +1,31 @@
+using System;
 using System.Drawing;
 using System.Windows.Forms;
+using SpeedExplorer.Design;
 
-namespace SpeedExplorer;
+namespace SpeedExplorer.Settings;
 
-public sealed class AppBehaviorSettingsControl : UserControl
+/// <summary>App behavior page: middle-click, image viewer, context menu, permanent delete.</summary>
+internal sealed class AppBehaviorSettingsControl : SettingsPage
 {
-    private readonly CheckBox _middleClickNewTabChk;
-    private readonly CheckBox _permanentDeleteDefaultChk;
-    private readonly CheckBox _useBuiltInImageViewerChk;
-    private readonly CheckBox _useWindowsContextMenuChk;
-    private readonly CheckBox _enableShellContextMenuChk;
+    private ToggleSwitch _middleClickNewTabChk = null!;
+    private ToggleSwitch _permanentDeleteDefaultChk = null!;
+    private ToggleSwitch _useBuiltInImageViewerChk = null!;
+    private ToggleSwitch _useWindowsContextMenuChk = null!;
+    private ToggleSwitch _enableShellContextMenuChk = null!;
 
-    private int Scale(int pixels) => (int)(pixels * (DeviceDpi / 96.0));
-
-    public AppBehaviorSettingsControl()
+    public AppBehaviorSettingsControl() : base(Localization.T("app_behavior_tab"))
     {
-        AutoSize = true;
-        AutoSizeMode = AutoSizeMode.GrowAndShrink;
-        BackColor = Color.Transparent;
-        Margin = new Padding(0);
+        Font = new Font("Segoe UI", 10);
 
-        var panel = new FlowLayoutPanel
-        {
-            AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            FlowDirection = FlowDirection.TopDown,
-            WrapContents = false,
-            BackColor = Color.Transparent,
-            Margin = new Padding(0),
-            Padding = new Padding(0)
-        };
-        Controls.Add(panel);
+        var behavior = new SettingsGroup();
+        _middleClickNewTabChk = behavior.AddToggle(Localization.T("middle_click_new_tab"), string.Empty, false, _ => { });
+        _useBuiltInImageViewerChk = behavior.AddToggle(Localization.T("use_builtin_image_viewer"), string.Empty, false, _ => { });
+        _useWindowsContextMenuChk = behavior.AddToggle(Localization.T("use_windows_menu"), string.Empty, false, _ => { });
+        _enableShellContextMenuChk = behavior.AddToggle(Localization.T("enable_shell_menu"), string.Empty, false, _ => { });
+        _permanentDeleteDefaultChk = behavior.AddToggle(Localization.T("permanent_delete_default"), string.Empty, false, _ => { });
 
-        _middleClickNewTabChk = CreateCheckBox(Localization.T("middle_click_new_tab"), Point.Empty);
-        panel.Controls.Add(_middleClickNewTabChk);
-
-        _useBuiltInImageViewerChk = CreateCheckBox(Localization.T("use_builtin_image_viewer"), Point.Empty);
-        panel.Controls.Add(_useBuiltInImageViewerChk);
-
-        panel.Controls.Add(new Panel { Height = Scale(14), Width = Scale(1), BackColor = Color.Transparent });
-
-        var dangerLabel = CreateLabel(Localization.T("dangerous_setting_warning"), Point.Empty);
-        dangerLabel.Font = new Font("Segoe UI Semibold", 9.5F);
-        dangerLabel.ForeColor = Color.FromArgb(255, 198, 109);
-        panel.Controls.Add(dangerLabel);
-
-        _permanentDeleteDefaultChk = CreateCheckBox(Localization.T("permanent_delete_default"), Point.Empty);
-        panel.Controls.Add(_permanentDeleteDefaultChk);
-
-        panel.Controls.Add(new Panel { Height = Scale(16), Width = Scale(1), BackColor = Color.Transparent });
-
-        var contextMenuLabel = CreateLabel(Localization.T("context_menu_section"), Point.Empty);
-        contextMenuLabel.Font = new Font("Segoe UI Semibold", 9.5F);
-        panel.Controls.Add(contextMenuLabel);
-
-        _enableShellContextMenuChk = CreateCheckBox(Localization.T("enable_shell_menu"), Point.Empty);
-        panel.Controls.Add(_enableShellContextMenuChk);
-
-        _useWindowsContextMenuChk = CreateCheckBox(Localization.T("use_windows_menu"), Point.Empty);
-        panel.Controls.Add(_useWindowsContextMenuChk);
+        Controls.Add(behavior);
     }
 
     public void LoadFromSettings(AppSettings settings)
@@ -78,25 +45,4 @@ public sealed class AppBehaviorSettingsControl : UserControl
         settings.UseWindowsContextMenu = _useWindowsContextMenuChk.Checked;
         settings.EnableShellContextMenu = _enableShellContextMenuChk.Checked;
     }
-
-    private Label CreateLabel(string text, Point loc) => new()
-    {
-        Text = text,
-        Location = loc,
-        AutoSize = true,
-        Font = new Font("Segoe UI", 10),
-        ForeColor = Color.FromArgb(240, 240, 240),
-        BackColor = Color.Transparent
-    };
-
-    private CheckBox CreateCheckBox(string text, Point loc) => new()
-    {
-        Text = text,
-        Location = loc,
-        AutoSize = true,
-        Font = new Font("Segoe UI", 10),
-        ForeColor = Color.FromArgb(240, 240, 240),
-        Cursor = Cursors.Hand,
-        BackColor = Color.Transparent
-    };
 }

@@ -1,10 +1,15 @@
 using System;
 using System.Drawing;
 using System.Windows.Forms;
+using SpeedExplorer.Design;
 
 namespace SpeedExplorer;
 
-public sealed class WindowsIntegrationSettingsControl : UserControl
+/// <summary>
+/// Windows integration page: set SpeedExplorer as the default file manager
+/// and/or take over image file associations, with live status under each button pair.
+/// </summary>
+internal sealed class WindowsIntegrationSettingsControl : SettingsPage
 {
     private readonly Label _defaultFileManagerStatusLabel;
     private readonly Label _defaultImageAssocStatusLabel;
@@ -14,77 +19,67 @@ public sealed class WindowsIntegrationSettingsControl : UserControl
 
     private int Scale(int pixels) => (int)(pixels * (DeviceDpi / 96.0));
 
-    public WindowsIntegrationSettingsControl()
+    public WindowsIntegrationSettingsControl() : base(Localization.T("windows_integration_tab"))
     {
-        AutoSize = true;
-        AutoSizeMode = AutoSizeMode.GrowAndShrink;
-        BackColor = Color.Transparent;
-        Margin = new Padding(0);
+        Font = new Font("Segoe UI", 10);
 
-        var panel = new FlowLayoutPanel
+        Controls.Add(Header(Localization.T("default_app_label")));
+
+        _defaultFileManagerStatusLabel = new Label
         {
+            Text = Localization.T("status_defaults"),
+            AutoSize = true,
+            Margin = new Padding(2, 0, 0, 6)
+        };
+        // "keep-color": status colors are set dynamically and preserved on theme changes
+        _defaultFileManagerStatusLabel.Tag = "keep-color";
+        Controls.Add(_defaultFileManagerStatusLabel);
+
+        var fmApply = new FlatButton { Text = Localization.T("apply_default"), Kind = ButtonKind.Secondary };
+        fmApply.Click += (s, e) => DefaultFileManagerRequested?.Invoke(true);
+        var fmRestore = new FlatButton { Text = Localization.T("restore_default"), Kind = ButtonKind.Secondary };
+        fmRestore.Click += (s, e) => DefaultFileManagerRequested?.Invoke(false);
+        Controls.Add(ButtonRow(fmApply, fmRestore));
+
+        Controls.Add(Header(Localization.T("default_image_app_label")));
+
+        _defaultImageAssocStatusLabel = new Label
+        {
+            Text = Localization.T("status_defaults"),
+            AutoSize = true,
+            Margin = new Padding(2, 0, 0, 6)
+        };
+        _defaultImageAssocStatusLabel.Tag = "keep-color";
+        Controls.Add(_defaultImageAssocStatusLabel);
+
+        var imgApply = new FlatButton { Text = Localization.T("apply_default_images"), Kind = ButtonKind.Secondary };
+        imgApply.Click += (s, e) => ImageViewerAssociationRequested?.Invoke(true);
+        var imgRestore = new FlatButton { Text = Localization.T("restore_default_images"), Kind = ButtonKind.Secondary };
+        imgRestore.Click += (s, e) => ImageViewerAssociationRequested?.Invoke(false);
+        Controls.Add(ButtonRow(imgApply, imgRestore));
+    }
+
+    private Label Header(string text) => new()
+    {
+        Text = text,
+        AutoSize = true,
+        Margin = new Padding(2, 12, 0, 4)
+    };
+
+    private FlowLayoutPanel ButtonRow(FlatButton a, FlatButton b)
+    {
+        var row = new FlowLayoutPanel
+        {
+            FlowDirection = FlowDirection.LeftToRight,
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            FlowDirection = FlowDirection.TopDown,
-            WrapContents = false,
-            BackColor = Color.Transparent,
-            Margin = new Padding(0),
+            Margin = new Padding(0, 0, 0, 8),
             Padding = new Padding(0)
         };
-        Controls.Add(panel);
-
-        panel.Controls.Add(CreateLabel(Localization.T("default_app_label"), Point.Empty));
-
-        _defaultFileManagerStatusLabel = CreateLabel(Localization.T("status_defaults"), Point.Empty);
-        _defaultFileManagerStatusLabel.ForeColor = Color.Gray;
-        panel.Controls.Add(_defaultFileManagerStatusLabel);
-
-        var defaultFileManagerApplyBtn = new Button
-        {
-            Text = Localization.T("apply_default"),
-            AutoSize = true,
-            Margin = new Padding(0, Scale(8), 0, 0)
-        };
-        SettingsButtonStyle.ApplyNeutral(defaultFileManagerApplyBtn);
-        defaultFileManagerApplyBtn.Click += (s, e) => DefaultFileManagerRequested?.Invoke(true);
-        panel.Controls.Add(defaultFileManagerApplyBtn);
-
-        var defaultFileManagerRestoreBtn = new Button
-        {
-            Text = Localization.T("restore_default"),
-            AutoSize = true,
-            Margin = new Padding(0, Scale(8), 0, 0)
-        };
-        SettingsButtonStyle.ApplyNeutral(defaultFileManagerRestoreBtn);
-        defaultFileManagerRestoreBtn.Click += (s, e) => DefaultFileManagerRequested?.Invoke(false);
-        panel.Controls.Add(defaultFileManagerRestoreBtn);
-
-        panel.Controls.Add(new Panel { Height = Scale(12), Width = Scale(1), BackColor = Color.Transparent });
-        panel.Controls.Add(CreateLabel(Localization.T("default_image_app_label"), Point.Empty));
-
-        _defaultImageAssocStatusLabel = CreateLabel(Localization.T("status_defaults"), Point.Empty);
-        _defaultImageAssocStatusLabel.ForeColor = Color.Gray;
-        panel.Controls.Add(_defaultImageAssocStatusLabel);
-
-        var defaultImageAssocApplyBtn = new Button
-        {
-            Text = Localization.T("apply_default_images"),
-            AutoSize = true,
-            Margin = new Padding(0, Scale(8), 0, 0)
-        };
-        SettingsButtonStyle.ApplyNeutral(defaultImageAssocApplyBtn);
-        defaultImageAssocApplyBtn.Click += (s, e) => ImageViewerAssociationRequested?.Invoke(true);
-        panel.Controls.Add(defaultImageAssocApplyBtn);
-
-        var defaultImageAssocRestoreBtn = new Button
-        {
-            Text = Localization.T("restore_default_images"),
-            AutoSize = true,
-            Margin = new Padding(0, Scale(8), 0, 0)
-        };
-        SettingsButtonStyle.ApplyNeutral(defaultImageAssocRestoreBtn);
-        defaultImageAssocRestoreBtn.Click += (s, e) => ImageViewerAssociationRequested?.Invoke(false);
-        panel.Controls.Add(defaultImageAssocRestoreBtn);
+        a.Margin = new Padding(0, 0, 8, 0);
+        row.Controls.Add(a);
+        row.Controls.Add(b);
+        return row;
     }
 
     public void SetDefaultFileManagerStatus(string text, Color color)
@@ -98,14 +93,4 @@ public sealed class WindowsIntegrationSettingsControl : UserControl
         _defaultImageAssocStatusLabel.Text = text;
         _defaultImageAssocStatusLabel.ForeColor = color;
     }
-
-    private Label CreateLabel(string text, Point loc) => new()
-    {
-        Text = text,
-        Location = loc,
-        AutoSize = true,
-        Font = new Font("Segoe UI", 10),
-        ForeColor = Color.FromArgb(240, 240, 240),
-        BackColor = Color.Transparent
-    };
 }

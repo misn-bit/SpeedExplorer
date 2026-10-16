@@ -59,6 +59,8 @@ public class AppSettings
     public bool UseWindowsContextMenu { get; set; } = false;
     public string UiLanguage { get; set; } = "en";
     public string MainThemePreset { get; set; } = "Dark";
+    /// <summary>Settings window design: "Flat" (default, square cards) or "Rounded" (Windows 11 style cards).</summary>
+    public string SettingsDesign { get; set; } = "Flat";
     public System.Collections.Generic.List<ManualContextAction> ManualContextActions { get; set; } = new();
     public bool MiddleClickOpensNewTab { get; set; } = true;
     public bool DebugNavigationLogging { get; set; } = false;

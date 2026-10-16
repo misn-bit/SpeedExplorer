@@ -16,6 +16,8 @@
     <Compile Remove="SpeedExplorer.Tests\**" />
     <EmbeddedResource Remove="SpeedExplorer.Tests\**" />
     <None Remove="SpeedExplorer.Tests\**" />
+    <Compile Remove="SettingsDemo3\**" />
+    <None Include="SettingsDemo3\**" />
   </ItemGroup>
 
   <ItemGroup>
