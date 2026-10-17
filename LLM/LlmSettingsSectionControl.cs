@@ -1,5 +1,6 @@
 using System;
 using System.Drawing;
+using System.Globalization;
 using System.Linq;
 using System.Windows.Forms;
 using SpeedExplorer.Design;
@@ -15,8 +16,10 @@ internal sealed class LlmSettingsSectionControl : SettingsPage
     private readonly ToggleSwitch _llmEnabledChk, _llmBatchProcessingChk, _llmChatEnabledChk, _llmDebugLogChk;
     private readonly TextField _llmApiUrlBox, _llmChatApiUrlBox;
     private readonly Dropdown _llmModelComboBox, _llmBatchVisionModelComboBox;
-    private readonly SliderField _llmMaxTokensSlider, _llmTempSlider, _llmVisionMaxMpSlider, _llmAgentMaxLoopsSlider;
+    private readonly TextField _llmVisionMaxMpBox;
+    private readonly SliderField _llmAgentMaxLoopsSlider;
     private readonly FlatButton _fetchModelsBtn;
+    private float _llmVisionMaxMp = 2f;
 
     public LlmSettingsSectionControl() : base(Localization.T("llm_tab"))
     {
@@ -34,18 +37,20 @@ internal sealed class LlmSettingsSectionControl : SettingsPage
         _llmModelComboBox = group.AddDropdown(
             Localization.T("model_name"), string.Empty, null, "Select or type a model…", "No models fetched yet.", _ => { });
 
-        _fetchModelsBtn = group.AddButton(
-            string.Empty, string.Empty, Localization.T("fetch_models"), ButtonKind.Primary, FetchModels_Click);
-
         _llmBatchVisionModelComboBox = group.AddDropdown(
             Localization.T("batch_vision_model_name"), string.Empty, null, "Select or type a model…", "No models fetched yet.", _ => { });
 
-        _llmMaxTokensSlider = group.AddSlider(
-            Localization.T("max_tokens"), string.Empty, 100, 32000, 100, 4096, " tok", _ => { });
-        _llmTempSlider = group.AddSlider(
-            Localization.T("temperature"), string.Empty, 0, 20, 1, 10, "/10", _ => { });
-        _llmVisionMaxMpSlider = group.AddSlider(
-            Localization.T("vision_max_pixel_budget_mp"), string.Empty, 6, 6400, 2, 256, "/100 MP", _ => { });
+        _fetchModelsBtn = group.AddButton(
+            string.Empty, string.Empty, Localization.T("fetch_models"), ButtonKind.Primary, FetchModels_Click);
+
+        _llmVisionMaxMpBox = group.AddText(Localization.T("vision_max_pixel_budget_mp"), string.Empty, string.Empty, "MP, e.g. 2");
+        _llmVisionMaxMpBox.ValueChanged += (_, _) =>
+        {
+            if (float.TryParse(_llmVisionMaxMpBox.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var mp)
+                && mp is >= 0.25f and <= 32f)
+                _llmVisionMaxMp = mp;
+        };
+
         _llmAgentMaxLoopsSlider = group.AddSlider(
             Localization.T("agent_max_loops"), string.Empty, 1, 100, 1, 10, " loops", _ => { });
 
@@ -61,10 +66,8 @@ internal sealed class LlmSettingsSectionControl : SettingsPage
         _llmChatApiUrlBox.Value = settings.LlmChatApiUrl;
         _llmModelComboBox.Value = settings.LlmModelName;
         _llmBatchVisionModelComboBox.Value = settings.LlmBatchVisionModelName;
-        _llmMaxTokensSlider.Value = Math.Clamp(settings.LlmMaxTokens, 100, 32000);
-        _llmTempSlider.Value = (int)Math.Round(Math.Clamp(settings.LlmTemperature, 0, 2.0) * 10);
-        decimal visionMp = (decimal)Math.Max(settings.LlmVisionMaxPixels, 256 * 256) / 1_000_000M;
-        _llmVisionMaxMpSlider.Value = (int)Math.Clamp(visionMp * 100, 6, 6400);
+        _llmVisionMaxMp = (float)Math.Clamp((double)Math.Max(settings.LlmVisionMaxPixels, 256 * 256) / 1_000_000.0, 0.25, 32.0);
+        _llmVisionMaxMpBox.Value = _llmVisionMaxMp.ToString(CultureInfo.InvariantCulture);
         _llmAgentMaxLoopsSlider.Value = Math.Clamp(settings.LlmAgentMaxLoops, 1, 100);
         _llmDebugLogChk.Checked = settings.DebugLlmLogging;
     }
@@ -78,9 +81,8 @@ internal sealed class LlmSettingsSectionControl : SettingsPage
         settings.LlmChatApiUrl = _llmChatApiUrlBox.Value.Trim();
         settings.LlmModelName = _llmModelComboBox.Value?.Trim() ?? string.Empty;
         settings.LlmBatchVisionModelName = _llmBatchVisionModelComboBox.Value?.Trim() ?? string.Empty;
-        settings.LlmMaxTokens = _llmMaxTokensSlider.Value;
-        settings.LlmTemperature = _llmTempSlider.Value / 10.0;
-        settings.LlmVisionMaxPixels = Math.Max(256 * 256, (int)Math.Round(_llmVisionMaxMpSlider.Value / 100.0 * 1_000_000.0));
+        // max tokens / temperature are intentionally not exposed here — they're controlled by the LM Studio server.
+        settings.LlmVisionMaxPixels = Math.Max(256 * 256, (int)Math.Round(_llmVisionMaxMp * 1_000_000.0));
         settings.LlmAgentMaxLoops = _llmAgentMaxLoopsSlider.Value;
         settings.DebugLlmLogging = _llmDebugLogChk.Checked;
     }

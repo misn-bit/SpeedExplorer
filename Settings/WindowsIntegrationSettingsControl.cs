@@ -68,6 +68,13 @@ internal sealed class WindowsIntegrationSettingsControl : SettingsPage
 
     private FlowLayoutPanel ButtonRow(FlatButton a, FlatButton b)
     {
+        // Not inside a SettingsGroup, so size them manually to their text (they'd stay 96px otherwise),
+        // and zero out margins so both buttons sit on the same baseline.
+        float s = DeviceDpi / 96f;
+        a.Size = a.GetRowSize(s);
+        b.Size = b.GetRowSize(s);
+        a.FontChanged += (_, _) => { a.Size = a.GetRowSize(s); b.Size = b.GetRowSize(s); };
+
         var row = new FlowLayoutPanel
         {
             FlowDirection = FlowDirection.LeftToRight,
@@ -77,6 +84,7 @@ internal sealed class WindowsIntegrationSettingsControl : SettingsPage
             Padding = new Padding(0)
         };
         a.Margin = new Padding(0, 0, 8, 0);
+        b.Margin = new Padding(0, 0, 0, 0);
         row.Controls.Add(a);
         row.Controls.Add(b);
         return row;

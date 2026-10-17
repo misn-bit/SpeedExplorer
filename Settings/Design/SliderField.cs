@@ -17,7 +17,13 @@ internal sealed class SliderField : Control, IRowControl
         TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix;
 
     private const float ThumbRadius = 10f;   // at 100% scale
-    private const float LabelWidth = 60f;
+    private const float MinLabelWidth = 60f;
+
+    /// <summary>Width of the value readout; grows with the widest value so long suffixes never clip.</summary>
+    private float LabelW()
+        => Math.Max(MinLabelWidth * (DeviceDpi / 96f),
+            TextRenderer.MeasureText($"{_max}{_suffix}", Font, new Size(int.MaxValue / 2, 0),
+                TextFormatFlags.SingleLine | TextFormatFlags.NoPadding).Width + 12f);
 
     private int _min, _max = 100, _step = 1, _value;
     private string _suffix = "";
@@ -52,7 +58,7 @@ internal sealed class SliderField : Control, IRowControl
         set => SetValue(value);
     }
 
-    public Size GetRowSize(float scale) => new((int)(260 * scale), (int)(Metrics.ButtonHeight * scale));
+    public Size GetRowSize(float scale) => new((int)(340 * scale), (int)(Metrics.ButtonHeight * scale));
 
     private int Snap(int v)
     {
@@ -75,7 +81,7 @@ internal sealed class SliderField : Control, IRowControl
     {
         float r = ThumbRadius * s;
         float h = 4f * s;
-        float w = Math.Max(1f, Width - LabelWidth * s - 2f * r);
+        float w = Math.Max(1f, Width - LabelW() - 2f * r);
         return new RectangleF(r, Height / 2f - h / 2f, w, h);
     }
 
@@ -137,7 +143,8 @@ internal sealed class SliderField : Control, IRowControl
         }
         g.SmoothingMode = SmoothingMode.Default;
 
-        var label = new Rectangle(Width - (int)(LabelWidth * s), 0, (int)(LabelWidth * s), Height);
+        int lw = (int)LabelW();
+        var label = new Rectangle(Width - lw, 0, lw, Height);
         TextRenderer.DrawText(g, $"{_value}{_suffix}", Font, label, p.Text, LabelFlags);
     }
 
