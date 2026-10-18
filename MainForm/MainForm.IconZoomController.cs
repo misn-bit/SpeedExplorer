@@ -10,14 +10,12 @@ public partial class MainForm
 {
     private sealed class IconZoomController : IDisposable
     {
-        private const int MinIconSize = 16;
-        private const int MaxIconSize = 192;
-        private const int IconStep = 8;
         private const int ApplyDebounceMs = 500;
 
         private readonly MainForm _owner;
         private readonly System.Windows.Forms.Timer _applyTimer;
         private int _baseSize;
+        private string? _zoomPath;
         private int _steps;
         private int _pendingSize;
         private ZoomSizePreviewOverlay? _previewOverlay;
@@ -51,12 +49,17 @@ public partial class MainForm
         {
             if ((Control.ModifierKeys & Keys.Control) == 0) return;
 
+            NavigationDebugLogger.Log($"ICON_SIZE_WHEEL path=\"{_owner.State.CurrentPath}\" delta={e.Delta} current={_owner.GetLogicalIconSize()}");
+
             int notches = e.Delta / SystemInformation.MouseWheelScrollDelta;
             if (notches == 0)
                 notches = e.Delta > 0 ? 1 : -1;
 
             if (_baseSize == 0)
+            {
                 _baseSize = _owner.GetLogicalIconSize();
+                _zoomPath = _owner.State.CurrentPath;
+            }
 
             QueueZoomDelta(Math.Sign(notches), Math.Abs(notches));
         }
@@ -67,21 +70,24 @@ public partial class MainForm
                 return;
 
             if (_baseSize == 0)
+            {
                 _baseSize = _owner.GetLogicalIconSize();
+                _zoomPath = _owner.State.CurrentPath;
+            }
 
             QueueZoomDelta(direction, 1);
         }
 
         private void QueueZoomDelta(int direction, int count)
         {
-            int min = MinIconSize;
-            int max = MaxIconSize;
+            int min = LogicalMinIconSize;
+            int max = LogicalMaxIconSize;
             int nextSteps = _steps;
 
             for (int i = 0; i < count; i++)
             {
-                int proposed = _baseSize + ((nextSteps + direction) * IconStep);
-                int current = Math.Clamp(_baseSize + (nextSteps * IconStep), min, max);
+                int proposed = _baseSize + ((nextSteps + direction) * LogicalIconSizeStep);
+                int current = Math.Clamp(_baseSize + (nextSteps * LogicalIconSizeStep), min, max);
                 int bounded = Math.Clamp(proposed, min, max);
                 if (bounded == current)
                 {
@@ -101,7 +107,7 @@ public partial class MainForm
 
             _steps = nextSteps;
 
-            int target = _baseSize + (_steps * IconStep);
+            int target = _baseSize + (_steps * LogicalIconSizeStep);
             _pendingSize = Math.Clamp(target, min, max);
 
             ShowZoomPreview(_owner.GetEffectiveIconSizeForLogicalSize(_pendingSize));
@@ -163,12 +169,15 @@ public partial class MainForm
             try { HideZoomPreview(); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
 
             bool hasZoomChange = _steps != 0;
-            int target = _pendingSize > 0 ? _pendingSize : _owner.GetLogicalIconSize();
+            int target = _pendingSize > 0 ? _pendingSize : _baseSize;
+            string? zoomPath = _zoomPath;
+            NavigationDebugLogger.Log($"ICON_SIZE_COMMIT path=\"{zoomPath}\" changed={hasZoomChange} target={target} steps={_steps} applyUi={applyUi} currentPath=\"{_owner.State.CurrentPath}\"");
 
             if (hasZoomChange)
-                _owner.SaveIconSizeForCurrentPath(target);
+                _owner.SaveIconSizeForPath(zoomPath, target);
 
-            if (hasZoomChange && applyUi && !_owner.IsDisposed && !_owner.Disposing)
+            if (hasZoomChange && applyUi && !_owner.IsDisposed && !_owner.Disposing &&
+                string.Equals(_owner.State.CurrentPath, zoomPath, StringComparison.OrdinalIgnoreCase))
             {
                 _owner.ApplySettings();
                 if (_owner.IsTileView)
@@ -176,8 +185,15 @@ public partial class MainForm
             }
 
             _baseSize = 0;
+            _zoomPath = null;
             _steps = 0;
             _pendingSize = 0;
+        }
+
+        public void CommitPendingZoomForLocationChange()
+        {
+            _applyTimer.Stop();
+            CommitPendingZoom(applyUi: false);
         }
 
         public void CommitPendingZoomForDpiChange()
@@ -193,11 +209,11 @@ public partial class MainForm
             private const int WM_NCHITTEST = 0x0084;
             private static readonly IntPtr HTTRANSPARENT = new IntPtr(-1);
             private readonly MainForm _owner;
-            private int _previewSize = MinIconSize;
+            private int _previewSize = LogicalMinIconSize;
 
             // Preview sizes are physical pixels; clamp against DPI-scaled bounds.
-            private int ScaledMinIconSize => _owner.GetEffectiveIconSizeForLogicalSize(MinIconSize);
-            private int ScaledMaxIconSize => _owner.GetEffectiveIconSizeForLogicalSize(MaxIconSize);
+            private int ScaledMinIconSize => _owner.GetEffectiveIconSizeForLogicalSize(LogicalMinIconSize);
+            private int ScaledMaxIconSize => _owner.GetEffectiveIconSizeForLogicalSize(LogicalMaxIconSize);
 
             [Browsable(false)]
             [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]

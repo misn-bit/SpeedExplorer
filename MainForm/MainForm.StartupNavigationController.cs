@@ -112,15 +112,21 @@ public partial class MainForm
                         foreach (var kvp in folderSettings.Settings)
                         {
                             _owner._nav.FolderSortSettings[kvp.Key] = (kvp.Value.Column, kvp.Value.Direction);
-                            if (kvp.Value.IconSize is int iconSize)
-                                _owner._nav.FolderIconSizeOverrides[kvp.Key] = Math.Clamp(iconSize, 16, 192);
+                            if (kvp.Value.IconSize is int iconSize && CanPersistFolderIconSizeForPath(kvp.Key))
+                            {
+                                string key = NormalizeFolderIconSizePath(kvp.Key);
+                                _owner._nav.FolderIconSizeOverrides[key] = ClampLogicalIconSize(iconSize);
+                                NavigationDebugLogger.Log($"ICON_SIZE_LOAD folder path=\"{key}\" size={ClampLogicalIconSize(iconSize)}");
+                            }
                         }
                     }
                 }
+                NavigationDebugLogger.Log($"ICON_SIZE_SETTINGS_LOAD file=\"{FolderSettingsPath}\" exists={File.Exists(FolderSettingsPath)} overrides={_owner._nav.FolderIconSizeOverrides.Count}");
             }
-            catch
+            catch (Exception ex)
             {
                 // Keep defaults on malformed/missing settings.
+                NavigationDebugLogger.Log($"ICON_SIZE_SETTINGS_LOAD failed: {ex.Message}");
             }
         }
 
@@ -147,10 +153,12 @@ public partial class MainForm
 
                 var json = System.Text.Json.JsonSerializer.Serialize(settings);
                 FolderSettingsPath = AppStorage.WriteText(FolderSettingsPath, "folder_settings.json", json);
+                NavigationDebugLogger.Log($"ICON_SIZE_SETTINGS_SAVE file=\"{FolderSettingsPath}\" paths={paths.Count} overrides={_owner._nav.FolderIconSizeOverrides.Count}");
             }
-            catch
+            catch (Exception ex)
             {
                 // Ignore persistence errors.
+                NavigationDebugLogger.Log($"ICON_SIZE_SETTINGS_SAVE failed: {ex.Message}");
             }
         }
     }

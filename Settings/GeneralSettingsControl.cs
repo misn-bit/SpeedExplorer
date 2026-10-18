@@ -36,7 +36,7 @@ internal sealed class GeneralSettingsControl : SettingsPage
         _fontSizeSlider = appearance.AddSlider(
             Localization.T("font_size"), string.Empty, 8, 24, 1, 12, " pt", _ => { });
         _iconSizeSlider = appearance.AddSlider(
-            Localization.T("icon_size"), string.Empty, 16, 192, 8, 48, " px", _ => { });
+            Localization.T("icon_size"), Localization.T("icon_size_desc"), 16, 192, 8, 48, " px", _ => { });
 
         _themeDrop = appearance.AddDropdown(
             Localization.T("theme"), string.Empty, "Light", string.Empty, string.Empty,

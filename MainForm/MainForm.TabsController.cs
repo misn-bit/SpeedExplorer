@@ -512,6 +512,7 @@ public partial class MainForm
                 State.SortColumn = tab.SortColumn;
                 State.SortDirection = tab.SortDirection;
                 State.TaggedFilesOnTop = tab.TaggedFilesOnTop;
+                _owner._iconZoomController.CommitPendingZoomForLocationChange();
                 State.CurrentPath = path;
                 State.CurrentDisplayPath = string.IsNullOrWhiteSpace(tab.CurrentDisplayPath) ? path : tab.CurrentDisplayPath;
 

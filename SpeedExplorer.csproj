@@ -18,6 +18,8 @@
     <None Remove="SpeedExplorer.Tests\**" />
     <Compile Remove="SettingsDemo3\**" />
     <None Include="SettingsDemo3\**" />
+    <Compile Remove="ListDemo4\**" />
+    <None Include="ListDemo4\**" />
   </ItemGroup>
 
   <ItemGroup>

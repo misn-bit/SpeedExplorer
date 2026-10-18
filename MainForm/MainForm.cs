@@ -155,6 +155,7 @@ public partial class MainForm : Form, IFileOperationsHost, IShellActionsHost, IO
     // high-DPI displays get genuinely larger (non-stretched) sources.
     private const int LogicalMinIconSize = 16;
     private const int LogicalMaxIconSize = 192;
+    private const int LogicalIconSizeStep = 8;
     private const int MaxImageListIconSize = 256; // ImageList.ImageSize hard limit
     private const int LogicalTitleBarHeight = 30;
     private const int LogicalNavBarHeight = 33;
@@ -183,15 +184,28 @@ public partial class MainForm : Form, IFileOperationsHost, IShellActionsHost, IO
            !string.Equals(path, ThisPcPath, StringComparison.OrdinalIgnoreCase) &&
            !IsShellPath(path);
 
+    private static string NormalizeFolderIconSizePath(string path)
+    {
+        try
+        {
+            return Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+        }
+        catch
+        {
+            return path;
+        }
+    }
+
     private bool TryGetFolderIconSizeOverride(string? path, out int iconSize)
     {
         iconSize = 0;
         if (!CanPersistFolderIconSizeForPath(path))
             return false;
-        if (!_nav.FolderIconSizeOverrides.TryGetValue(path!, out var stored))
+        string key = NormalizeFolderIconSizePath(path!);
+        if (!_nav.FolderIconSizeOverrides.TryGetValue(key, out var stored))
             return false;
 
-        iconSize = Math.Clamp(stored, 16, 192);
+        iconSize = Math.Clamp(stored, LogicalMinIconSize, LogicalMaxIconSize);
         return true;
     }
 
@@ -199,33 +213,51 @@ public partial class MainForm : Form, IFileOperationsHost, IShellActionsHost, IO
     {
         if (TryGetFolderIconSizeOverride(path ?? State.CurrentPath, out var iconSize))
             return iconSize;
-        return Math.Clamp(AppSettings.Current.IconSize, LogicalMinIconSize, LogicalMaxIconSize);
+        return ClampLogicalIconSize(AppSettings.Current.IconSize);
     }
+
+    private static int ClampLogicalIconSize(int iconSize)
+        => Math.Clamp(iconSize, LogicalMinIconSize, LogicalMaxIconSize);
 
     private int GetEffectiveIconSize(string? path = null)
         => GetEffectiveIconSizeForLogicalSize(GetLogicalIconSize(path));
 
     private int GetEffectiveIconSizeForLogicalSize(int logicalIconSize)
-        => Math.Min(Scale(Math.Clamp(logicalIconSize, LogicalMinIconSize, LogicalMaxIconSize)), MaxImageListIconSize);
+        => Math.Min(Scale(ClampLogicalIconSize(logicalIconSize)), MaxImageListIconSize);
 
-    private void SaveIconSizeForCurrentPath(int logicalIconSize)
+    private void SaveIconSizeForPath(string? path, int logicalIconSize)
     {
         // Keep the user's logical zoom level intact across DPI changes. The
         // effective ImageList size can be capped at 256 physical pixels, so
         // converting that rendered size back to logical pixels loses data.
-        int clamped = Math.Clamp(logicalIconSize, LogicalMinIconSize, LogicalMaxIconSize);
-        if (CanPersistFolderIconSizeForPath(State.CurrentPath))
+        int clamped = ClampLogicalIconSize(logicalIconSize);
+        if (CanPersistFolderIconSizeForPath(path))
         {
-            _nav.FolderIconSizeOverrides[State.CurrentPath] = clamped;
-            SaveFolderSettings();
+            string key = NormalizeFolderIconSizePath(path!);
+            // Zooming back to the global default clears the folder's override so it
+            // follows the settings slider again.
+            bool changed;
+            if (clamped == ClampLogicalIconSize(AppSettings.Current.IconSize))
+                changed = _nav.FolderIconSizeOverrides.Remove(key);
+            else
+            {
+                changed = !(_nav.FolderIconSizeOverrides.TryGetValue(key, out int existing) && existing == clamped);
+                _nav.FolderIconSizeOverrides[key] = clamped;
+            }
+            if (changed) SaveFolderSettings();
+            NavigationDebugLogger.Log($"ICON_SIZE_SAVE folder path=\"{key}\" size={clamped} default={ClampLogicalIconSize(AppSettings.Current.IconSize)} changed={changed} overrides={_nav.FolderIconSizeOverrides.Count}");
             return;
         }
 
-        if (AppSettings.Current.IconSize == clamped)
+        if (ClampLogicalIconSize(AppSettings.Current.IconSize) == clamped)
+        {
+            NavigationDebugLogger.Log($"ICON_SIZE_SAVE default-path path=\"{path}\" size={clamped} unchanged=true");
             return;
+        }
 
         AppSettings.Current.IconSize = clamped;
         AppSettings.Current.Save();
+        NavigationDebugLogger.Log($"ICON_SIZE_SAVE default-path path=\"{path}\" size={clamped} saved=true");
     }
 
     private void ApplyEffectiveIconSizeIfNeeded(string? path = null)

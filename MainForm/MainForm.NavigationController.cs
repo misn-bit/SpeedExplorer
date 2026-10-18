@@ -307,6 +307,11 @@ public partial class MainForm
             _loadCts?.Cancel();
             return;
         }
+
+        // Commit a debounced zoom while its source folder is still current.
+        // This prevents a fast navigation from attaching the size to the destination.
+        _iconZoomController.CommitPendingZoomForLocationChange();
+
         bool shouldFocusListView = ShouldFocusListView();
         NavigationDebugLogger.Log($"NAV#{navTraceId} ENTER");
         _nav.IsNavigating = true;
@@ -455,6 +460,8 @@ public partial class MainForm
             }
 
             State.CurrentPath = path;
+            bool hasFolderIconOverride = TryGetFolderIconSizeOverride(path, out int folderIconSize);
+            NavigationDebugLogger.Log($"NAV#{navTraceId} ICON_SIZE path=\"{path}\" override={(hasFolderIconOverride ? folderIconSize.ToString() : "none")} logical={GetLogicalIconSize(path)} effective={GetEffectiveIconSize(path)} list={_smallIcons.ImageSize.Width}");
             UpdateWatcher(path);
             ShowBreadcrumbs(path);
             _statusLabel.Text = Localization.T("status_loading");
@@ -624,6 +631,22 @@ public partial class MainForm
                 }, navigationToken, TaskCreationOptions.LongRunning, TaskScheduler.Default);
                 swSort.Stop();
                 NavigationDebugLogger.Log($"NAV#{navTraceId} SORT ms={swSort.ElapsedMilliseconds} count={sortedItems.Count} sort={State.SortColumn}/{State.SortDirection}");
+
+                // A fast enumeration can finish before the 16 ms batch timer publishes
+                // its first batch. In that case the batch publisher never gets to apply
+                // the destination's icon size, so ensure it is correct before final bind.
+                if (streamIntoDetailsView)
+                {
+                    try
+                    {
+                        await ApplyEffectiveIconSizeAfterNextPaintIfNeededAsync(path, navigationToken);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        return;
+                    }
+                    NavigationDebugLogger.Log($"NAV#{navTraceId} ICON_SIZE final-bind list={_smallIcons.ImageSize.Width} target={GetEffectiveIconSize(path)}");
+                }
 
                 List<string>? finalSelectionPaths = pathsToSelect;
                 string? finalTopPath = null;
