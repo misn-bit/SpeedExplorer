@@ -27,6 +27,9 @@ public class SettingsForm : Form
 {
     private const int ResizeBorder = 8;
     private const int OwnerClickAwayMargin = 48;
+    private const int PreferredNavWidth = 220;
+    private const int MinimumNavWidth = 48;
+    private const int PreferredPageWidth = 420;
 
     [Flags]
     private enum ResizeEdges
@@ -59,6 +62,7 @@ public class SettingsForm : Form
     private readonly NavList _nav = new();
     private readonly Panel _pages = new();
     private readonly Panel _chromeRoot = new();
+    private readonly TableLayoutPanel _center = new();
     private readonly System.Windows.Forms.Timer _saveTimer = new() { Interval = 250 };
     private Control[] _pageOrder = Array.Empty<Control>();
     private Rectangle _ownerClientBounds;
@@ -173,6 +177,7 @@ public class SettingsForm : Form
     protected override void OnDpiChangedAfterParent(EventArgs e)
     {
         base.OnDpiChangedAfterParent(e);
+        UpdateColumnWidths();
         KeepCenteredInOwner();
     }
 
@@ -181,6 +186,7 @@ public class SettingsForm : Form
         base.OnResize(e);
         if (_chromeRoot.IsHandleCreated)
             UpdateChromePadding();
+        UpdateColumnWidths();
         KeepCenteredInOwner();
     }
 
@@ -411,19 +417,17 @@ public class SettingsForm : Form
 
         _nav.Dock = DockStyle.Fill;
 
-        var center = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            ColumnCount = 2,
-            RowCount = 1
-        };
-        center.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 220));
-        center.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        center.Controls.Add(_nav, 0, 0);
-        center.Controls.Add(_pages, 1, 0);
+        _center.Dock = DockStyle.Fill;
+        _center.ColumnCount = 2;
+        _center.RowCount = 1;
+        _center.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, ScaleLogical(PreferredNavWidth)));
+        _center.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        _center.Controls.Add(_nav, 0, 0);
+        _center.Controls.Add(_pages, 1, 0);
+        _center.SizeChanged += (sender, e) => UpdateColumnWidths();
 
         _chromeRoot.Dock = DockStyle.Fill;
-        _chromeRoot.Controls.Add(center);
+        _chromeRoot.Controls.Add(_center);
         _chromeRoot.Padding = new Padding(ScaleLogical(1));
         Controls.Add(_chromeRoot);
 
@@ -450,6 +454,19 @@ public class SettingsForm : Form
         _nav.SelectedIndexChanged += (sender, e) => ShowPage(_nav.SelectedIndex);
 
         ShowPage(0);
+    }
+
+    private void UpdateColumnWidths()
+    {
+        if (_center.ColumnStyles.Count == 0 || _center.ClientSize.Width <= 0)
+            return;
+
+        int preferred = ScaleLogical(PreferredNavWidth);
+        int minimum = ScaleLogical(MinimumNavWidth);
+        int pageReserve = ScaleLogical(PreferredPageWidth);
+        int navWidth = Math.Clamp(_center.ClientSize.Width - pageReserve, minimum, preferred);
+        if (_center.ColumnStyles[0].Width != navWidth)
+            _center.ColumnStyles[0].Width = navWidth;
     }
 
     private void ShowPage(int index)
@@ -551,6 +568,7 @@ public class SettingsForm : Form
 
         var honorableMention = new SettingsGroup();
         honorableMention.AddRow(Localization.T("ran_locally"), string.Empty, CloneHost());
+        honorableMention.Margin = new Padding(0, 0, 0, 16);
         _aboutSection.Controls.Add(PageLabel(Localization.T("honorable_mention")));
         _aboutSection.Controls.Add(honorableMention);
 
@@ -628,6 +646,7 @@ public class SettingsForm : Form
         foreach (var kvp in imageViewerHotkeys)
             AddHotkeyRow(ivGroup, kvp.Key, kvp.Value);
         _hotkeysSection.Controls.Add(ivGroup);
+        _hotkeysSection.EnsureBottomSpacer();
     }
 
     private void AddHotkeyRow(SettingsGroup group, string key, string value)
@@ -690,6 +709,7 @@ public class SettingsForm : Form
             {
                 ResetRecording();
                 e.Handled = true;
+                e.SuppressKeyPress = true;
                 return;
             }
 
@@ -716,6 +736,12 @@ public class SettingsForm : Form
             targetBtn.Text = FormatHotkey(keyString);
             ResetRecording();
             QueueSettingsCommit(reloadHotkeys: true);
+            e.Handled = true;
+            e.SuppressKeyPress = true;
+        }
+        else if (e.KeyCode == Keys.Escape)
+        {
+            Close();
             e.Handled = true;
             e.SuppressKeyPress = true;
         }

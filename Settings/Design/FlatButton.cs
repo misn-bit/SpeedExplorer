@@ -41,11 +41,13 @@ internal sealed class FlatButton : Control, IRowControl
         set { if (_kind == value) return; _kind = value; Invalidate(); }
     }
 
-    public Size GetRowSize(float scale)
+    public Size GetRowSize(float scale, int availableWidth)
     {
         int textW = TextRenderer.MeasureText(Text, Font, new Size(int.MaxValue, int.MaxValue), TextFlags).Width;
         return new Size(Math.Max((int)(88 * scale), textW + (int)(32 * scale)), (int)(Metrics.ButtonHeight * scale));
     }
+
+    public Size GetRowSize(float scale) => GetRowSize(scale, int.MaxValue);
 
     protected override void OnPaintBackground(PaintEventArgs e) => e.Graphics.Clear(Theme.Current.Card);
 

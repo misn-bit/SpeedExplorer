@@ -26,9 +26,11 @@ internal sealed class NavList : Control
     private static readonly string IconFamily = PickIconFamily();
 
     private readonly List<(string Text, string Glyph)> _items = [];
+    private readonly ToolTip _toolTip = new();
     private Font? _iconFont;
     private int _selected;
     private int _hover = -1;
+    private int _tooltipIndex = -1;
 
     public event EventHandler? SelectedIndexChanged;
 
@@ -41,6 +43,7 @@ internal sealed class NavList : Control
     }
 
     private Font IconFont => _iconFont ??= new Font(IconFamily, Font.Size + 1.5f, GraphicsUnit.Point);
+    private bool IsCompact => Width < 176f * (DeviceDpi / 96f);
 
     [Browsable(false)]
     [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
@@ -95,6 +98,7 @@ internal sealed class NavList : Control
         {
             var r = ItemRect(i);
             bool selected = i == _selected;
+            bool compact = IsCompact;
 
             g.SmoothingMode = SmoothingMode.AntiAlias;
             if (selected || i == _hover)
@@ -120,10 +124,17 @@ internal sealed class NavList : Control
             g.SmoothingMode = SmoothingMode.Default;
 
             var (text, glyph) = _items[i];
-            var iconRect = new Rectangle(r.Left + (int)(14 * s), r.Top, (int)(24 * s), r.Height);
-            var textRect = new Rectangle(r.Left + (int)(46 * s), r.Top, r.Width - (int)(54 * s), r.Height);
+            int iconWidth = (int)(24 * s);
+            int iconLeft = compact
+                ? r.Left + (r.Width - iconWidth) / 2 + (int)(2 * s)
+                : r.Left + (int)(14 * s);
+            var iconRect = new Rectangle(iconLeft, r.Top, iconWidth, r.Height);
             TextRenderer.DrawText(g, glyph, IconFont, iconRect, p.Text, GlyphFlags);
-            TextRenderer.DrawText(g, text, Font, textRect, p.Text, LabelFlags);
+            if (!compact)
+            {
+                var textRect = new Rectangle(r.Left + (int)(46 * s), r.Top, r.Width - (int)(54 * s), r.Height);
+                TextRenderer.DrawText(g, text, Font, textRect, p.Text, LabelFlags);
+            }
         }
     }
 
@@ -134,6 +145,7 @@ internal sealed class NavList : Control
         {
             var r = ItemRect(i);
             bool selected = i == _selected;
+            bool compact = IsCompact;
             if (selected || i == _hover)
             {
                 using var brush = new SolidBrush(selected ? p.Accent : p.Hover);
@@ -147,10 +159,15 @@ internal sealed class NavList : Control
 
             Color fore = selected ? p.OnAccent : p.Text;
             var (text, glyph) = _items[i];
-            var iconRect = new Rectangle(r.Left + (int)(10 * s), r.Top, (int)(24 * s), r.Height);
-            var textRect = new Rectangle(r.Left + (int)(38 * s), r.Top, r.Width - (int)(46 * s), r.Height);
+            int iconWidth = (int)(24 * s);
+            int iconLeft = compact ? r.Left + (r.Width - iconWidth) / 2 : r.Left + (int)(10 * s);
+            var iconRect = new Rectangle(iconLeft, r.Top, iconWidth, r.Height);
             TextRenderer.DrawText(g, glyph, IconFont, iconRect, fore, GlyphFlags);
-            TextRenderer.DrawText(g, text, Font, textRect, fore, LabelFlags);
+            if (!compact)
+            {
+                var textRect = new Rectangle(r.Left + (int)(38 * s), r.Top, r.Width - (int)(46 * s), r.Height);
+                TextRenderer.DrawText(g, text, Font, textRect, fore, LabelFlags);
+            }
         }
 
         using var line = new Pen(p.Border);
@@ -169,6 +186,13 @@ internal sealed class NavList : Control
         SetHover(-1);
     }
 
+    protected override void OnSizeChanged(EventArgs e)
+    {
+        base.OnSizeChanged(e);
+        if (IsHandleCreated)
+            SetHover(HitTest(PointToClient(Cursor.Position)));
+    }
+
     protected override void OnMouseDown(MouseEventArgs e)
     {
         base.OnMouseDown(e);
@@ -178,9 +202,16 @@ internal sealed class NavList : Control
 
     private void SetHover(int i)
     {
-        if (i == _hover) return;
-        _hover = i;
-        Invalidate();
+        if (i != _hover)
+        {
+            _hover = i;
+            Invalidate();
+        }
+
+        int tooltipIndex = IsCompact ? i : -1;
+        if (tooltipIndex == _tooltipIndex) return;
+        _tooltipIndex = tooltipIndex;
+        _toolTip.SetToolTip(this, tooltipIndex >= 0 ? _items[tooltipIndex].Text : string.Empty);
     }
 
     protected override bool IsInputKey(Keys keyData) =>
@@ -205,7 +236,11 @@ internal sealed class NavList : Control
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing) _iconFont?.Dispose();
+        if (disposing)
+        {
+            _iconFont?.Dispose();
+            _toolTip.Dispose();
+        }
         base.Dispose(disposing);
     }
 

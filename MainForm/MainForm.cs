@@ -759,10 +759,21 @@ public partial class MainForm : Form, IFileOperationsHost, IShellActionsHost, IO
 
     internal void SaveWindowStateForCurrentState()
     {
-        // Never persist a minimized window: keep the last normal/maximized state
+        // Keep the restored size current even if exit happens while minimized or maximized.
+        Rectangle normalBounds = WindowState == FormWindowState.Normal ? Bounds : RestoreBounds;
+        if (normalBounds.Width > 0 && normalBounds.Height > 0)
+        {
+            AppSettings.Current.MainWindowWidth = normalBounds.Width;
+            AppSettings.Current.MainWindowHeight = normalBounds.Height;
+        }
+
+        // Never persist a minimized state: keep the last normal/maximized state
         // so the app does not open restored after an exit while minimized.
         if (WindowState == FormWindowState.Minimized)
+        {
+            AppSettings.Current.Save();
             return;
+        }
 
         bool isMaximized = WindowState == FormWindowState.Maximized;
         bool isFullscreen = isMaximized && MaximizedBounds == Rectangle.Empty;

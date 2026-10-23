@@ -52,7 +52,7 @@ internal sealed class ManualContextActionsSettingsControl : SettingsPage
         _visibleChk = group.AddToggle(Localization.T("action_visible"), string.Empty, false, _ => { });
 
         // New / Delete buttons on one row
-        var buttons = new FlowLayoutPanel
+        var buttons = new ButtonRowPanel
         {
             FlowDirection = FlowDirection.LeftToRight,
             AutoSize = true,
@@ -62,6 +62,7 @@ internal sealed class ManualContextActionsSettingsControl : SettingsPage
         var addBtn = new FlatButton { Text = Localization.T("action_new"), Kind = ButtonKind.Secondary };
         var deleteBtn = new FlatButton { Text = Localization.T("action_delete"), Kind = ButtonKind.Secondary };
         addBtn.Margin = new Padding(0, 0, 8, 0);
+        deleteBtn.Margin = Padding.Empty;
         addBtn.Click += (s, e) => AddNew();
         deleteBtn.Click += (s, e) => DeleteSelected();
         buttons.Controls.Add(addBtn);
@@ -78,6 +79,21 @@ internal sealed class ManualContextActionsSettingsControl : SettingsPage
         _workingDirBox.ValueChanged += (s, e) => ApplyEdits();
         _allowMultipleChk.CheckedChanged += (s, e) => ApplyEdits();
         _visibleChk.CheckedChanged += (s, e) => ApplyEdits();
+    }
+
+    private sealed class ButtonRowPanel : FlowLayoutPanel, IThemed
+    {
+        public ButtonRowPanel()
+        {
+            BackColor = Theme.Current.Card;
+        }
+
+        public void ApplyTheme(Palette palette)
+        {
+            BackColor = palette.Card;
+            ForeColor = palette.Text;
+            Invalidate();
+        }
     }
 
     public void LoadFromSettings(AppSettings settings)

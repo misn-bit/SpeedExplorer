@@ -120,7 +120,7 @@ internal sealed class Dropdown : Control, IRowControl
         Invalidate();
     }
 
-    public Size GetRowSize(float scale) => new((int)(280 * scale), (int)(Metrics.FieldHeight * scale));
+    public Size GetRowSize(float scale, int availableWidth) => new((int)(280 * scale), (int)(Metrics.FieldHeight * scale));
 
     private void Open()
     {

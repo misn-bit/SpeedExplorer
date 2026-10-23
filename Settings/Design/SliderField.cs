@@ -58,7 +58,15 @@ internal sealed class SliderField : Control, IRowControl
         set => SetValue(value);
     }
 
-    public Size GetRowSize(float scale) => new((int)(340 * scale), (int)(Metrics.ButtonHeight * scale));
+    public Size GetRowSize(float scale, int availableWidth)
+    {
+        int preferredWidth = (int)(340 * scale);
+        int minimumWidth = (int)(170 * scale);
+        int titleReserve = (int)(120 * scale);
+        int gap = (int)(16 * scale);
+        int width = Math.Clamp(availableWidth - titleReserve - gap, minimumWidth, preferredWidth);
+        return new Size(width, (int)(Metrics.ButtonHeight * scale));
+    }
 
     private int Snap(int v)
     {

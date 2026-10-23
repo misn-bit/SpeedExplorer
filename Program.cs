@@ -608,6 +608,11 @@ static class Program
             contextMenu.Items.Add("Open Speed Explorer", null, (s, e) => ShowMainWindow());
             contextMenu.Items.Add("-");
             contextMenu.Items.Add("Exit", null, (s, e) => {
+                foreach (var mainForm in Application.OpenForms.OfType<MainForm>().ToArray())
+                {
+                    if (!mainForm.IsPreloadOnly && !mainForm.IsDisposed)
+                        mainForm.SaveWindowStateForCurrentState();
+                }
                 _trayIcon.Visible = false;
                 _trayIcon.Dispose();
                 ExitThread();

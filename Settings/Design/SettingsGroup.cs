@@ -13,7 +13,7 @@ namespace SpeedExplorer.Design;
 /// A rounded card of rows: title + description on the left, a control on the right.
 /// The card paints the rows' text itself and positions each row's control, so there is no
 /// nested Label/Panel layout to fight. Height follows the content (descriptions wrap).
-/// In the flat style it renders as hairline-separated rows instead of a card.
+/// In the flat style it uses a square card with hairline row dividers.
 /// </summary>
 internal sealed class SettingsGroup : Control
 {
@@ -128,7 +128,7 @@ internal sealed class SettingsGroup : Control
         {
             if (row.Host is IRowControl sized)
             {
-                var size = sized.GetRowSize(s);
+                var size = sized.GetRowSize(s, contentW);
                 row.Host.Size = row.Stacked ? new Size(contentW, size.Height) : size;
             }
             else if (row.Stacked)
@@ -241,6 +241,13 @@ internal class SettingsPage : FlowLayoutPanel
 {
     private const int WmThemeChanged = 0x031A;
     private readonly Font _headingFont = new("Segoe UI Semibold", Metrics.HeadingPoints, GraphicsUnit.Point);
+    private readonly Panel _bottomSpacer = new()
+    {
+        Size = new Size(1, 20),
+        Margin = Padding.Empty,
+        BackColor = Color.Transparent,
+        TabStop = false,
+    };
 
     [DllImport("uxtheme.dll", CharSet = CharSet.Unicode)]
     private static extern int SetWindowTheme(IntPtr hWnd, string? pszSubAppName, string? pszSubIdList);
@@ -259,7 +266,7 @@ internal class SettingsPage : FlowLayoutPanel
         FlowDirection = FlowDirection.TopDown;
         WrapContents = false;
         AutoScroll = true;
-        Padding = new Padding(16, 12, 16, 16);
+        Padding = new Padding(16, 12, 16, 0);
         Controls.Add(new Label
         {
             Text = title,
@@ -267,6 +274,18 @@ internal class SettingsPage : FlowLayoutPanel
             Font = _headingFont,
             Margin = new Padding(0, 0, 0, 4),
         });
+        Controls.Add(_bottomSpacer);
+    }
+
+    protected override void OnControlAdded(ControlEventArgs e)
+    {
+        base.OnControlAdded(e);
+        if (!ReferenceEquals(e.Control, _bottomSpacer) &&
+            Controls.Contains(_bottomSpacer) &&
+            Controls.GetChildIndex(_bottomSpacer) != Controls.Count - 1)
+        {
+            Controls.SetChildIndex(_bottomSpacer, Controls.Count - 1);
+        }
     }
 
     protected override void OnHandleCreated(EventArgs e)
@@ -281,6 +300,17 @@ internal class SettingsPage : FlowLayoutPanel
         SetWindowTheme(Handle, Theme.Current.IsDark ? "DarkMode_Explorer" : "Explorer", null);
         SendWindowMessage(Handle, WmThemeChanged, IntPtr.Zero, IntPtr.Zero);
         Invalidate();
+    }
+
+    public void EnsureBottomSpacer()
+    {
+        if (!Controls.Contains(_bottomSpacer))
+            Controls.Add(_bottomSpacer);
+
+        int lastIndex = Controls.Count - 1;
+        if (Controls.GetChildIndex(_bottomSpacer) != lastIndex)
+            Controls.SetChildIndex(_bottomSpacer, lastIndex);
+        PerformLayout();
     }
 
     public void AddSection(string? label, SettingsGroup group)

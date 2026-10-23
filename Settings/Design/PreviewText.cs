@@ -36,7 +36,7 @@ internal sealed class PreviewText : Control, IRowControl
         Invalidate();
     }
 
-    public Size GetRowSize(float scale)
+    public Size GetRowSize(float scale, int availableWidth)
     {
         int textH = TextRenderer.MeasureText(Sample, PreviewFont, new Size(int.MaxValue, int.MaxValue), TextFlags).Height;
         return new Size((int)(320 * scale), textH + (int)(24 * scale));

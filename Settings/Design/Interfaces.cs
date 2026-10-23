@@ -8,8 +8,8 @@ namespace SpeedExplorer.Design;
 /// </summary>
 internal interface IRowControl
 {
-    /// <summary>Size in device pixels. scale is 1.0 at 100% (96 dpi). Width is ignored for stacked rows.</summary>
-    Size GetRowSize(float scale);
+    /// <summary>Size in device pixels. Width is ignored for stacked rows; availableWidth is the row's content width.</summary>
+    Size GetRowSize(float scale, int availableWidth);
 }
 
 /// <summary>A control that holds native child controls and has to recolor them itself.</summary>

@@ -105,7 +105,7 @@ internal sealed class GeneralSettingsControl : SettingsPage
     private void AddGroup(string? label, SettingsGroup group)
     {
         if (label is not null)
-            Controls.Add(new Label { Text = label, AutoSize = true, Margin = new Padding(2, 16, 0, 6), Tag = "dim" });
+            Controls.Add(new Label { Text = label, AutoSize = true, Margin = new Padding(2, 16, 0, 6), Tag = "section-title" });
         Controls.Add(group);
     }
 

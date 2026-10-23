@@ -63,7 +63,7 @@ internal sealed class TextField : Control, IRowControl, IThemed
         set { if (_invalid == value) return; _invalid = value; Invalidate(); }
     }
 
-    public Size GetRowSize(float scale) => new((int)(320 * scale), (int)(Metrics.FieldHeight * scale));
+    public Size GetRowSize(float scale, int availableWidth) => new((int)(320 * scale), (int)(Metrics.FieldHeight * scale));
 
     public void ApplyTheme(Palette p)
     {
