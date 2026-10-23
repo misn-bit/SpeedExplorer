@@ -236,7 +236,6 @@ public partial class MainForm
 
             _owner.UpdateSearchTagToggleButtonState();
             _owner._tabsController.UpdateTabStripVisuals();
-
             _owner._searchBox?.Invalidate();
             _owner._sidebar?.Invalidate();
             _owner._listView?.Invalidate();

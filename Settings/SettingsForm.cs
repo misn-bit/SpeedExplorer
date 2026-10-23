@@ -11,12 +11,43 @@ using SpeedExplorer.Settings;
 
 namespace SpeedExplorer;
 
+public sealed class SettingsFormChangedEventArgs(
+    bool refreshMainWindow, bool refreshMainTheme, bool reloadHotkeys) : EventArgs
+{
+    public bool RefreshMainWindow { get; } = refreshMainWindow;
+    public bool RefreshMainTheme { get; } = refreshMainTheme;
+    public bool ReloadHotkeys { get; } = reloadHotkeys;
+}
+
 /// <summary>
 /// Settings window: a left <see cref="NavList"/> sidebar plus one page per section,
 /// all rendered with the card design from Settings/Design.
 /// </summary>
 public class SettingsForm : Form
 {
+    private const int ResizeBorder = 8;
+    private const int OwnerClickAwayMargin = 48;
+
+    [Flags]
+    private enum ResizeEdges
+    {
+        None = 0,
+        Left = 1,
+        Top = 2,
+        Right = 4,
+        Bottom = 8
+    }
+
+    [Flags]
+    private enum PendingSettingsSections
+    {
+        None = 0,
+        General = 1,
+        AppBehavior = 2,
+        ManualActions = 4,
+        Llm = 8
+    }
+
     private readonly GeneralSettingsControl _generalSection = new();
     private readonly AppBehaviorSettingsControl _appBehaviorSection = new();
     private readonly ManualContextActionsSettingsControl _manualActionsSection = new();
@@ -27,8 +58,21 @@ public class SettingsForm : Form
 
     private readonly NavList _nav = new();
     private readonly Panel _pages = new();
-    private readonly FlowLayoutPanel _footer = new();
-    private FlatButton _saveBtn = null!, _cancelBtn = null!;
+    private readonly Panel _chromeRoot = new();
+    private readonly System.Windows.Forms.Timer _saveTimer = new() { Interval = 250 };
+    private Control[] _pageOrder = Array.Empty<Control>();
+    private Rectangle _ownerClientBounds;
+    private bool _positioningToOwner;
+    private ResizeEdges _manualResizeEdges;
+    private Point _resizeStartPointer;
+    private Size _resizeStartSize;
+    private bool _manualResizing;
+    private bool _hasPendingChanges;
+    private bool _isCommitting;
+    private PendingSettingsSections _pendingSections;
+    private bool _refreshMainWindow;
+    private bool _refreshMainTheme;
+    private bool _reloadHotkeys;
 
     private readonly Dictionary<string, FlatButton> _hotkeyButtons = new();
     private readonly Dictionary<string, string> _hotkeyEdits = new();
@@ -69,17 +113,23 @@ public class SettingsForm : Form
         "ImageViewerFitSmallDimensionNumpad"
     };
 
+    public event EventHandler<SettingsFormChangedEventArgs>? SettingsChanged;
+
     public SettingsForm()
     {
         Text = Localization.T("settings_title");
-        FormBorderStyle = FormBorderStyle.Sizable;
+        FormBorderStyle = FormBorderStyle.None;
+        AutoScaleMode = AutoScaleMode.Dpi;
         ShowIcon = false;
+        ShowInTaskbar = false;
+        ControlBox = false;
+        MinimizeBox = false;
+        MaximizeBox = false;
         KeyPreview = true;
         MinimumSize = new Size(720, 520);
 
         var s = AppSettings.Current;
-        Width = Math.Max(760, s.SettingsWidth);
-        Height = Math.Max(560, s.SettingsHeight);
+        Size = new Size(Math.Max(760, s.SettingsWidth), Math.Max(560, s.SettingsHeight));
         StartPosition = FormStartPosition.CenterParent;
 
         // The settings window's own design style (square "Flat" is the default).
@@ -94,6 +144,15 @@ public class SettingsForm : Form
         LoadSettings();
         ApplyTheme();
 
+        HookSettingChanges(_generalSection, PendingSettingsSections.General);
+        HookSettingChanges(_appBehaviorSection, PendingSettingsSections.AppBehavior);
+        _manualActionsSection.SettingsChanged += (sender, e) =>
+            QueueSettingsCommit(PendingSettingsSections.ManualActions);
+        HookSettingChanges(_llmSettingsSection, PendingSettingsSections.Llm);
+
+        _saveTimer.Tick += (sender, e) => CommitSettings();
+        FormClosing += (sender, e) => CommitSettings();
+
         this.ResizeEnd += (sender, e) =>
         {
             AppSettings.Current.SettingsWidth = this.Width;
@@ -107,9 +166,240 @@ public class SettingsForm : Form
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
-        Design.Native.UseDarkTitleBar(Handle, Design.Theme.Current.IsDark);
         if (Design.Theme.Style == ThemeStyle.Rounded)
             Design.Native.RoundCorners(Handle);
+    }
+
+    protected override void OnDpiChangedAfterParent(EventArgs e)
+    {
+        base.OnDpiChangedAfterParent(e);
+        KeepCenteredInOwner();
+    }
+
+    protected override void OnResize(EventArgs e)
+    {
+        base.OnResize(e);
+        if (_chromeRoot.IsHandleCreated)
+            UpdateChromePadding();
+        KeepCenteredInOwner();
+    }
+
+    protected override void OnMove(EventArgs e)
+    {
+        base.OnMove(e);
+        KeepCenteredInOwner();
+    }
+
+    /// <summary>Constrains the settings overlay to the owner's client area and keeps it centered.</summary>
+    public void SetOwnerClientBounds(Rectangle bounds)
+    {
+        _ownerClientBounds = bounds;
+        KeepCenteredInOwner();
+    }
+
+    private void KeepCenteredInOwner()
+    {
+        if (_positioningToOwner || _ownerClientBounds.Width <= 0 || _ownerClientBounds.Height <= 0 || IsDisposed)
+            return;
+
+        var limits = GetOwnerSizeLimits();
+        MinimumSize = new Size(limits.MinWidth, limits.MinHeight);
+        MaximumSize = new Size(limits.MaxWidth, limits.MaxHeight);
+        SetCenteredSize(Width, Height);
+    }
+
+    private (int MinWidth, int MinHeight, int MaxWidth, int MaxHeight) GetOwnerSizeLimits()
+    {
+        int margin = ScaleLogical(OwnerClickAwayMargin);
+        int maxWidth = Math.Max(1, _ownerClientBounds.Width - margin * 2);
+        int maxHeight = Math.Max(1, _ownerClientBounds.Height - margin * 2);
+        int minWidth = Math.Min(ScaleLogical(720), Math.Min(maxWidth,
+            Math.Max(ScaleLogical(440), maxWidth * 85 / 100)));
+        int minHeight = Math.Min(ScaleLogical(520), Math.Min(maxHeight,
+            Math.Max(ScaleLogical(360), maxHeight * 85 / 100)));
+        return (minWidth, minHeight, maxWidth, maxHeight);
+    }
+
+    private void SetCenteredSize(int width, int height)
+    {
+        if (_ownerClientBounds.Width <= 0 || _ownerClientBounds.Height <= 0)
+            return;
+
+        var limits = GetOwnerSizeLimits();
+        width = Math.Clamp(width, limits.MinWidth, limits.MaxWidth);
+        height = Math.Clamp(height, limits.MinHeight, limits.MaxHeight);
+        int left = _ownerClientBounds.Left + (_ownerClientBounds.Width - width) / 2;
+        int top = _ownerClientBounds.Top + (_ownerClientBounds.Height - height) / 2;
+
+        _positioningToOwner = true;
+        try { SetBounds(left, top, width, height, BoundsSpecified.All); }
+        finally { _positioningToOwner = false; }
+    }
+
+    public bool IsManualResizing => _manualResizing;
+
+    public bool TryGetResizeCursor(Point screenPoint, out Cursor resizeCursor)
+    {
+        ResizeEdges edges = GetResizeEdges(screenPoint);
+        resizeCursor = CursorForEdges(edges);
+        return edges != ResizeEdges.None;
+    }
+
+    public bool TryBeginManualResize(Point screenPoint)
+    {
+        if (_manualResizing || !TryGetResizeCursor(screenPoint, out var resizeCursor))
+            return false;
+
+        _manualResizeEdges = GetResizeEdges(screenPoint);
+        _resizeStartPointer = screenPoint;
+        _resizeStartSize = Size;
+        _manualResizing = true;
+        Cursor = resizeCursor;
+        Capture = true;
+        Cursor.Current = resizeCursor;
+        return true;
+    }
+
+    private ResizeEdges GetResizeEdges(Point screenPoint)
+    {
+        if (!Bounds.Contains(screenPoint))
+            return ResizeEdges.None;
+
+        int border = ScaleLogical(ResizeBorder);
+        Point point = PointToClient(screenPoint);
+        ResizeEdges edges = ResizeEdges.None;
+        if (point.X <= border) edges |= ResizeEdges.Left;
+        if (point.X >= ClientSize.Width - border) edges |= ResizeEdges.Right;
+        if (point.Y <= border) edges |= ResizeEdges.Top;
+        if (point.Y >= ClientSize.Height - border) edges |= ResizeEdges.Bottom;
+        return edges;
+    }
+
+    private static Cursor CursorForEdges(ResizeEdges edges)
+    {
+        bool horizontal = (edges & (ResizeEdges.Left | ResizeEdges.Right)) != 0;
+        bool vertical = (edges & (ResizeEdges.Top | ResizeEdges.Bottom)) != 0;
+        if (horizontal && vertical)
+        {
+            bool sameDirection = (edges.HasFlag(ResizeEdges.Left) && edges.HasFlag(ResizeEdges.Top)) ||
+                (edges.HasFlag(ResizeEdges.Right) && edges.HasFlag(ResizeEdges.Bottom));
+            return sameDirection ? Cursors.SizeNWSE : Cursors.SizeNESW;
+        }
+        if (horizontal) return Cursors.SizeWE;
+        if (vertical) return Cursors.SizeNS;
+        return Cursors.Default;
+    }
+
+    private void UpdateManualResize(Point screenPoint)
+    {
+        int dx = screenPoint.X - _resizeStartPointer.X;
+        int dy = screenPoint.Y - _resizeStartPointer.Y;
+        int widthDelta = _manualResizeEdges.HasFlag(ResizeEdges.Right) ? dx * 2 :
+            _manualResizeEdges.HasFlag(ResizeEdges.Left) ? -dx * 2 : 0;
+        int heightDelta = _manualResizeEdges.HasFlag(ResizeEdges.Bottom) ? dy * 2 :
+            _manualResizeEdges.HasFlag(ResizeEdges.Top) ? -dy * 2 : 0;
+        SetCenteredSize(_resizeStartSize.Width + widthDelta, _resizeStartSize.Height + heightDelta);
+    }
+
+    private void EndManualResize()
+    {
+        if (!_manualResizing) return;
+        _manualResizing = false;
+        _manualResizeEdges = ResizeEdges.None;
+        Cursor = Cursors.Default;
+        Capture = false;
+        AppSettings.Current.SettingsWidth = Width;
+        AppSettings.Current.SettingsHeight = Height;
+        AppSettings.Current.Save();
+    }
+
+    protected override void WndProc(ref Message m)
+    {
+        const int WmNcHitTest = 0x84;
+        const int WmMouseMove = 0x0200;
+        const int WmLeftButtonUp = 0x0202;
+
+        if (m.Msg == WmMouseMove && _manualResizing)
+        {
+            UpdateManualResize(Cursor.Position);
+            m.Result = IntPtr.Zero;
+            return;
+        }
+
+        if (m.Msg == WmLeftButtonUp && _manualResizing)
+        {
+            EndManualResize();
+            m.Result = (IntPtr)1;
+            return;
+        }
+
+        if (m.Msg == WmNcHitTest)
+        {
+            m.Result = (IntPtr)1; // HTCLIENT: resizing is handled by the app's own edge hit zones.
+            return;
+        }
+
+        if (m.Msg is 0x0085 or 0x0086) // WM_NCPAINT / WM_NCACTIVATE
+        {
+            m.Result = (IntPtr)1;
+            return;
+        }
+
+        base.WndProc(ref m);
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            Design.Theme.Changed -= ApplyTheme;
+            _saveTimer.Stop();
+            _saveTimer.Dispose();
+        }
+        base.Dispose(disposing);
+    }
+
+    private void HookSettingChanges(Control parent, PendingSettingsSections section)
+    {
+        foreach (Control child in parent.Controls)
+        {
+            bool refreshMainWindow = section == PendingSettingsSections.Llm ||
+                (section == PendingSettingsSections.General &&
+                 _generalSection.RequiresMainWindowRefresh(child));
+            bool refreshMainTheme = section == PendingSettingsSections.General &&
+                _generalSection.RequiresMainThemeRefresh(child);
+            switch (child)
+            {
+                case ToggleSwitch toggle:
+                    toggle.CheckedChanged += (sender, e) => QueueSettingsCommit(section, refreshMainWindow, refreshMainTheme);
+                    break;
+                case Dropdown dropdown:
+                    dropdown.ValueChanged += (sender, e) => QueueSettingsCommit(section, refreshMainWindow, refreshMainTheme);
+                    break;
+                case TextField textField:
+                    textField.ValueChanged += (sender, e) => QueueSettingsCommit(section, refreshMainWindow, refreshMainTheme);
+                    break;
+                case SliderField slider:
+                    slider.ValueChanged += (sender, e) => QueueSettingsCommit(section, refreshMainWindow, refreshMainTheme);
+                    break;
+            }
+            HookSettingChanges(child, section);
+        }
+    }
+
+    private void QueueSettingsCommit(
+        PendingSettingsSections sections = PendingSettingsSections.None,
+        bool refreshMainWindow = false,
+        bool refreshMainTheme = false,
+        bool reloadHotkeys = false)
+    {
+        _hasPendingChanges = true;
+        _pendingSections |= sections;
+        _refreshMainWindow |= refreshMainWindow;
+        _refreshMainTheme |= refreshMainTheme;
+        _reloadHotkeys |= reloadHotkeys;
+        _saveTimer.Stop();
+        _saveTimer.Start();
     }
 
     // ---------------------------------------------------------------- layout
@@ -132,46 +422,19 @@ public class SettingsForm : Form
         center.Controls.Add(_nav, 0, 0);
         center.Controls.Add(_pages, 1, 0);
 
-        _footer.Dock = DockStyle.Bottom;
-        _footer.Height = 56;
-        _footer.Padding = new Padding(16, 12, 16, 12);
-        _footer.FlowDirection = FlowDirection.RightToLeft; // save at the far right, cancel next to it
-        _saveBtn = new FlatButton
-        {
-            Text = Localization.T("save_changes"),
-            Kind = ButtonKind.Primary,
-            Size = new Size(MeasureButtonWidth(Localization.T("save_changes")), 32)
-        };
-        _saveBtn.Click += (sender, e) => SaveSettings();
-        _cancelBtn = new FlatButton
-        {
-            Text = Localization.T("cancel"),
-            Kind = ButtonKind.Secondary,
-            Size = new Size(MeasureButtonWidth(Localization.T("cancel")), 32)
-        };
-        _cancelBtn.Click += (sender, e) => { DialogResult = DialogResult.Cancel; Close(); };
-        _footer.Controls.Add(_saveBtn);
-        _footer.Controls.Add(_cancelBtn);
+        _chromeRoot.Dock = DockStyle.Fill;
+        _chromeRoot.Controls.Add(center);
+        _chromeRoot.Padding = new Padding(ScaleLogical(1));
+        Controls.Add(_chromeRoot);
 
-        var root = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            ColumnCount = 1,
-            RowCount = 2
-        };
-        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 56));
-        root.Controls.Add(center, 0, 0);
-        root.Controls.Add(_footer, 0, 1);
-        Controls.Add(root);
-
-        // Pages
-        var pages = new Control[]
+        _pageOrder = new Control[]
         {
             _generalSection, _appBehaviorSection, _manualActionsSection,
             _windowsIntegrationSection, _llmSettingsSection, _hotkeysSection, _aboutSection
         };
-        foreach (var p in pages)
+
+        // Pages
+        foreach (var p in _pageOrder)
         {
             p.Visible = false;
             _pages.Controls.Add(p);
@@ -191,10 +454,10 @@ public class SettingsForm : Form
 
     private void ShowPage(int index)
     {
-        foreach (Control p in _pages.Controls)
+        foreach (Control p in _pageOrder)
             p.Visible = false;
-        if (index >= 0 && index < _pages.Controls.Count)
-            _pages.Controls[index].Visible = true;
+        if (index >= 0 && index < _pageOrder.Length)
+            _pageOrder[index].Visible = true;
     }
 
     // ---------------------------------------------------------------- theme
@@ -205,14 +468,27 @@ public class SettingsForm : Form
         var p = Design.Theme.Current;
         BackColor = p.Page;
         ForeColor = p.Text;
+        _chromeRoot.BackColor = p.IsDark
+            ? Color.FromArgb(45, 45, 48)
+            : Color.FromArgb(214, 214, 220);
+        UpdateChromePadding();
         _pages.BackColor = p.Page;
-        _footer.BackColor = p.Card;
-        foreach (Control page in _pages.Controls) page.BackColor = p.Page;
+        foreach (Control page in _pageOrder)
+        {
+            page.BackColor = p.Page;
+            if (page is SettingsPage settingsPage)
+                settingsPage.ApplyScrollbarTheme();
+        }
         _nav.Invalidate();
         ThemeWalk(this, p);
-        if (IsHandleCreated)
-            Design.Native.UseDarkTitleBar(Handle, p.IsDark);
     }
+
+    private void UpdateChromePadding()
+    {
+        _chromeRoot.Padding = new Padding(ScaleLogical(1));
+    }
+
+    private int ScaleLogical(int pixels) => (int)Math.Round(pixels * (DeviceDpi / 96.0));
 
     private static void ThemeWalk(Control c, Palette p)
     {
@@ -220,7 +496,13 @@ public class SettingsForm : Form
         {
             if (child is IThemed)
             {
-                if (child is NavList) child.BackColor = p.Page; // it doesn't paint its own background
+                if (child is NavList)
+                {
+                    // Match the main window's navigation strip surface (PanelBackground).
+                    child.BackColor = p.IsDark
+                        ? Color.FromArgb(30, 30, 30)
+                        : Color.FromArgb(238, 238, 242);
+                }
                 child.Invalidate();
                 ThemeWalk(child, p);
                 continue;
@@ -370,6 +652,7 @@ public class SettingsForm : Form
             if (_hotkeyButtons.TryGetValue(kvp.Key, out var btn))
                 btn.Text = FormatHotkey(kvp.Value);
         }
+        QueueSettingsCommit(reloadHotkeys: true);
     }
 
     private void HotkeyBtn_Click(string action)
@@ -429,6 +712,7 @@ public class SettingsForm : Form
             var targetBtn = _hotkeyButtons[action];
             targetBtn.Text = FormatHotkey(keyString);
             ResetRecording();
+            QueueSettingsCommit(reloadHotkeys: true);
             e.Handled = true;
             e.SuppressKeyPress = true;
         }
@@ -653,21 +937,50 @@ public class SettingsForm : Form
 
     // ---------------------------------------------------------------- save
 
-    private void SaveSettings()
+    private void CommitSettings()
     {
-        var s = AppSettings.Current;
-        _generalSection.ApplyToSettings(s);
-        _llmSettingsSection.ApplyToSettings(s);
-        _appBehaviorSection.ApplyToSettings(s);
-        _manualActionsSection.ApplyToSettings(s);
+        _saveTimer.Stop();
+        if (!_hasPendingChanges || _isCommitting) return;
 
-        foreach (var kvp in _hotkeyEdits) s.Hotkeys[kvp.Key] = kvp.Value;
-        s.Save();
-        StartupService.SyncWithSettings();
-        try { Program.MultiWindowContext.Instance.SetTrayIconVisible(_generalSection.ShowTrayIcon); }
-        catch (Exception ex) { Debug.WriteLine(ex); }
+        _isCommitting = true;
+        try
+        {
+            var s = AppSettings.Current;
+            bool generalChanged = _pendingSections.HasFlag(PendingSettingsSections.General);
+            bool startupChanged = generalChanged && s.RunAtStartup != _generalSection.RunAtStartup;
+            bool trayIconChanged = generalChanged && s.ShowTrayIcon != _generalSection.ShowTrayIcon;
+            if (generalChanged)
+                _generalSection.ApplyToSettings(s);
+            if (_pendingSections.HasFlag(PendingSettingsSections.Llm))
+                _llmSettingsSection.ApplyToSettings(s);
+            if (_pendingSections.HasFlag(PendingSettingsSections.AppBehavior))
+                _appBehaviorSection.ApplyToSettings(s);
+            if (_pendingSections.HasFlag(PendingSettingsSections.ManualActions))
+                _manualActionsSection.ApplyToSettings(s);
 
-        DialogResult = DialogResult.OK;
-        Close();
+            if (_reloadHotkeys)
+                foreach (var kvp in _hotkeyEdits) s.Hotkeys[kvp.Key] = kvp.Value;
+            s.Save();
+            if (startupChanged)
+                StartupService.SyncWithSettings();
+            if (trayIconChanged)
+            {
+                try { Program.MultiWindowContext.Instance.SetTrayIconVisible(_generalSection.ShowTrayIcon); }
+                catch (Exception ex) { Debug.WriteLine(ex); }
+            }
+            Design.Theme.Refresh();
+
+            _hasPendingChanges = false;
+            var change = new SettingsFormChangedEventArgs(_refreshMainWindow, _refreshMainTheme, _reloadHotkeys);
+            _pendingSections = PendingSettingsSections.None;
+            _refreshMainWindow = false;
+            _refreshMainTheme = false;
+            _reloadHotkeys = false;
+            SettingsChanged?.Invoke(this, change);
+        }
+        finally
+        {
+            _isCommitting = false;
+        }
     }
 }

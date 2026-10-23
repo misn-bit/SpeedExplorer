@@ -20,13 +20,18 @@ internal sealed class ManualContextActionsSettingsControl : SettingsPage
     private readonly List<ManualContextAction> _actions = new();
     private bool _updating = false;
 
+    public event EventHandler? SettingsChanged;
+
     public ManualContextActionsSettingsControl() : base(Localization.T("context_menu_tab"))
     {
         Font = new Font("Segoe UI", 10);
 
         var group = new SettingsGroup();
 
-        _list = new ListBox { Dock = DockStyle.Fill, Height = 120 };
+        // This list is a stacked row inside a content-sized SettingsGroup. Docking it to
+        // Fill lets the parent's layout feed the available height back into the card,
+        // which can make the Actions row grow to the full page height.
+        _list = new ListBox { Height = 104, IntegralHeight = false };
         _list.SelectedIndexChanged += (s, e) => LoadSelected();
         group.AddRow(Localization.T("actions_list"), string.Empty, _list, stacked: true);
 
@@ -68,6 +73,7 @@ internal sealed class ManualContextActionsSettingsControl : SettingsPage
         _nameBox.ValueChanged += (s, e) => ApplyEdits();
         _commandBox.ValueChanged += (s, e) => ApplyEdits();
         _argsBox.ValueChanged += (s, e) => ApplyEdits();
+        _appliesToBox.ValueChanged += (s, e) => ApplyEdits();
         _extensionsBox.ValueChanged += (s, e) => ApplyEdits();
         _workingDirBox.ValueChanged += (s, e) => ApplyEdits();
         _allowMultipleChk.CheckedChanged += (s, e) => ApplyEdits();
@@ -132,6 +138,7 @@ internal sealed class ManualContextActionsSettingsControl : SettingsPage
         _actions.Add(action);
         RefreshList();
         _list.SelectedIndex = _actions.Count - 1;
+        SettingsChanged?.Invoke(this, EventArgs.Empty);
     }
 
     private void DeleteSelected()
@@ -142,6 +149,7 @@ internal sealed class ManualContextActionsSettingsControl : SettingsPage
         RefreshList();
         if (_actions.Count > 0)
             _list.SelectedIndex = Math.Min(old, _actions.Count - 1);
+        SettingsChanged?.Invoke(this, EventArgs.Empty);
     }
 
     private void ApplyEdits()
@@ -164,5 +172,7 @@ internal sealed class ManualContextActionsSettingsControl : SettingsPage
         string display = string.IsNullOrWhiteSpace(a.Name) ? "Unnamed" : a.Name;
         if (_list.Items[_list.SelectedIndex]?.ToString() != display)
             _list.Items[_list.SelectedIndex] = display;
+
+        SettingsChanged?.Invoke(this, EventArgs.Empty);
     }
 }

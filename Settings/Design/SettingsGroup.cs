@@ -4,6 +4,7 @@ using System.ComponentModel;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
 namespace SpeedExplorer.Design;
@@ -237,7 +238,14 @@ internal sealed class SettingsGroup : Control
 /// <summary>One page of settings: a heading, then section labels and cards flowing top to bottom.</summary>
 internal class SettingsPage : FlowLayoutPanel
 {
+    private const int WmThemeChanged = 0x031A;
     private readonly Font _headingFont = new("Segoe UI Semibold", Metrics.HeadingPoints, GraphicsUnit.Point);
+
+    [DllImport("uxtheme.dll", CharSet = CharSet.Unicode)]
+    private static extern int SetWindowTheme(IntPtr hWnd, string? pszSubAppName, string? pszSubIdList);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "SendMessageW")]
+    private static extern IntPtr SendWindowMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
 
     [Browsable(false)]
     [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
@@ -258,6 +266,20 @@ internal class SettingsPage : FlowLayoutPanel
             Font = _headingFont,
             Margin = new Padding(0, 0, 0, 4),
         });
+    }
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        ApplyScrollbarTheme();
+    }
+
+    public void ApplyScrollbarTheme()
+    {
+        if (!IsHandleCreated) return;
+        SetWindowTheme(Handle, Theme.Current.IsDark ? "DarkMode_Explorer" : "Explorer", null);
+        SendWindowMessage(Handle, WmThemeChanged, IntPtr.Zero, IntPtr.Zero);
+        Invalidate();
     }
 
     public void AddSection(string? label, SettingsGroup group)

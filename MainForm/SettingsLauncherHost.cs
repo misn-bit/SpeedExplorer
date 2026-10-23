@@ -5,6 +5,6 @@ namespace SpeedExplorer;
 internal interface ISettingsLauncherHost
 {
     Form OwnerWindow { get; }
-    void ApplySettings();
+    void ApplySettings(bool refreshCurrent = true, bool applyTheme = true);
     void ReloadHotkeys();
 }

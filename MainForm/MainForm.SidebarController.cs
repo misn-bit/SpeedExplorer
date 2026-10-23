@@ -26,6 +26,7 @@ public partial class MainForm
         private static readonly string[] SidebarBlockOrderDefault = { "portable", "common", "pinned", "recent" };
         private const int GWL_STYLE = -16;
         private const int TVS_NOHSCROLL = 0x8000;
+        private const int TVS_NOSCROLL = 0x2000;
 
         [DllImport("user32.dll", SetLastError = true)]
         private static extern int GetWindowLong(IntPtr hWnd, int nIndex);
@@ -218,16 +219,19 @@ public partial class MainForm
             try
             {
                 int style = GetWindowLong(tree.Handle, GWL_STYLE);
-                if ((style & TVS_NOHSCROLL) == 0)
+                int updatedStyle = style | TVS_NOHSCROLL;
+                if (AppSettings.Current.ShowSidebarVerticalScrollbar)
+                    updatedStyle &= ~TVS_NOSCROLL;
+                else
+                    updatedStyle |= TVS_NOSCROLL;
+
+                if (updatedStyle != style)
                 {
-                    SetWindowLong(tree.Handle, GWL_STYLE, style | TVS_NOHSCROLL);
+                    SetWindowLong(tree.Handle, GWL_STYLE, updatedStyle);
                     SetWindowPos(tree.Handle, IntPtr.Zero, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
                 }
             }
             catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
-
-            try { ShowScrollBar(tree.Handle, SB_HORZ, false); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
-            try { ShowScrollBar(tree.Handle, SB_VERT, AppSettings.Current.ShowSidebarVerticalScrollbar); } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
         }
 
         private static void ScrollSidebarByWheel(TreeView tree, int delta)
@@ -853,5 +857,6 @@ public partial class MainForm
                 }
             }
         }
+
     }
 }

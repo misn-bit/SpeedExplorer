@@ -78,13 +78,14 @@ public partial class MainForm
             _owner.RefreshFrame();
         }
 
-        public void ApplySettings(bool refreshCurrent = true)
+        public void ApplySettings(bool refreshCurrent = true, bool applyTheme = true)
         {
             var s = AppSettings.Current;
             if (_owner._listView == null || _owner._listView.IsDisposed)
                 return;
 
-            _owner._themeController.ApplyMainWindowTheme();
+            if (applyTheme)
+                _owner._themeController.ApplyMainWindowTheme();
 
             int selectedIndexBefore = -1;
             try

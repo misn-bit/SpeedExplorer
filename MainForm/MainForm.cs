@@ -869,8 +869,8 @@ public partial class MainForm : Form, IFileOperationsHost, IShellActionsHost, IO
         catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
     }
 
-    private void ApplySettings(bool refreshCurrent = true)
-        => _uiSettingsController.ApplySettings(refreshCurrent);
+    private void ApplySettings(bool refreshCurrent = true, bool applyTheme = true)
+        => _uiSettingsController.ApplySettings(refreshCurrent, applyTheme);
 
     private bool IsDriveItemsOnly()
         => _startupNavigationController.IsDriveItemsOnly();

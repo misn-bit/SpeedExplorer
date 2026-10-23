@@ -46,9 +46,6 @@ public partial class MainForm
     [DllImport("user32.dll")]
     private static extern bool RedrawWindow(IntPtr hWnd, IntPtr lprcUpdate, IntPtr hrgnUpdate, uint flags);
 
-    [DllImport("user32.dll")]
-    private static extern bool ShowScrollBar(IntPtr hWnd, int wBar, bool bShow);
-
     [DllImport("dwmapi.dll")]
     private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
 
@@ -62,8 +59,6 @@ public partial class MainForm
     [DllImport("user32.dll", EntryPoint = "SendMessage")]
     private static extern IntPtr SendMessagePtr(IntPtr hWnd, int Msg, IntPtr wParam, IntPtr lParam);
 
-    private const int SB_HORZ = 0;
-    private const int SB_VERT = 1;
     private const int SIF_ALL = 0x17;
     private const int LVM_GETHEADER = 0x101F;
 

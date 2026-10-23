@@ -171,6 +171,27 @@ internal sealed class GeneralSettingsControl : SettingsPage
     }
 
     public bool ShowTrayIcon => _showTrayIconChk.Checked;
+    public bool RunAtStartup => _runAtStartupChk.Checked;
+
+    public bool RequiresMainWindowRefresh(Control changedControl) =>
+        ReferenceEquals(changedControl, _fontSizeSlider) ||
+        ReferenceEquals(changedControl, _iconSizeSlider) ||
+        ReferenceEquals(changedControl, _themeDrop) ||
+        ReferenceEquals(changedControl, _showIconsChk) ||
+        ReferenceEquals(changedControl, _useEmojiChk) ||
+        ReferenceEquals(changedControl, _useSystemIconsChk) ||
+        ReferenceEquals(changedControl, _resolveUniqueChk) ||
+        ReferenceEquals(changedControl, _showThumbnailsChk) ||
+        ReferenceEquals(changedControl, _showRecentChk) ||
+        ReferenceEquals(changedControl, _showCommonChk) ||
+        ReferenceEquals(changedControl, _showDesktopChk) ||
+        ReferenceEquals(changedControl, _showDocumentsChk) ||
+        ReferenceEquals(changedControl, _showDownloadsChk) ||
+        ReferenceEquals(changedControl, _showPicturesChk) ||
+        ReferenceEquals(changedControl, _showSidebarVScrollChk);
+
+    public bool RequiresMainThemeRefresh(Control changedControl) =>
+        ReferenceEquals(changedControl, _themeDrop);
 
     /// <summary>Re-applies enabled/disabled state for dependent toggles.</summary>
     public void UpdateToggles()
