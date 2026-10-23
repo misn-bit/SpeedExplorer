@@ -6,10 +6,10 @@ namespace SpeedExplorer.Design;
 internal sealed record Palette(
     bool IsDark,
     Color Page,       // window background
-    Color Card,       // surface behind controls (same as Page in the flat style)
+    Color Card,       // group surface behind controls
     Color Border,     // card outline and row dividers
     Color Text,
-    Color TextDim,    // descriptions, section labels
+    Color TextDim,    // descriptions and supporting text
     Color Accent,
     Color OnAccent,   // thumb / text drawn on top of Accent
     Color Selected,   // selected nav item (rounded) / hovered list row (flat)
@@ -65,12 +65,12 @@ internal static class Theme
         FieldHover: Color.FromArgb(60, 60, 60),
         Danger: Color.FromArgb(255, 153, 164));
 
-    // Flat: one surface color everywhere, structure comes from hairlines. Accent is the classic
+    // Flat: square groups use a subtle surface contrast and hairline borders. Accent is the classic
     // Windows selection blue, with white text on top of it.
     private static readonly Palette FlatLight = new(
         IsDark: false,
         Page: Color.FromArgb(250, 250, 250),
-        Card: Color.FromArgb(250, 250, 250),
+        Card: Color.FromArgb(255, 255, 255),
         Border: Color.FromArgb(222, 222, 222),
         Text: Color.FromArgb(28, 28, 28),
         TextDim: Color.FromArgb(105, 105, 105),
@@ -86,7 +86,7 @@ internal static class Theme
     private static readonly Palette FlatDark = new(
         IsDark: true,
         Page: Color.FromArgb(30, 30, 30),
-        Card: Color.FromArgb(30, 30, 30),
+        Card: Color.FromArgb(38, 38, 38),
         Border: Color.FromArgb(62, 62, 62),
         Text: Color.FromArgb(240, 240, 240),
         TextDim: Color.FromArgb(158, 158, 158),

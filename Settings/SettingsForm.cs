@@ -549,9 +549,12 @@ public class SettingsForm : Form
         _aboutSection.Controls.Add(PageLabel(Localization.T("codex")));
         _aboutSection.Controls.Add(codex);
 
+        var honorableMention = new SettingsGroup();
+        honorableMention.AddRow(Localization.T("ran_locally"), string.Empty, CloneHost());
+        _aboutSection.Controls.Add(PageLabel(Localization.T("honorable_mention")));
+        _aboutSection.Controls.Add(honorableMention);
+
         var misc = new SettingsGroup();
-        misc.AddRow(Localization.T("honorable_mention"), string.Empty, CloneHost());
-        misc.AddRow(Localization.T("ran_locally"), string.Empty, CloneHost());
         misc.AddButton(Localization.T("directed_by"), string.Empty, Localization.T("view_license"), ButtonKind.Secondary, ViewLicense);
         _aboutSection.Controls.Add(misc);
     }
@@ -560,7 +563,7 @@ public class SettingsForm : Form
     {
         Text = text,
         AutoSize = true,
-        Tag = "dim",
+        Tag = "section-title",
         Margin = new Padding(2, 16, 0, 6)
     };
 

@@ -183,10 +183,11 @@ internal sealed class SettingsGroup : Control
 
         if (Theme.Flat)
         {
-            // no card: just a hairline above and below the group
+            // Keep the square flat style, while giving each group its own surface.
+            using (var fill = new SolidBrush(p.Card))
+                g.FillRectangle(fill, ClientRectangle);
             using var edge = new Pen(p.Border);
-            g.DrawLine(edge, 0, 0, Width, 0);
-            g.DrawLine(edge, 0, Height - 1, Width, Height - 1);
+            g.DrawRectangle(edge, 0, 0, Width - 1, Height - 1);
         }
         else
         {
@@ -285,7 +286,7 @@ internal class SettingsPage : FlowLayoutPanel
     public void AddSection(string? label, SettingsGroup group)
     {
         if (label is not null)
-            Controls.Add(new Label { Text = label, AutoSize = true, Tag = "dim", Margin = new Padding(2, 16, 0, 6) });
+            Controls.Add(new Label { Text = label, AutoSize = true, Tag = "section-title", Margin = new Padding(2, 16, 0, 6) });
         Controls.Add(group);
     }
 
