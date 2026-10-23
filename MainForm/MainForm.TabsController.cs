@@ -76,7 +76,7 @@ public partial class MainForm
             _tabs.Clear();
             _tabStrip.Controls.Clear();
 
-            var startPath = initialPath ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            var startPath = initialPath ?? _owner.GetDefaultNewLocation();
             var tab = CreateTab(startPath);
             _tabs.Add(tab);
             _activeTabIndex = 0;
@@ -223,7 +223,7 @@ public partial class MainForm
         public void AddNewTab()
         {
             SaveCurrentTabState();
-            var startPath = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            var startPath = _owner.GetDefaultNewLocation();
             var tab = CreateTab(startPath);
             _tabs.Add(tab);
             int newIndex = _tabs.Count - 1;

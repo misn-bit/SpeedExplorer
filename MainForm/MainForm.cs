@@ -710,8 +710,9 @@ public partial class MainForm : Form, IFileOperationsHost, IShellActionsHost, IO
         this.KeyUp += (s, e) => { if (_hotkeyController.IsActionKeyCode("QuickLook", e.KeyCode)) HideQuickLook(); };
 
         CaptureStartupImageCandidate(initialPath);
+        var startupPath = initialPath ?? GetDefaultNewLocation();
         bool inferStartupSelection = !string.IsNullOrWhiteSpace(initialPath);
-        var normalizedStartup = NormalizeStartupPath(initialPath, out _startupSelectPaths, inferStartupSelection);
+        var normalizedStartup = NormalizeStartupPath(startupPath, out _startupSelectPaths, inferStartupSelection);
         _fastStartup = _startupSelectPaths != null && _startupSelectPaths.Count > 0;
         InitializeTabs(normalizedStartup);
 
@@ -786,6 +787,16 @@ public partial class MainForm : Form, IFileOperationsHost, IShellActionsHost, IO
     protected override bool ShowWithoutActivation => _preloadOnly || base.ShowWithoutActivation;
 
     private void InitializeTabs(string? initialPath) => _tabsController.InitializeTabs(initialPath);
+
+    private string GetDefaultNewLocation()
+    {
+        var configuredPath = AppSettings.Current.DefaultNewTabPath;
+        if (string.IsNullOrWhiteSpace(configuredPath) ||
+            string.Equals(configuredPath, ThisPcPath, StringComparison.OrdinalIgnoreCase))
+            return ThisPcPath;
+
+        return Directory.Exists(configuredPath) ? configuredPath : ThisPcPath;
+    }
 
     private string NormalizeStartupPath(string? input, out List<string>? selectPaths, bool inferRecentSelectionForDirectory = false)
         => _startupIconController.NormalizeStartupPath(input, out selectPaths, inferRecentSelectionForDirectory);

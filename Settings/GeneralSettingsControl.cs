@@ -14,6 +14,7 @@ internal sealed class GeneralSettingsControl : SettingsPage
     private Dropdown _designDrop = null!;
     private Dropdown _themeDrop = null!;
     private Dropdown _languageDrop = null!;
+    private Dropdown _textFontDrop = null!;
 
     private ToggleSwitch _runAtStartupChk = null!, _runInBackgroundChk = null!, _showTrayIconChk = null!;
     private ToggleSwitch _showIconsChk = null!, _useEmojiChk = null!, _useSystemIconsChk = null!;
@@ -22,6 +23,7 @@ internal sealed class GeneralSettingsControl : SettingsPage
     private ToggleSwitch _showDesktopChk = null!, _showDocumentsChk = null!;
     private ToggleSwitch _showDownloadsChk = null!, _showPicturesChk = null!;
     private ToggleSwitch _showSidebarVScrollChk = null!;
+    private ToggleSwitch _showSidebarIconsChk = null!, _useEmojiSidebarIconsChk = null!, _useColoredSidebarIconsChk = null!;
     private ToggleSwitch _debugNavLogChk = null!, _debugNavGcChk = null!, _debugNavUiQueueChk = null!;
     private ToggleSwitch _debugNavPostBindChk = null!, _debugCrashLogChk = null!, _debugShellLogChk = null!;
 
@@ -35,6 +37,10 @@ internal sealed class GeneralSettingsControl : SettingsPage
         var appearance = new SettingsGroup();
         _fontSizeSlider = appearance.AddSlider(
             Localization.T("font_size"), string.Empty, 8, 24, 1, 12, " pt", _ => { });
+        _textFontDrop = appearance.AddDropdown(
+            Localization.T("text_font"), Localization.T("text_font_desc"),
+            FontFamilyCatalog.DefaultFamilyName, string.Empty, string.Empty, _ => { });
+        _textFontDrop.SetItems(FontFamilyCatalog.TextFamilies);
         _iconSizeSlider = appearance.AddSlider(
             Localization.T("icon_size"), Localization.T("icon_size_desc"), 16, 192, 8, 48, " px", _ => { });
 
@@ -75,6 +81,14 @@ internal sealed class GeneralSettingsControl : SettingsPage
         _showThumbnailsChk = icons.AddToggle(Localization.T("show_thumbnails"), string.Empty, false, _ => { });
         AddGroup(Localization.T("icons_section"), icons);
 
+        var sidebarIcons = new SettingsGroup();
+        _showSidebarIconsChk = sidebarIcons.AddToggle(Localization.T("show_sidebar_icons"), Localization.T("show_sidebar_icons_desc"), true,
+            _ => UpdateToggles());
+        _useEmojiSidebarIconsChk = sidebarIcons.AddToggle(Localization.T("use_emoji_sidebar_icons"), Localization.T("use_emoji_sidebar_icons_desc"), false,
+            _ => UpdateToggles());
+        _useColoredSidebarIconsChk = sidebarIcons.AddToggle(Localization.T("use_colored_sidebar_icons"), Localization.T("use_colored_sidebar_icons_desc"), true, _ => { });
+        AddGroup(Localization.T("sidebar_icons_section"), sidebarIcons);
+
         // Windows folders
         var folders = new SettingsGroup();
         _showRecentChk = folders.AddToggle(Localization.T("recent_folders"), string.Empty, false, _ => { });
@@ -112,12 +126,16 @@ internal sealed class GeneralSettingsControl : SettingsPage
     public void LoadFromSettings(AppSettings s)
     {
         _fontSizeSlider.Value = Math.Clamp(s.FontSize, 8, 24);
+        _textFontDrop.Value = FontFamilyCatalog.ResolveTextFamily(s.TextFontFamily);
         _iconSizeSlider.Value = Math.Clamp(s.IconSize, 16, 192);
         _showIconsChk.Checked = s.ShowIcons;
         _useEmojiChk.Checked = s.UseEmojiIcons;
         _useSystemIconsChk.Checked = s.UseSystemIcons;
         _resolveUniqueChk.Checked = s.ResolveUniqueIcons;
         _showThumbnailsChk.Checked = s.ShowThumbnails;
+        _showSidebarIconsChk.Checked = s.ShowSidebarIcons;
+        _useEmojiSidebarIconsChk.Checked = s.UseEmojiSidebarIcons;
+        _useColoredSidebarIconsChk.Checked = s.UseColoredSidebarIcons;
         _showCommonChk.Checked = s.ShowSidebarCommon;
         _showDesktopChk.Checked = s.ShowSidebarDesktop;
         _showDocumentsChk.Checked = s.ShowSidebarDocuments;
@@ -143,12 +161,16 @@ internal sealed class GeneralSettingsControl : SettingsPage
     public void ApplyToSettings(AppSettings s)
     {
         s.FontSize = _fontSizeSlider.Value;
+        s.TextFontFamily = FontFamilyCatalog.ResolveTextFamily(_textFontDrop.Value);
         s.IconSize = _iconSizeSlider.Value;
         s.ShowIcons = _showIconsChk.Checked;
         s.UseEmojiIcons = _useEmojiChk.Checked;
         s.UseSystemIcons = _useSystemIconsChk.Checked;
         s.ResolveUniqueIcons = _resolveUniqueChk.Checked;
         s.ShowThumbnails = _showThumbnailsChk.Checked;
+        s.ShowSidebarIcons = _showSidebarIconsChk.Checked;
+        s.UseEmojiSidebarIcons = _useEmojiSidebarIconsChk.Checked;
+        s.UseColoredSidebarIcons = _useColoredSidebarIconsChk.Checked;
         s.ShowSidebarCommon = _showCommonChk.Checked;
         s.ShowSidebarDesktop = _showDesktopChk.Checked;
         s.ShowSidebarDocuments = _showDocumentsChk.Checked;
@@ -175,6 +197,7 @@ internal sealed class GeneralSettingsControl : SettingsPage
 
     public bool RequiresMainWindowRefresh(Control changedControl) =>
         ReferenceEquals(changedControl, _fontSizeSlider) ||
+        ReferenceEquals(changedControl, _textFontDrop) ||
         ReferenceEquals(changedControl, _iconSizeSlider) ||
         ReferenceEquals(changedControl, _themeDrop) ||
         ReferenceEquals(changedControl, _showIconsChk) ||
@@ -182,6 +205,9 @@ internal sealed class GeneralSettingsControl : SettingsPage
         ReferenceEquals(changedControl, _useSystemIconsChk) ||
         ReferenceEquals(changedControl, _resolveUniqueChk) ||
         ReferenceEquals(changedControl, _showThumbnailsChk) ||
+        ReferenceEquals(changedControl, _showSidebarIconsChk) ||
+        ReferenceEquals(changedControl, _useEmojiSidebarIconsChk) ||
+        ReferenceEquals(changedControl, _useColoredSidebarIconsChk) ||
         ReferenceEquals(changedControl, _showRecentChk) ||
         ReferenceEquals(changedControl, _showCommonChk) ||
         ReferenceEquals(changedControl, _showDesktopChk) ||
@@ -202,6 +228,11 @@ internal sealed class GeneralSettingsControl : SettingsPage
         _useSystemIconsChk.Enabled = show && !emoji;
         _resolveUniqueChk.Enabled = show && !emoji;
         _showThumbnailsChk.Enabled = show && !emoji;
+
+        bool showSidebarIcons = _showSidebarIconsChk.Checked;
+        bool emojiSidebarIcons = _useEmojiSidebarIconsChk.Checked;
+        _useEmojiSidebarIconsChk.Enabled = showSidebarIcons;
+        _useColoredSidebarIconsChk.Enabled = showSidebarIcons && !emojiSidebarIcons;
 
         bool common = _showCommonChk.Checked;
         _showDesktopChk.Enabled = common;

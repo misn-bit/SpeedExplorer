@@ -36,6 +36,12 @@ public partial class MainForm
         private static readonly StringFormat SfNear = CreateSf(StringAlignment.Near);
         private static readonly StringFormat SfCenter = CreateSf(StringAlignment.Center);
         private static readonly StringFormat SfFar = CreateSf(StringAlignment.Far);
+        private static readonly (string Prefix, string Glyph)[] EmojiPrefixes =
+        {
+            ("📁 ", "📁"),
+            ("🖼️ ", "🖼️"),
+            ("📄 ", "📄")
+        };
 
         private static StringFormat CreateSf(StringAlignment alignment) => new()
         {
@@ -51,6 +57,23 @@ public partial class MainForm
             HorizontalAlignment.Center => SfCenter,
             _ => SfNear
         };
+
+        private static bool TryGetEmojiPrefix(string text, out string emoji, out int prefixLength)
+        {
+            foreach (var (prefix, glyph) in EmojiPrefixes)
+            {
+                if (!text.StartsWith(prefix, StringComparison.Ordinal))
+                    continue;
+
+                emoji = glyph;
+                prefixLength = prefix.Length;
+                return true;
+            }
+
+            emoji = string.Empty;
+            prefixLength = 0;
+            return false;
+        }
 
         public ListViewRenderController(MainForm owner)
         {
@@ -72,10 +95,13 @@ public partial class MainForm
         {
             private readonly Dictionary<int, SolidBrush> _brushes = new();
             private readonly Dictionary<int, Pen> _pens = new();
+            private readonly Dictionary<(string Emoji, float FontSize, GraphicsUnit Unit, float DpiX), float> _emojiWidths = new();
             private Font? _tagFont;
             private string? _tagFontKey;
             private Font? _italicFont;
             private string? _italicFontKey;
+            private Font? _emojiFont;
+            private string? _emojiFontKey;
 
             public SolidBrush Brush(Color color)
             {
@@ -123,14 +149,39 @@ public partial class MainForm
                 return _italicFont;
             }
 
+            public Font EmojiFont(Font baseFont)
+            {
+                string key = $"{baseFont.FontFamily.Name}|{baseFont.Size}|{baseFont.Unit}|{baseFont.Style}";
+                if (_emojiFont == null || _emojiFontKey != key)
+                {
+                    _emojiFont?.Dispose();
+                    _emojiFont = new Font("Segoe UI Emoji", baseFont.Size, baseFont.Style, baseFont.Unit);
+                    _emojiFontKey = key;
+                }
+                return _emojiFont;
+            }
+
+            public float EmojiWidth(Graphics g, string emoji, Font font)
+            {
+                var key = (emoji, font.Size, font.Unit, g.DpiX);
+                if (!_emojiWidths.TryGetValue(key, out float width))
+                {
+                    width = g.MeasureString(emoji, font, PointF.Empty, SfNear).Width;
+                    _emojiWidths[key] = width;
+                }
+                return width;
+            }
+
             public void Reset()
             {
                 foreach (var b in _brushes.Values) b.Dispose();
                 _brushes.Clear();
                 foreach (var p in _pens.Values) p.Dispose();
                 _pens.Clear();
+                _emojiWidths.Clear();
                 _tagFont?.Dispose(); _tagFont = null; _tagFontKey = null;
                 _italicFont?.Dispose(); _italicFont = null; _italicFontKey = null;
+                _emojiFont?.Dispose(); _emojiFont = null; _emojiFontKey = null;
             }
 
             public void Dispose() => Reset();
@@ -349,10 +400,32 @@ public partial class MainForm
 
             var textX = x + iconWidth;
             var textRect = new Rectangle(textX, bounds.Y, bounds.Width - (textX - bounds.X), bounds.Height);
-            var drawFont = isProgressRow
-                ? _gdi.ItalicFont(_owner._listView.Font)
-                : _owner._listView.Font;
-            g.DrawString(displayText, drawFont, textBrush, textRect, SfNear);
+            if (s.ShowIcons && s.UseEmojiIcons && drawItem.ImageKey == "_emoji_" &&
+                TryGetEmojiPrefix(displayText, out var emoji, out int prefixLength))
+            {
+                var emojiFont = _gdi.EmojiFont(_owner._listView.Font);
+                g.DrawString(emoji, emojiFont, textBrush, textRect, SfNear);
+
+                float emojiWidth = _gdi.EmojiWidth(g, emoji, emojiFont);
+                int nameOffset = (int)Math.Ceiling(emojiWidth) + _owner.Scale(3);
+                var nameRect = new Rectangle(
+                    textRect.X + nameOffset,
+                    textRect.Y,
+                    Math.Max(0, textRect.Width - nameOffset),
+                    textRect.Height);
+                var nameFont = isProgressRow ? _gdi.ItalicFont(_owner._listView.Font) : _owner._listView.Font;
+                string name = drawItem.Tag is FileItem fileItem
+                    ? fileItem.Name
+                    : displayText.Substring(prefixLength);
+                g.DrawString(name, nameFont, textBrush, nameRect, SfNear);
+            }
+            else
+            {
+                var drawFont = isProgressRow
+                    ? _gdi.ItalicFont(_owner._listView.Font)
+                    : _owner._listView.Font;
+                g.DrawString(displayText, drawFont, textBrush, textRect, SfNear);
+            }
         }
 
         public void DrawSubItem(object? sender, DrawListViewSubItemEventArgs e)

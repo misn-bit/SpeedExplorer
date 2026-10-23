@@ -81,7 +81,7 @@ public partial class MainForm
                 ForeColor = _owner.ForeColor_Dark,
                 BorderStyle = BorderStyle.None,
                 FullRowSelect = true,
-                Font = new Font("Segoe UI Emoji", AppSettings.Current.FontSize),
+                Font = new Font(FontFamilyCatalog.ResolveTextFamily(AppSettings.Current.TextFontFamily), AppSettings.Current.FontSize),
                 SmallImageList = _owner._smallIcons,
                 LargeImageList = _owner._largeIcons,
                 OwnerDraw = true

@@ -9,12 +9,14 @@ public partial class MainForm
     {
         private readonly MainForm _owner;
         private int _appliedListViewFontSize;
+        private string _appliedListViewFontFamily;
         private BrowserState State => _owner.State;
 
         public UiSettingsController(MainForm owner)
         {
             _owner = owner;
             _appliedListViewFontSize = AppSettings.Current.FontSize;
+            _appliedListViewFontFamily = FontFamilyCatalog.ResolveTextFamily(AppSettings.Current.TextFontFamily);
         }
 
         public void UpdateScale()
@@ -107,11 +109,18 @@ public partial class MainForm
                 // Zoom and other settings refreshes also pass through here.
                 // Reassigning the raw settings size on each refresh discards
                 // WinForms' DPI-scaled font after a monitor DPI change.
-                if (_appliedListViewFontSize != s.FontSize)
+                string textFontFamily = FontFamilyCatalog.ResolveTextFamily(s.TextFontFamily);
+                if (_appliedListViewFontSize != s.FontSize ||
+                    !string.Equals(_appliedListViewFontFamily, textFontFamily, StringComparison.OrdinalIgnoreCase))
                 {
-                    _owner._listView.Font = new Font("Segoe UI Emoji", s.FontSize);
+                    _owner._listView.Font = new Font(textFontFamily, s.FontSize);
                     _appliedListViewFontSize = s.FontSize;
+                    _appliedListViewFontFamily = textFontFamily;
                 }
+
+                if (_owner._sidebar is { IsDisposed: false } sidebar &&
+                    !string.Equals(sidebar.Font.FontFamily.Name, textFontFamily, StringComparison.OrdinalIgnoreCase))
+                    sidebar.Font = new Font(textFontFamily, sidebar.Font.Size, sidebar.Font.Style, sidebar.Font.Unit);
 
                 // Recreate ImageLists at the DPI-scaled icon size
                 _owner._iconLoadService?.CancelPending(); // Clear pending async loads

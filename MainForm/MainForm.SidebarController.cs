@@ -15,6 +15,15 @@ public partial class MainForm
     {
         private readonly MainForm _owner;
         private TreeView? _tree;
+        private ImageList? _sidebarSystemImages;
+        private readonly Dictionary<string, string> _sidebarImageKeys = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, Bitmap> _sidebarIconBitmaps = new(StringComparer.OrdinalIgnoreCase);
+        private readonly HashSet<string> _sidebarImageKeysInUse = new(StringComparer.OrdinalIgnoreCase);
+        private int _sidebarImageSize;
+        private bool _sidebarImageColored;
+        private Font? _emojiFont;
+        private string? _emojiFontKey;
+        private readonly Dictionary<(string Emoji, int Dpi), int> _emojiWidths = new();
 
         private TreeNode? _hoveredNode;
         private string? _dragPath;
@@ -26,6 +35,14 @@ public partial class MainForm
         private static readonly string[] SidebarBlockOrderDefault = { "portable", "common", "pinned", "recent" };
         private const int GWL_STYLE = -16;
         private const int TVS_NOHSCROLL = 0x8000;
+        private static readonly (string Prefix, string Glyph)[] SidebarEmojiPrefixes =
+        {
+            ("🖥️ ", "🖥️"), ("💾 ", "💾"), ("📱 ", "📱"), ("📂 ", "📂"),
+            ("🖼️ ", "🖼️"), ("🎬 ", "🎬"), ("🎵 ", "🎵"), ("📝 ", "📝"),
+            ("📕 ", "📕"), ("📘 ", "📘"), ("📗 ", "📗"), ("📦 ", "📦"),
+            ("⚙️ ", "⚙️"), ("🔧 ", "🔧"), ("💻 ", "💻"), ("🌐 ", "🌐"),
+            ("📋 ", "📋"), ("📄 ", "📄"), ("🕘 ", "🕘")
+        };
 
         [DllImport("user32.dll", SetLastError = true)]
         private static extern int GetWindowLong(IntPtr hWnd, int nIndex);
@@ -45,7 +62,7 @@ public partial class MainForm
                 BackColor = _owner.SidebarColor,
                 ForeColor = _owner.ForeColor_Dark,
                 BorderStyle = BorderStyle.None,
-                Font = new Font("Segoe UI Emoji", 10),
+                Font = new Font(FontFamilyCatalog.ResolveTextFamily(AppSettings.Current.TextFontFamily), 10),
                 ShowLines = false,
                 FullRowSelect = true,
                 ItemHeight = 28,
@@ -173,6 +190,18 @@ public partial class MainForm
                     e.Handled = true;
             };
 
+            tree.Disposed += (s, e) =>
+            {
+                _emojiFont?.Dispose();
+                _emojiFont = null;
+                _emojiFontKey = null;
+                _emojiWidths.Clear();
+                tree.ImageList = null;
+                DisposeSidebarImageResources();
+                _sidebarImageKeys.Clear();
+                _sidebarImageKeysInUse.Clear();
+            };
+
             tree.HandleCreated += (s, e) =>
             {
                 SetWindowTheme(tree.Handle, _owner._themeController.IsDarkTheme ? "DarkMode_Explorer" : "Explorer", null);
@@ -257,6 +286,8 @@ public partial class MainForm
         public void PopulateSidebar()
         {
             if (_tree == null) return;
+            ConfigureSidebarImageList(AppSettings.Current);
+            _sidebarImageKeysInUse.Clear();
             _tree.BeginUpdate();
             _tree.Nodes.Clear();
 
@@ -264,9 +295,9 @@ public partial class MainForm
             var thisPcNode = new TreeNode($"🖥️ {Localization.T("this_pc")}")
             {
                 Tag = ThisPcPath,
-                ImageKey = "computer",
-                SelectedImageKey = "computer"
+                Name = "this_pc"
             };
+            SetSidebarSystemImage(thisPcNode);
             _tree.Nodes.Add(thisPcNode);
 
             // 1. Drives
@@ -278,8 +309,10 @@ public partial class MainForm
 
                 var node = new TreeNode($"{emoji} {drive.Name.TrimEnd('\\')} {label}")
                 {
-                    Tag = drive.RootDirectory.FullName
+                    Tag = drive.RootDirectory.FullName,
+                    Name = "drive"
                 };
+                SetSidebarSystemImage(node);
                 _tree.Nodes.Add(node);
             }
 
@@ -299,11 +332,13 @@ public partial class MainForm
                 _tree.Nodes.Add(new TreeNode("") { ForeColor = _owner.BorderStrongColor, Tag = CreateSeparatorTag(blockId) });
                 foreach (var node in nodes)
                 {
+                    SetSidebarSystemImage(node);
                     _tree.Nodes.Add(node);
                 }
             }
 
             _tree.EndUpdate();
+            PruneSidebarSystemImages();
             ApplySidebarScrollbars(_tree);
         }
 
@@ -379,7 +414,7 @@ public partial class MainForm
             foreach (var device in portableDevices)
             {
                 var shellId = _owner.RegisterShellItem(device.Item, null);
-                nodes.Add(new TreeNode($"📱 {device.Name}") { Tag = shellId });
+                nodes.Add(new TreeNode($"📱 {device.Name}") { Tag = shellId, Name = $"portable:{device.Name}" });
             }
             return nodes;
         }
@@ -446,6 +481,131 @@ public partial class MainForm
 
         private static List<string> GetRecentFolders(int maxCount)
             => WindowsRecentService.GetRecentFolders(maxCount);
+
+        private void ConfigureSidebarImageList(AppSettings settings)
+        {
+            if (_tree == null) return;
+
+            bool useWindowsIcons = settings.ShowSidebarIcons && !settings.UseEmojiSidebarIcons;
+            if (!useWindowsIcons)
+            {
+                _tree.ImageList = null;
+                DisposeSidebarImageResources();
+                _sidebarImageKeys.Clear();
+                _sidebarImageKeysInUse.Clear();
+                _sidebarImageSize = 0;
+                return;
+            }
+
+            int size = Math.Max(16, _owner.Scale(16));
+            if (_sidebarSystemImages != null &&
+                _sidebarImageSize == size &&
+                _sidebarImageColored == settings.UseColoredSidebarIcons)
+            {
+                return;
+            }
+
+            _tree.ImageList = null;
+            DisposeSidebarImageResources();
+            _sidebarImageKeys.Clear();
+            _sidebarSystemImages = new ImageList
+            {
+                ColorDepth = ColorDepth.Depth32Bit,
+                ImageSize = new Size(size, size)
+            };
+            _sidebarImageSize = size;
+            _sidebarImageColored = settings.UseColoredSidebarIcons;
+        }
+
+        private void SetSidebarSystemImage(TreeNode node)
+        {
+            if (_sidebarSystemImages == null) return;
+
+            string identity = GetSidebarIconIdentity(node);
+            if (!_sidebarImageKeys.TryGetValue(identity, out string? imageKey))
+            {
+                imageKey = $"sidebar_{_sidebarSystemImages.Images.Count}";
+                Bitmap? bitmap = GetSidebarSystemIcon(node);
+                try
+                {
+                    bitmap ??= IconHelper.GetFolderIconSized(_sidebarImageSize, grayscale: !_sidebarImageColored);
+                    if (bitmap == null) return;
+                    _sidebarSystemImages.Images.Add(imageKey, bitmap);
+                    _sidebarIconBitmaps[imageKey] = bitmap;
+                    bitmap = null;
+                }
+                finally
+                {
+                    bitmap?.Dispose();
+                }
+
+                _sidebarImageKeys[identity] = imageKey;
+            }
+
+            node.ImageKey = imageKey;
+            node.SelectedImageKey = imageKey;
+            _sidebarImageKeysInUse.Add(imageKey);
+        }
+
+        private void PruneSidebarSystemImages()
+        {
+            if (_sidebarSystemImages == null) return;
+
+            var unused = _sidebarImageKeys
+                .Where(entry => !_sidebarImageKeysInUse.Contains(entry.Value))
+                .ToArray();
+            foreach (var (identity, imageKey) in unused)
+            {
+                _sidebarSystemImages.Images.RemoveByKey(imageKey);
+                _sidebarImageKeys.Remove(identity);
+                if (_sidebarIconBitmaps.Remove(imageKey, out var bitmap))
+                    bitmap.Dispose();
+            }
+        }
+
+        private void DisposeSidebarImageResources()
+        {
+            _sidebarSystemImages?.Dispose();
+            _sidebarSystemImages = null;
+
+            foreach (var bitmap in _sidebarIconBitmaps.Values)
+                bitmap.Dispose();
+            _sidebarIconBitmaps.Clear();
+        }
+
+        private static string GetSidebarIconIdentity(TreeNode node)
+        {
+            if (string.Equals(node.Name, "this_pc", StringComparison.Ordinal))
+                return "computer";
+            if (string.Equals(node.Name, "drive", StringComparison.Ordinal) && node.Tag is string drivePath)
+                return $"drive:{drivePath}";
+            if (node.Name.StartsWith("portable:", StringComparison.Ordinal))
+                return node.Name;
+            if (node.Tag is string path)
+                return IsShellPath(path) ? $"shell:{node.Text}" : $"path:{path}";
+            return $"text:{node.Text}";
+        }
+
+        private Bitmap? GetSidebarSystemIcon(TreeNode node)
+        {
+            int size = _sidebarImageSize;
+            bool grayscale = !_sidebarImageColored;
+            if (string.Equals(node.Name, "this_pc", StringComparison.Ordinal))
+                return IconHelper.GetComputerIconSized(size, grayscale);
+
+            if (string.Equals(node.Name, "drive", StringComparison.Ordinal) && node.Tag is string drivePath)
+                return IconHelper.GetIconSized(drivePath, isDirectory: false, size, forceUnique: true, grayscale);
+
+            if (node.Tag is not string path)
+                return null;
+            if (IsShellPath(path))
+                return IconHelper.GetDeviceIconSized(size, grayscale);
+            if (Directory.Exists(path))
+                return IconHelper.GetIconSized(path, isDirectory: true, size, forceUnique: true, grayscale);
+            if (File.Exists(path))
+                return IconHelper.GetIconSized(path, isDirectory: false, size, forceUnique: true, grayscale);
+            return null;
+        }
 
         private List<(string Name, object Item)> GetPortableDevices()
         {
@@ -553,13 +713,57 @@ public partial class MainForm
                 return;
             }
 
+            var settings = AppSettings.Current;
+            bool emojiMode = settings.ShowSidebarIcons && settings.UseEmojiSidebarIcons;
+            bool windowsIconMode = settings.ShowSidebarIcons && !settings.UseEmojiSidebarIcons;
             var text = e.Node.Text;
             var textColor = isSelected ? (windowHasFocus ? Color.White : _owner.ForeColor_Dark) : _owner.ForeColor_Dark;
-            var textRect = new Rectangle(0, e.Bounds.Y, right, e.Bounds.Height);
+            int textLeft = 0;
+            if (windowsIconMode)
+            {
+                int iconSize = _sidebarImageSize > 0 ? _sidebarImageSize : Math.Max(16, _owner.Scale(16));
+                int iconX = _owner.Scale(3);
+                int iconY = e.Bounds.Y + Math.Max(0, (e.Bounds.Height - iconSize) / 2);
+                if (_sidebarSystemImages != null && !string.IsNullOrEmpty(e.Node.ImageKey) &&
+                    _sidebarSystemImages.Images.ContainsKey(e.Node.ImageKey))
+                {
+                    var icon = _sidebarSystemImages.Images[e.Node.ImageKey];
+                    if (icon != null)
+                        e.Graphics.DrawImage(icon, new Rectangle(iconX, iconY, iconSize, iconSize));
+                }
+                textLeft = iconX + iconSize + _owner.Scale(5);
+            }
+            var textRect = new Rectangle(textLeft, e.Bounds.Y, Math.Max(0, right - textLeft), e.Bounds.Height);
 
             var flags = TextFormatFlags.VerticalCenter | TextFormatFlags.Left | TextFormatFlags.NoPadding |
                         TextFormatFlags.EndEllipsis | TextFormatFlags.PreserveGraphicsClipping;
-            TextRenderer.DrawText(e.Graphics, text, tree.Font, textRect, textColor, flags);
+            if (TryGetSidebarEmojiPrefix(text, out var emoji, out int prefixLength))
+            {
+                if (emojiMode)
+                {
+                    var emojiFont = GetSidebarEmojiFont(tree.Font);
+                    TextRenderer.DrawText(e.Graphics, emoji, emojiFont, textRect, textColor, flags);
+
+                    int emojiWidth = GetSidebarEmojiWidth(e.Graphics, emoji, emojiFont);
+                    int nameOffset = emojiWidth + _owner.Scale(3);
+                    var nameRect = new Rectangle(
+                        textRect.X + nameOffset,
+                        textRect.Y,
+                        Math.Max(0, textRect.Width - nameOffset),
+                        textRect.Height);
+                    text = text.Substring(prefixLength);
+                    TextRenderer.DrawText(e.Graphics, text, tree.Font, nameRect, textColor, flags);
+                }
+                else
+                {
+                    text = text.Substring(prefixLength);
+                    TextRenderer.DrawText(e.Graphics, text, tree.Font, textRect, textColor, flags);
+                }
+            }
+            else
+            {
+                TextRenderer.DrawText(e.Graphics, text, tree.Font, textRect, textColor, flags);
+            }
 
             // Ghost preview for dragged pinned item
             if (!string.IsNullOrEmpty(_dragPath) && e.Node.Tag is string nodePath &&
@@ -587,6 +791,52 @@ public partial class MainForm
                     e.Graphics.DrawLine(pen, _owner.Scale(6), y, right - _owner.Scale(6), y);
                 }
             }
+        }
+
+        private static bool TryGetSidebarEmojiPrefix(string text, out string emoji, out int prefixLength)
+        {
+            foreach (var (prefix, glyph) in SidebarEmojiPrefixes)
+            {
+                if (!text.StartsWith(prefix, StringComparison.Ordinal))
+                    continue;
+
+                emoji = glyph;
+                prefixLength = prefix.Length;
+                return true;
+            }
+
+            emoji = string.Empty;
+            prefixLength = 0;
+            return false;
+        }
+
+        private Font GetSidebarEmojiFont(Font baseFont)
+        {
+            string key = $"{baseFont.FontFamily.Name}|{baseFont.Size}|{baseFont.Unit}|{baseFont.Style}";
+            if (_emojiFont == null || _emojiFontKey != key)
+            {
+                _emojiFont?.Dispose();
+                _emojiFont = new Font("Segoe UI Emoji", baseFont.Size, baseFont.Style, baseFont.Unit);
+                _emojiFontKey = key;
+            }
+            return _emojiFont;
+        }
+
+        private int GetSidebarEmojiWidth(Graphics graphics, string emoji, Font font)
+        {
+            var key = (emoji, (int)Math.Round(graphics.DpiX));
+            if (!_emojiWidths.TryGetValue(key, out int width))
+            {
+                const TextFormatFlags measureFlags = TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix;
+                width = TextRenderer.MeasureText(
+                    graphics,
+                    emoji,
+                    font,
+                    Size.Empty,
+                    measureFlags).Width;
+                _emojiWidths[key] = width;
+            }
+            return width;
         }
 
         private void Sidebar_MouseMove(object? sender, MouseEventArgs e)

@@ -45,6 +45,9 @@ public static class IconHelper
 
     private enum SHSTOCKICONID : uint
     {
+        SIID_FOLDER = 3,
+        SIID_DESKTOPPC = 94,
+        SIID_DEVICECELLPHONE = 99,
         SIID_IMAGEFILES = 72
     }
 
@@ -283,6 +286,18 @@ public static class IconHelper
     }
 
     public static Bitmap? GetStockImageFileIconSized(int size, bool grayscale = false)
+        => GetStockIconSized(SHSTOCKICONID.SIID_IMAGEFILES, size, grayscale);
+
+    public static Bitmap? GetComputerIconSized(int size, bool grayscale = false)
+        => GetStockIconSized(SHSTOCKICONID.SIID_DESKTOPPC, size, grayscale);
+
+    public static Bitmap? GetDeviceIconSized(int size, bool grayscale = false)
+        => GetStockIconSized(SHSTOCKICONID.SIID_DEVICECELLPHONE, size, grayscale);
+
+    public static Bitmap? GetFolderIconSized(int size, bool grayscale = false)
+        => GetStockIconSized(SHSTOCKICONID.SIID_FOLDER, size, grayscale);
+
+    private static Bitmap? GetStockIconSized(SHSTOCKICONID stockIconId, int size, bool grayscale)
     {
         lock (IconApiLock)
         {
@@ -297,7 +312,7 @@ public static class IconHelper
                 };
 
                 uint flags = SHGSI_ICON | SHGSI_SYSICONINDEX | (size <= 16 ? SHGSI_SMALLICON : SHGSI_LARGEICON);
-                int hr = SHGetStockIconInfo(SHSTOCKICONID.SIID_IMAGEFILES, flags, ref info);
+                int hr = SHGetStockIconInfo(stockIconId, flags, ref info);
                 if (hr != 0 || info.hIcon == IntPtr.Zero)
                     return null;
 

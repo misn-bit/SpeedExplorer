@@ -15,6 +15,7 @@ public class AppSettings
 
     // Default Settings
     public int FontSize { get; set; } = 10;
+    public string TextFontFamily { get; set; } = FontFamilyCatalog.DefaultFamilyName;
     public int IconSize { get; set; } = 16;
     public bool ShowIcons { get; set; } = true;
     public bool UseEmojiIcons { get; set; } = false; // Use emoji text instead of image icons
@@ -45,6 +46,9 @@ public class AppSettings
     public bool TileViewFolders { get; set; } = false;
     public bool TileViewThisPc { get; set; } = false;
     public bool ShowSidebarCommon { get; set; } = true; // Master toggle for system folders
+    public bool ShowSidebarIcons { get; set; } = true;
+    public bool UseEmojiSidebarIcons { get; set; } = false;
+    public bool UseColoredSidebarIcons { get; set; } = true;
     public bool ShowSidebarDesktop { get; set; } = true;
     public bool ShowSidebarDocuments { get; set; } = true;
     public bool ShowSidebarDownloads { get; set; } = true;
@@ -63,6 +67,7 @@ public class AppSettings
     public string SettingsDesign { get; set; } = "Flat";
     public System.Collections.Generic.List<ManualContextAction> ManualContextActions { get; set; } = new();
     public bool MiddleClickOpensNewTab { get; set; } = true;
+    public string DefaultNewTabPath { get; set; } = "::ThisPC";
     public bool DebugNavigationLogging { get; set; } = false;
     public bool DebugNavigationGcStats { get; set; } = false;
     public bool DebugNavigationUiQueue { get; set; } = false;
