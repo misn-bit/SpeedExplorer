@@ -1,5 +1,6 @@
 using System;
 using System.Drawing;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
 namespace SpeedExplorer;
@@ -8,6 +9,25 @@ public partial class MainForm
 {
     private sealed class ListViewRenderController
     {
+        private const int LvmGetSubItemRect = 0x1038;
+        private const int LvirBounds = 0;
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct NativeRect
+        {
+            public int Left;
+            public int Top;
+            public int Right;
+            public int Bottom;
+        }
+
+        [DllImport("user32.dll", EntryPoint = "SendMessage", CharSet = CharSet.Auto)]
+        private static extern IntPtr SendMessageGetSubItemRect(
+            IntPtr hWnd,
+            int msg,
+            IntPtr wParam,
+            ref NativeRect lParam);
+
         private readonly MainForm _owner;
         private readonly GdiCache _gdi = new();
         private BrowserState State => _owner.State;
@@ -214,9 +234,125 @@ public partial class MainForm
 
         public void DrawItem(object? sender, DrawListViewItemEventArgs e)
         {
-            // Rendering is handled in DrawSubItem.
             _ = sender;
-            _ = e;
+            var drawItem = e.Item;
+            if (drawItem == null)
+                return;
+
+            // Native virtual ListView hover paints can raise DrawItem without a
+            // matching DrawSubItem, so keep the name cell visible from this path.
+
+            bool isDriveView = State.CurrentPath == ThisPcPath && !_owner.IsSearchMode;
+            int nameColumnIndex = isDriveView ? 1 : 0;
+            if (nameColumnIndex >= drawItem.SubItems.Count)
+                return;
+
+            var nameRect = new NativeRect { Left = LvirBounds, Top = nameColumnIndex };
+            if (SendMessageGetSubItemRect(
+                    _owner._listView.Handle,
+                    LvmGetSubItemRect,
+                    (IntPtr)e.ItemIndex,
+                    ref nameRect) == IntPtr.Zero)
+                return;
+            var nameBounds = Rectangle.FromLTRB(nameRect.Left, nameRect.Top, nameRect.Right, nameRect.Bottom);
+
+            bool isProgressRow = ReferenceEquals(drawItem.Tag, SearchProgressRowTag);
+            Color rowBackColor = _owner.ListBackColor;
+            if (!isProgressRow && drawItem.Selected)
+            {
+                rowBackColor = _owner._listView.Focused
+                    ? _owner.SelectionFocusedColor
+                    : _owner.SelectionUnfocusedColor;
+            }
+            else if (!isProgressRow && e.ItemIndex == _owner._dragDropController.HoverIndex)
+            {
+                rowBackColor = _owner.DropTargetBackColor;
+            }
+            else if (!isProgressRow && e.ItemIndex == _owner._hoveredIndex)
+            {
+                rowBackColor = _owner.HoverBackColor;
+            }
+
+            DrawNameCell(
+                e.Graphics,
+                drawItem,
+                nameBounds,
+                drawItem.SubItems[nameColumnIndex].Text,
+                rowBackColor,
+                isProgressRow);
+        }
+
+        private void DrawNameCell(
+            Graphics g,
+            ListViewItem drawItem,
+            Rectangle bounds,
+            string displayText,
+            Color rowBackColor,
+            bool isProgressRow)
+        {
+            var brush = _gdi.Brush(rowBackColor);
+            g.FillRectangle(brush, new Rectangle(bounds.X, bounds.Y, bounds.Width + 1, bounds.Height));
+
+            var s = AppSettings.Current;
+            var gap = 4;
+            var x = bounds.X + gap;
+            var iconWidth = 0;
+
+            if (s.ShowIcons && !s.UseEmojiIcons && drawItem.ImageKey != "_emoji_")
+            {
+                var iconSize = _owner._listView.SmallImageList?.ImageSize.Width ?? 16;
+                var y = bounds.Y + (bounds.Height - iconSize) / 2;
+                iconWidth = iconSize + 4;
+
+                if (!string.IsNullOrEmpty(drawItem.ImageKey) && _owner._smallIcons.Images.ContainsKey(drawItem.ImageKey))
+                {
+                    try
+                    {
+                        var image = _owner._smallIcons.Images[drawItem.ImageKey];
+                        if (image != null)
+                        {
+                            bool isCut = drawItem.Tag is FileItem fi && State.CutPaths.Contains(fi.FullPath);
+                            if (isCut)
+                            {
+                                var cm = new System.Drawing.Imaging.ColorMatrix { Matrix33 = 0.5f };
+                                using var attr = new System.Drawing.Imaging.ImageAttributes();
+                                attr.SetColorMatrix(cm);
+                                g.DrawImage(
+                                    image,
+                                    new Rectangle(x, y, iconSize, iconSize),
+                                    0,
+                                    0,
+                                    image.Width,
+                                    image.Height,
+                                    GraphicsUnit.Pixel,
+                                    attr);
+                            }
+                            else
+                            {
+                                g.DrawImage(image, x, y, iconSize, iconSize);
+                            }
+                        }
+                    }
+                    catch
+                    {
+                        // Ignore icon draw errors.
+                    }
+                }
+            }
+
+            var textBrush = _gdi.Brush(
+                isProgressRow
+                    ? _owner.MutedForeColor
+                    : drawItem.Tag is FileItem fs && State.CutPaths.Contains(fs.FullPath)
+                    ? Color.FromArgb(120, _owner.ForeColor_Dark)
+                    : _owner.ForeColor_Dark);
+
+            var textX = x + iconWidth;
+            var textRect = new Rectangle(textX, bounds.Y, bounds.Width - (textX - bounds.X), bounds.Height);
+            var drawFont = isProgressRow
+                ? _gdi.ItalicFont(_owner._listView.Font)
+                : _owner._listView.Font;
+            g.DrawString(displayText, drawFont, textBrush, textRect, SfNear);
         }
 
         public void DrawSubItem(object? sender, DrawListViewSubItemEventArgs e)
@@ -256,72 +392,15 @@ public partial class MainForm
             bool isNameColumn = (!isDriveView && e.ColumnIndex == 0) || (isDriveView && e.ColumnIndex == 1);
             if (isNameColumn)
             {
-                var brush = _gdi.Brush(rowBackColor);
-                e.Graphics.FillRectangle(brush, fillRect);
-
-                var s = AppSettings.Current;
-                var gap = 4;
-                var x = e.Bounds.X + gap;
-                var iconWidth = 0;
-
-                if (s.ShowIcons && !s.UseEmojiIcons && drawItem.ImageKey != "_emoji_")
-                {
-                    var iconSize = _owner._listView.SmallImageList?.ImageSize.Width ?? 16;
-                    var y = e.Bounds.Y + (e.Bounds.Height - iconSize) / 2;
-                    iconWidth = iconSize + 4;
-
-                    if (!string.IsNullOrEmpty(drawItem.ImageKey) && _owner._smallIcons.Images.ContainsKey(drawItem.ImageKey))
-                    {
-                        try
-                        {
-                            var image = _owner._smallIcons.Images[drawItem.ImageKey];
-                            if (image != null)
-                            {
-                                bool isCut = drawItem.Tag is FileItem fi && State.CutPaths.Contains(fi.FullPath);
-                                if (isCut)
-                                {
-                                    var cm = new System.Drawing.Imaging.ColorMatrix { Matrix33 = 0.5f };
-                                    using var attr = new System.Drawing.Imaging.ImageAttributes();
-                                    attr.SetColorMatrix(cm);
-                                    e.Graphics.DrawImage(
-                                        image,
-                                        new Rectangle(x, y, iconSize, iconSize),
-                                        0,
-                                        0,
-                                        image.Width,
-                                        image.Height,
-                                        GraphicsUnit.Pixel,
-                                        attr);
-                                }
-                                else
-                                {
-                                    e.Graphics.DrawImage(image, x, y, iconSize, iconSize);
-                                }
-                            }
-                        }
-                        catch
-                        {
-                            // Ignore icon draw errors.
-                        }
-                    }
-                }
-
-                var textBrush = _gdi.Brush(
-                    isProgressRow
-                        ? _owner.MutedForeColor
-                        : drawItem.Tag is FileItem fs && State.CutPaths.Contains(fs.FullPath)
-                        ? Color.FromArgb(120, _owner.ForeColor_Dark)
-                        : _owner.ForeColor_Dark);
-
-                var textX = x + iconWidth;
-                var textRect = new Rectangle(textX, e.Bounds.Y, e.Bounds.Width - (textX - e.Bounds.X), e.Bounds.Height);
-                string displayText = isDriveView ? (e.SubItem?.Text ?? "") : drawItem.Text;
-
-                var sf = SfNear;
-                var drawFont = _owner._listView.Font;
-                if (isProgressRow)
-                    drawFont = _gdi.ItalicFont(_owner._listView.Font);
-                e.Graphics.DrawString(displayText, drawFont, textBrush, textRect, sf);
+                // Normal repaints may reach both events; repainting the same cell
+                // here preserves its existing DrawSubItem behavior.
+                DrawNameCell(
+                    e.Graphics,
+                    drawItem,
+                    e.Bounds,
+                    isDriveView ? (e.SubItem?.Text ?? "") : drawItem.Text,
+                    rowBackColor,
+                    isProgressRow);
             }
             else
             {
