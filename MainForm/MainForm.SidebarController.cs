@@ -453,7 +453,7 @@ public partial class MainForm
                 if (!Directory.Exists(path) && !File.Exists(path)) continue;
 
                 var isDir = Directory.Exists(path);
-                var name = Path.GetFileName(path);
+                var name = Path.GetFileName(Path.TrimEndingDirectorySeparator(path));
                 if (string.IsNullOrEmpty(name)) name = path;
 
                 string icon = isDir ? "📂" : GetTypeIconForPinnedFile(path);
