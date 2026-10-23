@@ -24,6 +24,7 @@ internal sealed class GeneralSettingsControl : SettingsPage
     private ToggleSwitch _showDesktopChk = null!, _showDocumentsChk = null!;
     private ToggleSwitch _showDownloadsChk = null!, _showPicturesChk = null!;
     private ToggleSwitch _showSidebarVScrollChk = null!;
+    private ToggleSwitch _showFullPathsSidebarChk = null!;
     private ToggleSwitch _showSidebarIconsChk = null!, _useEmojiSidebarIconsChk = null!, _useColoredSidebarIconsChk = null!;
     private ToggleSwitch _debugNavLogChk = null!, _debugNavGcChk = null!, _debugNavUiQueueChk = null!;
     private ToggleSwitch _debugNavPostBindChk = null!, _debugCrashLogChk = null!, _debugShellLogChk = null!;
@@ -112,6 +113,8 @@ internal sealed class GeneralSettingsControl : SettingsPage
         // Windows folders
         var folders = new SettingsGroup();
         _showRecentChk = folders.AddToggle(Localization.T("recent_folders"), string.Empty, false, _ => { });
+        _showFullPathsSidebarChk = folders.AddToggle(
+            Localization.T("show_full_paths_sidebar"), Localization.T("show_full_paths_sidebar_desc"), false, _ => { });
         _showCommonChk = folders.AddToggle(Localization.T("show_windows_folders"), string.Empty, false,
             _ => UpdateToggles());
         _showDesktopChk = folders.AddToggle(Localization.T("desktop"), string.Empty, false, _ => { });
@@ -166,6 +169,7 @@ internal sealed class GeneralSettingsControl : SettingsPage
         _showDownloadsChk.Checked = s.ShowSidebarDownloads;
         _showPicturesChk.Checked = s.ShowSidebarPictures;
         _showRecentChk.Checked = s.ShowSidebarRecent;
+        _showFullPathsSidebarChk.Checked = s.ShowFullPathsInSidebar;
         _showSidebarVScrollChk.Checked = s.ShowSidebarVerticalScrollbar;
         _themeDrop.Value = string.Equals(s.MainThemePreset, "Light", StringComparison.OrdinalIgnoreCase) ? Localization.T("theme_light") : Localization.T("theme_dark");
         _designDrop.Value = string.Equals(s.SettingsDesign, "Rounded", StringComparison.OrdinalIgnoreCase) ? "Rounded" : "Flat";
@@ -205,6 +209,7 @@ internal sealed class GeneralSettingsControl : SettingsPage
         s.ShowSidebarDownloads = _showDownloadsChk.Checked;
         s.ShowSidebarPictures = _showPicturesChk.Checked;
         s.ShowSidebarRecent = _showRecentChk.Checked;
+        s.ShowFullPathsInSidebar = _showFullPathsSidebarChk.Checked;
         s.ShowSidebarVerticalScrollbar = _showSidebarVScrollChk.Checked;
         s.MainThemePreset = string.Equals(_themeDrop.Value, Localization.T("theme_dark"), StringComparison.OrdinalIgnoreCase) ? "Dark" : "Light";
         s.UiLanguage = _languageDrop.Value == "Русский" ? "ru" : "en";
@@ -241,6 +246,7 @@ internal sealed class GeneralSettingsControl : SettingsPage
         ReferenceEquals(changedControl, _useEmojiSidebarIconsChk) ||
         ReferenceEquals(changedControl, _useColoredSidebarIconsChk) ||
         ReferenceEquals(changedControl, _showRecentChk) ||
+        ReferenceEquals(changedControl, _showFullPathsSidebarChk) ||
         ReferenceEquals(changedControl, _showCommonChk) ||
         ReferenceEquals(changedControl, _showDesktopChk) ||
         ReferenceEquals(changedControl, _showDocumentsChk) ||

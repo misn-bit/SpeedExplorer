@@ -490,7 +490,8 @@ public partial class MainForm
                 if (string.IsNullOrEmpty(name)) name = path;
 
                 string icon = isDir ? "📂" : GetTypeIconForPinnedFile(path);
-                nodes.Add(new TreeNode($"{icon} {name}") { Tag = path, Name = SidebarPinnedNodeName });
+                string label = AppSettings.Current.ShowFullPathsInSidebar ? path : name;
+                nodes.Add(new TreeNode($"{icon} {label}") { Tag = path, Name = SidebarPinnedNodeName });
             }
 
             return nodes;
@@ -507,7 +508,8 @@ public partial class MainForm
                 var trimmed = path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
                 var name = Path.GetFileName(trimmed);
                 if (string.IsNullOrWhiteSpace(name)) name = path;
-                nodes.Add(new TreeNode($"🕘 {name}") { Tag = path });
+                string label = AppSettings.Current.ShowFullPathsInSidebar ? path : name;
+                nodes.Add(new TreeNode($"🕘 {label}") { Tag = path });
             }
             return nodes;
         }

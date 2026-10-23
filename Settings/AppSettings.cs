@@ -58,6 +58,7 @@ public class AppSettings
     public bool ShowSidebarDownloads { get; set; } = true;
     public bool ShowSidebarPictures { get; set; } = true;
     public bool ShowSidebarRecent { get; set; } = true;
+    public bool ShowFullPathsInSidebar { get; set; } = false;
     public bool ShowSidebarVerticalScrollbar { get; set; } = true;
     public bool ShowSidebar { get; set; } = true;
     public bool RunAtStartup { get; set; } = false;
