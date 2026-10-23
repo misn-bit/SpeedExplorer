@@ -16,6 +16,10 @@ public class AppSettings
     // Default Settings
     public int FontSize { get; set; } = 10;
     public string TextFontFamily { get; set; } = FontFamilyCatalog.DefaultFamilyName;
+    public int ListViewRowHeight { get; set; } = 20;
+    public int SidebarFontSize { get; set; } = 10;
+    public string SidebarFontFamily { get; set; } = FontFamilyCatalog.DefaultFamilyName;
+    public int SidebarRowHeight { get; set; } = 24;
     public int IconSize { get; set; } = 16;
     public bool ShowIcons { get; set; } = true;
     public bool UseEmojiIcons { get; set; } = false; // Use emoji text instead of image icons

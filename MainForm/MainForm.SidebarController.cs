@@ -62,7 +62,9 @@ public partial class MainForm
                 BackColor = _owner.SidebarColor,
                 ForeColor = _owner.ForeColor_Dark,
                 BorderStyle = BorderStyle.None,
-                Font = new Font(FontFamilyCatalog.ResolveTextFamily(AppSettings.Current.TextFontFamily), 10),
+                Font = new Font(
+                    FontFamilyCatalog.ResolveTextFamily(AppSettings.Current.SidebarFontFamily),
+                    Math.Clamp(AppSettings.Current.SidebarFontSize, 8, 24)),
                 ShowLines = false,
                 FullRowSelect = true,
                 ItemHeight = 28,
@@ -240,6 +242,37 @@ public partial class MainForm
             PopulateSidebar();
 
             return tree;
+        }
+
+        public void ApplyFontSettings()
+        {
+            if (_tree is not { IsDisposed: false } tree)
+                return;
+
+            var settings = AppSettings.Current;
+            string family = FontFamilyCatalog.ResolveTextFamily(settings.SidebarFontFamily);
+            int size = Math.Clamp(settings.SidebarFontSize, 8, 24);
+            if (!string.Equals(tree.Font.FontFamily.Name, family, StringComparison.OrdinalIgnoreCase) ||
+                Math.Abs(tree.Font.Size - size) > 0.01f)
+            {
+                var previousFont = tree.Font;
+                tree.Font = new Font(family, size, previousFont.Style, previousFont.Unit);
+                previousFont.Dispose();
+            }
+
+            UpdateItemHeightForDpi();
+            tree.Invalidate();
+        }
+
+        public void UpdateItemHeightForDpi()
+        {
+            if (_tree is not { IsDisposed: false } tree)
+                return;
+
+            int textHeight = (int)Math.Ceiling(tree.Font.GetHeight(tree.DeviceDpi));
+            int configuredHeight = _owner.Scale(Math.Clamp(AppSettings.Current.SidebarRowHeight, 16, 48));
+            int iconHeight = tree.ImageList?.ImageSize.Height ?? 0;
+            tree.ItemHeight = Math.Max(configuredHeight, Math.Max(textHeight, iconHeight));
         }
 
         private void ApplySidebarScrollbars(TreeView tree)

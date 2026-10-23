@@ -48,12 +48,14 @@ public partial class MainForm
                     _owner._listView.Invalidate();
             }
 
+            _owner._listViewController.ApplyRowHeightSettings();
+
             // 2. Scale Layout Panels
             _owner._titleBar.Height = _owner.Scale(LogicalTitleBarHeight);
             _owner._layoutController.UpdateNavLayoutForDpi();
 
             // 3. Scale Sidebar
-            _owner._sidebar.ItemHeight = _owner.Scale(24);
+            _owner._sidebarController.UpdateItemHeightForDpi();
 
             // 4. Scale ListView Columns & Tiles
             if (_owner.IsTileView)
@@ -89,6 +91,8 @@ public partial class MainForm
             if (applyTheme)
                 _owner._themeController.ApplyMainWindowTheme();
 
+            _owner._sidebarController.ApplyFontSettings();
+
             int selectedIndexBefore = -1;
             try
             {
@@ -118,15 +122,11 @@ public partial class MainForm
                     _appliedListViewFontFamily = textFontFamily;
                 }
 
-                if (_owner._sidebar is { IsDisposed: false } sidebar &&
-                    !string.Equals(sidebar.Font.FontFamily.Name, textFontFamily, StringComparison.OrdinalIgnoreCase))
-                    sidebar.Font = new Font(textFontFamily, sidebar.Font.Size, sidebar.Font.Style, sidebar.Font.Unit);
-
                 // Recreate ImageLists at the DPI-scaled icon size
                 _owner._iconLoadService?.CancelPending(); // Clear pending async loads
                 _owner.RebuildDefaultIconSets();
 
-                _owner._listView.SmallImageList = _owner._smallIcons;
+                _owner._listViewController.ApplyRowHeightSettings();
                 _owner._listView.LargeImageList = _owner._largeIcons;
                 if (_owner.IsTileView)
                 {

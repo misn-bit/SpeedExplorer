@@ -697,8 +697,7 @@ public partial class MainForm : Form, IFileOperationsHost, IShellActionsHost, IO
 
         _sidebarController = new SidebarController(this);
         _sidebar = _sidebarController.CreateSidebar(_contextMenu!);
-        // Set initial scaled item height for sidebar
-        _sidebar.ItemHeight = Scale(24);
+        _sidebarController.UpdateItemHeightForDpi();
         
         _listView = CreateListView();
         _listView.Visible = false;

@@ -134,6 +134,8 @@ public partial class MainForm
                     _owner._listView.VirtualListSize = State.Items.Count;
                     _owner.EnsureHeaderTail();
                 }
+
+                _owner._listViewController.ApplyRowHeightSettings();
             }
             finally
             {
@@ -159,6 +161,7 @@ public partial class MainForm
                 if (alreadyTileMode)
                 {
                     UpdateMetrics();
+                    _owner._listViewController.ApplyRowHeightSettings();
                     UpdateViewToggleLabel();
                     return;
                 }
@@ -210,6 +213,8 @@ public partial class MainForm
                     _owner._listView.EndUpdate();
                 }
             }
+
+            _owner._listViewController.ApplyRowHeightSettings();
 
             UpdateViewToggleLabel();
         }

@@ -10,6 +10,8 @@ public partial class MainForm
     {
         private readonly MainForm _owner;
         private BrowserState State => _owner.State;
+        private ImageList? _detailsRowSizingImageList;
+        private Bitmap? _detailsRowSizingSpacerImage;
 
         public ListViewController(MainForm owner)
         {
@@ -86,6 +88,19 @@ public partial class MainForm
                 LargeImageList = _owner._largeIcons,
                 OwnerDraw = true
             };
+            lv.Disposed += (_, _) =>
+            {
+                _detailsRowSizingImageList?.Dispose();
+                _detailsRowSizingImageList = null;
+                _detailsRowSizingSpacerImage?.Dispose();
+                _detailsRowSizingSpacerImage = null;
+            };
+
+            // In Details view the native control uses the small image list height
+            // to determine row height. The icons themselves are owner-drawn from
+            // _smallIcons, so a transparent image list can control row spacing
+            // independently of the rendered icon size.
+            lv.SmallImageList = UpdateDetailsRowSizingImageList(lv);
 
             SetupFileColumns(lv);
             _owner._dragDropController.AttachToListView(lv);
@@ -196,6 +211,54 @@ public partial class MainForm
             };
 
             return lv;
+        }
+
+        public void ApplyRowHeightSettings()
+        {
+            var listView = _owner._listView;
+            if (listView == null || listView.IsDisposed)
+                return;
+
+            Size? previousImageSize = _detailsRowSizingImageList?.ImageSize;
+            var rowSizingImageList = UpdateDetailsRowSizingImageList(listView);
+            var desiredImageList = _owner.IsTileView ? _owner._smallIcons : rowSizingImageList;
+
+            // Reattach after changing the image-list dimensions so the native
+            // ListView recalculates its row metrics immediately.
+            if (!_owner.IsTileView && previousImageSize != rowSizingImageList.ImageSize &&
+                ReferenceEquals(listView.SmallImageList, rowSizingImageList))
+            {
+                listView.SmallImageList = null;
+            }
+            if (!ReferenceEquals(listView.SmallImageList, desiredImageList))
+                listView.SmallImageList = desiredImageList;
+            listView.Invalidate();
+        }
+
+        private ImageList UpdateDetailsRowSizingImageList(ListView listView)
+        {
+            _detailsRowSizingImageList ??= new ImageList
+            {
+                ColorDepth = ColorDepth.Depth32Bit
+            };
+
+            int configuredHeight = _owner.Scale(Math.Clamp(AppSettings.Current.ListViewRowHeight, 16, 48));
+            int textHeight = (int)Math.Ceiling(listView.Font.GetHeight(listView.DeviceDpi));
+            int iconHeight = _owner._smallIcons.ImageSize.Height;
+            var imageSize = new Size(
+                _owner._smallIcons.ImageSize.Width,
+                Math.Max(configuredHeight, Math.Max(textHeight, iconHeight)));
+
+            if (_detailsRowSizingImageList.ImageSize != imageSize || _detailsRowSizingImageList.Images.Count == 0)
+            {
+                _detailsRowSizingImageList.Images.Clear();
+                _detailsRowSizingSpacerImage?.Dispose();
+                _detailsRowSizingImageList.ImageSize = imageSize;
+                _detailsRowSizingSpacerImage = new Bitmap(imageSize.Width, imageSize.Height);
+                _detailsRowSizingImageList.Images.Add("row-height", _detailsRowSizingSpacerImage);
+            }
+
+            return _detailsRowSizingImageList;
         }
 
         public void StretchTagsColumn()

@@ -15,6 +15,7 @@ internal sealed class GeneralSettingsControl : SettingsPage
     private Dropdown _themeDrop = null!;
     private Dropdown _languageDrop = null!;
     private Dropdown _textFontDrop = null!;
+    private Dropdown _sidebarFontDrop = null!;
 
     private ToggleSwitch _runAtStartupChk = null!, _runInBackgroundChk = null!, _showTrayIconChk = null!;
     private ToggleSwitch _showIconsChk = null!, _useEmojiChk = null!, _useSystemIconsChk = null!;
@@ -27,23 +28,15 @@ internal sealed class GeneralSettingsControl : SettingsPage
     private ToggleSwitch _debugNavLogChk = null!, _debugNavGcChk = null!, _debugNavUiQueueChk = null!;
     private ToggleSwitch _debugNavPostBindChk = null!, _debugCrashLogChk = null!, _debugShellLogChk = null!;
 
-    private SliderField _fontSizeSlider = null!, _iconSizeSlider = null!;
+    private SliderField _fontSizeSlider = null!, _sidebarFontSizeSlider = null!;
+    private SliderField _listViewRowHeightSlider = null!, _sidebarRowHeightSlider = null!, _iconSizeSlider = null!;
 
     public GeneralSettingsControl() : base(Localization.T("general_tab"))
     {
         Font = new Font("Segoe UI", 10);
 
-        // Appearance
+        // Shared appearance
         var appearance = new SettingsGroup();
-        _fontSizeSlider = appearance.AddSlider(
-            Localization.T("font_size"), string.Empty, 8, 24, 1, 12, " pt", _ => { });
-        _textFontDrop = appearance.AddDropdown(
-            Localization.T("text_font"), Localization.T("text_font_desc"),
-            FontFamilyCatalog.DefaultFamilyName, string.Empty, string.Empty, _ => { });
-        _textFontDrop.SetItems(FontFamilyCatalog.TextFamilies);
-        _iconSizeSlider = appearance.AddSlider(
-            Localization.T("icon_size"), Localization.T("icon_size_desc"), 16, 192, 8, 48, " px", _ => { });
-
         _themeDrop = appearance.AddDropdown(
             Localization.T("theme"), string.Empty, "Light", string.Empty, string.Empty,
             _ => Design.Theme.Refresh());
@@ -53,8 +46,35 @@ internal sealed class GeneralSettingsControl : SettingsPage
             Localization.T("settings_design"), Localization.T("settings_design_desc"), "Flat", string.Empty, string.Empty,
             v => Design.Theme.Style = v == "Rounded" ? ThemeStyle.Rounded : ThemeStyle.Flat);
         _designDrop.SetItems(new[] { "Flat", "Rounded" });
+        AddGroup(Localization.T("appearance_section"), appearance);
 
-        AddGroup(null, appearance);
+        // List View typography, row density, and icons
+        var listView = new SettingsGroup();
+        _fontSizeSlider = listView.AddSlider(
+            Localization.T("list_view_font_size"), string.Empty, 8, 24, 1, 10, " pt", _ => { });
+        _textFontDrop = listView.AddDropdown(
+            Localization.T("list_view_font"), Localization.T("list_view_font_desc"),
+            FontFamilyCatalog.DefaultFamilyName, string.Empty, string.Empty, _ => { });
+        _textFontDrop.SetItems(FontFamilyCatalog.TextFamilies);
+        _listViewRowHeightSlider = listView.AddSlider(
+            Localization.T("list_view_row_height"), Localization.T("list_view_row_height_desc"),
+            16, 48, 2, 20, " px", _ => { });
+        _iconSizeSlider = listView.AddSlider(
+            Localization.T("icon_size"), Localization.T("icon_size_desc"), 16, 192, 8, 48, " px", _ => { });
+        AddGroup(Localization.T("list_view_settings_section"), listView);
+
+        // Sidebar typography and row density
+        var sidebarText = new SettingsGroup();
+        _sidebarFontSizeSlider = sidebarText.AddSlider(
+            Localization.T("sidebar_font_size"), string.Empty, 8, 24, 1, 10, " pt", _ => { });
+        _sidebarFontDrop = sidebarText.AddDropdown(
+            Localization.T("sidebar_font"), Localization.T("sidebar_font_desc"),
+            FontFamilyCatalog.DefaultFamilyName, string.Empty, string.Empty, _ => { });
+        _sidebarFontDrop.SetItems(FontFamilyCatalog.TextFamilies);
+        _sidebarRowHeightSlider = sidebarText.AddSlider(
+            Localization.T("sidebar_row_height"), Localization.T("sidebar_row_height_desc"),
+            16, 48, 2, 24, " px", _ => { });
+        AddGroup(Localization.T("sidebar_text_section"), sidebarText);
 
         // Language
         var language = new SettingsGroup();
@@ -127,6 +147,10 @@ internal sealed class GeneralSettingsControl : SettingsPage
     {
         _fontSizeSlider.Value = Math.Clamp(s.FontSize, 8, 24);
         _textFontDrop.Value = FontFamilyCatalog.ResolveTextFamily(s.TextFontFamily);
+        _listViewRowHeightSlider.Value = Math.Clamp(s.ListViewRowHeight, 16, 48);
+        _sidebarFontSizeSlider.Value = Math.Clamp(s.SidebarFontSize, 8, 24);
+        _sidebarFontDrop.Value = FontFamilyCatalog.ResolveTextFamily(s.SidebarFontFamily);
+        _sidebarRowHeightSlider.Value = Math.Clamp(s.SidebarRowHeight, 16, 48);
         _iconSizeSlider.Value = Math.Clamp(s.IconSize, 16, 192);
         _showIconsChk.Checked = s.ShowIcons;
         _useEmojiChk.Checked = s.UseEmojiIcons;
@@ -162,6 +186,10 @@ internal sealed class GeneralSettingsControl : SettingsPage
     {
         s.FontSize = _fontSizeSlider.Value;
         s.TextFontFamily = FontFamilyCatalog.ResolveTextFamily(_textFontDrop.Value);
+        s.ListViewRowHeight = _listViewRowHeightSlider.Value;
+        s.SidebarFontSize = _sidebarFontSizeSlider.Value;
+        s.SidebarFontFamily = FontFamilyCatalog.ResolveTextFamily(_sidebarFontDrop.Value);
+        s.SidebarRowHeight = _sidebarRowHeightSlider.Value;
         s.IconSize = _iconSizeSlider.Value;
         s.ShowIcons = _showIconsChk.Checked;
         s.UseEmojiIcons = _useEmojiChk.Checked;
@@ -198,6 +226,10 @@ internal sealed class GeneralSettingsControl : SettingsPage
     public bool RequiresMainWindowRefresh(Control changedControl) =>
         ReferenceEquals(changedControl, _fontSizeSlider) ||
         ReferenceEquals(changedControl, _textFontDrop) ||
+        ReferenceEquals(changedControl, _listViewRowHeightSlider) ||
+        ReferenceEquals(changedControl, _sidebarFontSizeSlider) ||
+        ReferenceEquals(changedControl, _sidebarFontDrop) ||
+        ReferenceEquals(changedControl, _sidebarRowHeightSlider) ||
         ReferenceEquals(changedControl, _iconSizeSlider) ||
         ReferenceEquals(changedControl, _themeDrop) ||
         ReferenceEquals(changedControl, _showIconsChk) ||
