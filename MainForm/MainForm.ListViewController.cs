@@ -106,6 +106,7 @@ public partial class MainForm
             _owner._dragDropController.AttachToListView(lv);
 
             lv.RetrieveVirtualItem += _owner.ListView_RetrieveVirtualItem;
+            lv.SelectedIndexChanged += (s, e) => _owner._layoutController.UpdateSelectionCount(lv);
             lv.ColumnClick += _owner.ListView_ColumnClick;
             lv.MouseDoubleClick += _owner.ListView_MouseDoubleClick;
             lv.MouseDown += _owner.ListView_MouseDown;

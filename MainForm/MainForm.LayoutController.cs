@@ -306,6 +306,17 @@ public partial class MainForm
                 Margin = _owner.Scale(new Padding(0, 1, 0, 2))
             };
 
+            _owner._selectionCountLabel = new ToolStripStatusLabel("")
+            {
+                AutoSize = true,
+                TextAlign = ContentAlignment.MiddleRight,
+                BorderSides = ToolStripStatusLabelBorderSides.Left,
+                BorderStyle = Border3DStyle.Etched,
+                Font = _statusBarDpiFont,
+                Margin = _owner.Scale(new Padding(0, 1, 0, 2)),
+                Visible = false
+            };
+
             _owner._searchSpinnerLabel = new ToolStripStatusLabel("")
             {
                 AutoSize = false,
@@ -327,6 +338,7 @@ public partial class MainForm
 
             status.Items.Add(_owner._pathLabel);
             status.Items.Add(_owner._statusLabel);
+            status.Items.Add(_owner._selectionCountLabel);
             status.Items.Add(_owner._searchSpinnerLabel);
             status.Items.Add(_owner._viewToggleLabel);
 
@@ -350,11 +362,25 @@ public partial class MainForm
             status.Padding = _owner.Scale(new Padding(1, 0, 1, 0));
             _owner._pathLabel.Margin = _owner.Scale(new Padding(0, 1, 0, 2));
             _owner._statusLabel.Margin = _owner.Scale(new Padding(0, 1, 0, 2));
+            _owner._selectionCountLabel.Margin = _owner.Scale(new Padding(0, 1, 0, 2));
             _owner._searchSpinnerLabel.Width = _owner.Scale(20);
             _owner._viewToggleLabel.Margin = _owner.Scale(new Padding(10, 0, 10, 0));
             status.PerformLayout();
             status.Invalidate();
             oldFont?.Dispose();
+        }
+
+        public void UpdateSelectionCount(ListView? listView = null)
+        {
+            var targetListView = listView ?? _owner._listView;
+            if (targetListView == null || targetListView.IsDisposed || _owner._selectionCountLabel == null)
+                return;
+
+            int selectedCount = targetListView.SelectedIndices.Count;
+            _owner._selectionCountLabel.Visible = selectedCount > 0;
+            _owner._selectionCountLabel.Text = selectedCount > 0
+                ? string.Format(Localization.T("status_selected_items"), selectedCount)
+                : string.Empty;
         }
 
         private Font CreateStatusBarDpiFont()

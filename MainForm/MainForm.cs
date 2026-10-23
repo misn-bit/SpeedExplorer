@@ -44,6 +44,7 @@ public partial class MainForm : Form, IFileOperationsHost, IShellActionsHost, IO
     private readonly StatusStrip _statusBar;
     private ToolStripStatusLabel _pathLabel;
     private ToolStripStatusLabel _statusLabel;
+    private ToolStripStatusLabel _selectionCountLabel = null!;
     private ToolStripStatusLabel _searchSpinnerLabel = null!;
     private ToolStripStatusLabel _viewToggleLabel = null!;
     private readonly ImageList _smallIcons;
