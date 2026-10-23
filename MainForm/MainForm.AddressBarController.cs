@@ -43,9 +43,10 @@ public partial class MainForm
                 if (e.KeyCode == Keys.Enter)
                 {
                     e.SuppressKeyPress = true;
-                    if (Directory.Exists(_owner._addressTextBox.Text) || _owner._addressTextBox.Text == ThisPcPath)
+                    var addressPath = NormalizePathSeparators(_owner._addressTextBox.Text);
+                    if (Directory.Exists(addressPath) || addressPath == ThisPcPath)
                     {
-                        _owner.ObserveTask(_owner.NavigateTo(_owner._addressTextBox.Text), "AddressBar.EnterNavigate");
+                        _owner.ObserveTask(_owner.NavigateTo(addressPath), "AddressBar.EnterNavigate");
                         _owner._addressTextBox.Visible = false;
                         _owner._breadcrumbPanel.Visible = true;
                     }
@@ -108,6 +109,9 @@ public partial class MainForm
             panel.Controls.Add(iconLabel);
             return panel;
         }
+
+        private static string NormalizePathSeparators(string path)
+            => path.Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar);
 
         public void EnableAddressEdit()
         {
