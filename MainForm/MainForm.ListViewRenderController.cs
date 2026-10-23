@@ -358,13 +358,14 @@ public partial class MainForm
         public void DrawSubItem(object? sender, DrawListViewSubItemEventArgs e)
         {
             _ = sender;
-            Color rowBackColor = _owner.ListBackColor;
             bool isDriveView = State.CurrentPath == ThisPcPath && !_owner.IsSearchMode;
 
             var drawItem = e.Item;
             if (drawItem == null)
                 return;
 
+            bool isNameColumn = (!isDriveView && e.ColumnIndex == 0) || (isDriveView && e.ColumnIndex == 1);
+            Color rowBackColor = _owner.ListBackColor;
             bool isProgressRow = ReferenceEquals(drawItem.Tag, SearchProgressRowTag);
 
             if (isProgressRow)
@@ -386,14 +387,11 @@ public partial class MainForm
                 rowBackColor = _owner.HoverBackColor;
             }
 
-            var fillRect = new Rectangle(e.Bounds.X, e.Bounds.Y, e.Bounds.Width + 1, e.Bounds.Height);
-
-            // Name column logic (+ icon). In drive view, name is column 1 (column 0 is "№").
-            bool isNameColumn = (!isDriveView && e.ColumnIndex == 0) || (isDriveView && e.ColumnIndex == 1);
             if (isNameColumn)
             {
-                // Normal repaints may reach both events; repainting the same cell
-                // here preserves its existing DrawSubItem behavior.
+                // DrawItem is the fallback for native hover paints without a
+                // matching DrawSubItem; when this event is present, its cell
+                // bounds keep the name background aligned with adjacent columns.
                 DrawNameCell(
                     e.Graphics,
                     drawItem,
@@ -401,61 +399,62 @@ public partial class MainForm
                     isDriveView ? (e.SubItem?.Text ?? "") : drawItem.Text,
                     rowBackColor,
                     isProgressRow);
+                return;
+            }
+
+            var fillRect = new Rectangle(e.Bounds.X, e.Bounds.Y, e.Bounds.Width + 1, e.Bounds.Height);
+
+            var b = _gdi.Brush(rowBackColor);
+            e.Graphics.FillRectangle(b, fillRect);
+
+            if (State.CurrentPath == ThisPcPath &&
+                e.ColumnIndex == ColumnIndex_DriveCapacity &&
+                drawItem.Tag is FileItem fi &&
+                (fi.Extension == ".drive" || fi.Extension == ".usb"))
+            {
+                var barRect = new Rectangle(e.Bounds.X + 5, e.Bounds.Y + 4, e.Bounds.Width - 10, e.Bounds.Height - 8);
+                var barBgBrush = _gdi.Brush(_owner.HoverBackColor);
+                e.Graphics.FillRectangle(barBgBrush, barRect);
+
+                if (fi.Size > 0)
+                {
+                    double used = (double)(fi.Size - fi.FreeSpace);
+                    double total = fi.Size;
+                    double ratio = used / total;
+                    if (ratio > 1.0)
+                        ratio = 1.0;
+
+                    int fillWidth = (int)(barRect.Width * ratio);
+                    if (fillWidth < 1 && ratio > 0)
+                        fillWidth = 1;
+
+                    var usageFillRect = new Rectangle(barRect.X, barRect.Y, fillWidth, barRect.Height);
+
+                    Color barColor = Color.LimeGreen;
+                    if (ratio > 0.90)
+                        barColor = Color.Red;
+                    else if (ratio > 0.75)
+                        barColor = Color.Yellow;
+
+                    var fillBrush = _gdi.Brush(barColor);
+                    e.Graphics.FillRectangle(fillBrush, usageFillRect);
+                }
+                var barPen = _gdi.Pen(_owner.BorderSoftColor);
+                e.Graphics.DrawRectangle(barPen, barRect);
+            }
+            else if (State.CurrentPath != ThisPcPath && e.ColumnIndex == ColumnIndex_Tags)
+            {
+                DrawTags(e.Graphics, e.Bounds, e.SubItem?.Text, rowBackColor, drawItem.Selected);
             }
             else
             {
-                var b = _gdi.Brush(rowBackColor);
-                e.Graphics.FillRectangle(b, fillRect);
+                var text = e.SubItem?.Text ?? "";
+                var align = e.Header?.TextAlign ?? HorizontalAlignment.Left;
+                var sf = GetSf(align);
 
-                if (State.CurrentPath == ThisPcPath &&
-                    e.ColumnIndex == ColumnIndex_DriveCapacity &&
-                    drawItem.Tag is FileItem fi &&
-                    (fi.Extension == ".drive" || fi.Extension == ".usb"))
-                {
-                    var barRect = new Rectangle(e.Bounds.X + 5, e.Bounds.Y + 4, e.Bounds.Width - 10, e.Bounds.Height - 8);
-                    var barBgBrush = _gdi.Brush(_owner.HoverBackColor);
-                    e.Graphics.FillRectangle(barBgBrush, barRect);
-
-                    if (fi.Size > 0)
-                    {
-                        double used = (double)(fi.Size - fi.FreeSpace);
-                        double total = fi.Size;
-                        double ratio = used / total;
-                        if (ratio > 1.0)
-                            ratio = 1.0;
-
-                        int fillWidth = (int)(barRect.Width * ratio);
-                        if (fillWidth < 1 && ratio > 0)
-                            fillWidth = 1;
-
-                        var usageFillRect = new Rectangle(barRect.X, barRect.Y, fillWidth, barRect.Height);
-
-                        Color barColor = Color.LimeGreen;
-                        if (ratio > 0.90)
-                            barColor = Color.Red;
-                        else if (ratio > 0.75)
-                            barColor = Color.Yellow;
-
-                        var fillBrush = _gdi.Brush(barColor);
-                        e.Graphics.FillRectangle(fillBrush, usageFillRect);
-                    }
-                    var barPen = _gdi.Pen(_owner.BorderSoftColor);
-                    e.Graphics.DrawRectangle(barPen, barRect);
-                }
-                else if (State.CurrentPath != ThisPcPath && e.ColumnIndex == ColumnIndex_Tags)
-                {
-                    DrawTags(e.Graphics, e.Bounds, e.SubItem?.Text, rowBackColor, drawItem.Selected);
-                }
-                else
-                {
-                    var text = e.SubItem?.Text ?? "";
-                    var align = e.Header?.TextAlign ?? HorizontalAlignment.Left;
-                    var sf = GetSf(align);
-
-                    var textBrush = _gdi.Brush(_owner.ForeColor_Dark);
-                    var textBounds = new Rectangle(e.Bounds.X + 4, e.Bounds.Y, e.Bounds.Width - 8, e.Bounds.Height);
-                    e.Graphics.DrawString(text, _owner._listView.Font, textBrush, textBounds, sf);
-                }
+                var textBrush = _gdi.Brush(_owner.ForeColor_Dark);
+                var textBounds = new Rectangle(e.Bounds.X + 4, e.Bounds.Y, e.Bounds.Width - 8, e.Bounds.Height);
+                e.Graphics.DrawString(text, _owner._listView.Font, textBrush, textBounds, sf);
             }
         }
     }
