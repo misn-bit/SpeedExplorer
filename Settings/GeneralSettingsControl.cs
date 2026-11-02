@@ -11,11 +11,17 @@ namespace SpeedExplorer.Settings;
 /// </summary>
 internal sealed class GeneralSettingsControl : SettingsPage
 {
+    private const string TypographyPreviewSample =
+        "café · Москва · Αθήνα · 東京 · مرحبا\nनमस्ते · 한글 · € ₹ ₿ → ≤ ≠";
+
     private Dropdown _designDrop = null!;
     private Dropdown _themeDrop = null!;
     private Dropdown _languageDrop = null!;
     private Dropdown _textFontDrop = null!;
     private Dropdown _sidebarFontDrop = null!;
+    private PreviewText _textFontPreview = null!;
+    private PreviewText _sidebarFontPreview = null!;
+    private bool _darkThemeSelected;
 
     private ToggleSwitch _runAtStartupChk = null!, _runInBackgroundChk = null!, _showTrayIconChk = null!;
     private ToggleSwitch _showIconsChk = null!, _useEmojiChk = null!, _useSystemIconsChk = null!;
@@ -40,7 +46,11 @@ internal sealed class GeneralSettingsControl : SettingsPage
         var appearance = new SettingsGroup();
         _themeDrop = appearance.AddDropdown(
             Localization.T("theme"), string.Empty, "Light", string.Empty, string.Empty,
-            _ => Design.Theme.Refresh());
+            value =>
+            {
+                _darkThemeSelected = IsDarkThemeChoice(value);
+                Design.Theme.Refresh();
+            });
         _themeDrop.SetItems(new[] { Localization.T("theme_dark"), Localization.T("theme_light") });
 
         _designDrop = appearance.AddDropdown(
@@ -52,11 +62,16 @@ internal sealed class GeneralSettingsControl : SettingsPage
         // List View typography, row density, and icons
         var listView = new SettingsGroup();
         _fontSizeSlider = listView.AddSlider(
-            Localization.T("list_view_font_size"), string.Empty, 8, 24, 1, 10, " pt", _ => { });
+            Localization.T("list_view_font_size"), string.Empty, 8, 24, 1, 10, " pt", _ => UpdateTypographyPreviews());
         _textFontDrop = listView.AddDropdown(
             Localization.T("list_view_font"), Localization.T("list_view_font_desc"),
-            FontFamilyCatalog.DefaultFamilyName, string.Empty, string.Empty, _ => { });
+            FontFamilyCatalog.DefaultFamilyName, string.Empty, string.Empty, _ => UpdateTypographyPreviews());
         _textFontDrop.SetItems(FontFamilyCatalog.TextFamilies);
+        _textFontDrop.Searchable = true;
+        _textFontDrop.PreviewItemsInOwnFont = true;
+        _textFontDrop.SearchPlaceholder = Localization.T("search_fonts_placeholder");
+        _textFontDrop.EmptyText = Localization.T("search_fonts_empty");
+        _textFontPreview = listView.AddPreview(Localization.T("font_preview"), string.Empty);
         _listViewRowHeightSlider = listView.AddSlider(
             Localization.T("list_view_row_height"), Localization.T("list_view_row_height_desc"),
             16, 48, 2, 20, " px", _ => { });
@@ -67,11 +82,16 @@ internal sealed class GeneralSettingsControl : SettingsPage
         // Sidebar typography and row density
         var sidebarText = new SettingsGroup();
         _sidebarFontSizeSlider = sidebarText.AddSlider(
-            Localization.T("sidebar_font_size"), string.Empty, 8, 24, 1, 10, " pt", _ => { });
+            Localization.T("sidebar_font_size"), string.Empty, 8, 24, 1, 10, " pt", _ => UpdateTypographyPreviews());
         _sidebarFontDrop = sidebarText.AddDropdown(
             Localization.T("sidebar_font"), Localization.T("sidebar_font_desc"),
-            FontFamilyCatalog.DefaultFamilyName, string.Empty, string.Empty, _ => { });
+            FontFamilyCatalog.DefaultFamilyName, string.Empty, string.Empty, _ => UpdateTypographyPreviews());
         _sidebarFontDrop.SetItems(FontFamilyCatalog.TextFamilies);
+        _sidebarFontDrop.Searchable = true;
+        _sidebarFontDrop.PreviewItemsInOwnFont = true;
+        _sidebarFontDrop.SearchPlaceholder = Localization.T("search_fonts_placeholder");
+        _sidebarFontDrop.EmptyText = Localization.T("search_fonts_empty");
+        _sidebarFontPreview = sidebarText.AddPreview(Localization.T("font_preview"), string.Empty);
         _sidebarRowHeightSlider = sidebarText.AddSlider(
             Localization.T("sidebar_row_height"), Localization.T("sidebar_row_height_desc"),
             16, 48, 2, 24, " px", _ => { });
@@ -136,6 +156,7 @@ internal sealed class GeneralSettingsControl : SettingsPage
         AddGroup(Localization.T("debug_section"), debug);
 
         UpdateToggles();
+        UpdateTypographyPreviews();
     }
 
     // This control is a plain FlowLayoutPanel host; sections are added top to bottom.
@@ -171,7 +192,8 @@ internal sealed class GeneralSettingsControl : SettingsPage
         _showRecentChk.Checked = s.ShowSidebarRecent;
         _showFullPathsSidebarChk.Checked = s.ShowFullPathsInSidebar;
         _showSidebarVScrollChk.Checked = s.ShowSidebarVerticalScrollbar;
-        _themeDrop.Value = string.Equals(s.MainThemePreset, "Light", StringComparison.OrdinalIgnoreCase) ? Localization.T("theme_light") : Localization.T("theme_dark");
+        _darkThemeSelected = !string.Equals(s.MainThemePreset, "Light", StringComparison.OrdinalIgnoreCase);
+        _themeDrop.Value = _darkThemeSelected ? Localization.T("theme_dark") : Localization.T("theme_light");
         _designDrop.Value = string.Equals(s.SettingsDesign, "Rounded", StringComparison.OrdinalIgnoreCase) ? "Rounded" : "Flat";
         _languageDrop.Value = string.Equals(s.UiLanguage, "ru", StringComparison.OrdinalIgnoreCase) ? "Русский" : "English";
         _runAtStartupChk.Checked = s.RunAtStartup;
@@ -184,6 +206,7 @@ internal sealed class GeneralSettingsControl : SettingsPage
         _debugCrashLogChk.Checked = s.DebugCrashLogging;
         _debugShellLogChk.Checked = s.DebugShellLogging;
         UpdateToggles();
+        UpdateTypographyPreviews();
     }
 
     public void ApplyToSettings(AppSettings s)
@@ -211,7 +234,7 @@ internal sealed class GeneralSettingsControl : SettingsPage
         s.ShowSidebarRecent = _showRecentChk.Checked;
         s.ShowFullPathsInSidebar = _showFullPathsSidebarChk.Checked;
         s.ShowSidebarVerticalScrollbar = _showSidebarVScrollChk.Checked;
-        s.MainThemePreset = string.Equals(_themeDrop.Value, Localization.T("theme_dark"), StringComparison.OrdinalIgnoreCase) ? "Dark" : "Light";
+        s.MainThemePreset = _darkThemeSelected ? "Dark" : "Light";
         s.UiLanguage = _languageDrop.Value == "Русский" ? "ru" : "en";
         s.SettingsDesign = _designDrop.Value == "Rounded" ? "Rounded" : "Flat";
         s.RunAtStartup = _runAtStartupChk.Checked;
@@ -227,6 +250,26 @@ internal sealed class GeneralSettingsControl : SettingsPage
 
     public bool ShowTrayIcon => _showTrayIconChk.Checked;
     public bool RunAtStartup => _runAtStartupChk.Checked;
+
+    private void UpdateTypographyPreviews()
+    {
+        if (_textFontPreview is not null && _textFontDrop is not null && _fontSizeSlider is not null)
+            _textFontPreview.SetPreview(
+                FontFamilyCatalog.ResolveTextFamily(_textFontDrop.Value),
+                _fontSizeSlider.Value,
+                TypographyPreviewSample);
+
+        if (_sidebarFontPreview is not null && _sidebarFontDrop is not null && _sidebarFontSizeSlider is not null)
+            _sidebarFontPreview.SetPreview(
+                FontFamilyCatalog.ResolveTextFamily(_sidebarFontDrop.Value),
+                _sidebarFontSizeSlider.Value,
+                TypographyPreviewSample);
+    }
+
+    private static bool IsDarkThemeChoice(string? value) =>
+        string.Equals(value, "Dark", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(value, "Тёмная", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(value, "Темная", StringComparison.OrdinalIgnoreCase);
 
     public bool RequiresMainWindowRefresh(Control changedControl) =>
         ReferenceEquals(changedControl, _fontSizeSlider) ||

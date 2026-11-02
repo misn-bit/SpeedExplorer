@@ -25,8 +25,12 @@ internal sealed class Dropdown : Control, IRowControl
     private string? _value;
     private string _placeholder = "Select…";
     private string _emptyText = "Nothing to choose from.";
+    private string _searchPlaceholder = "Search…";
+    private bool _searchable;
+    private bool _previewItemsInOwnFont;
     private readonly OutsideClickFilter _filter;
     private bool _hover, _open;
+    private bool _popupFlipped;
     private Form? _form;
 
     public event EventHandler? ValueChanged;
@@ -41,8 +45,15 @@ internal sealed class Dropdown : Control, IRowControl
         AccessibleRole = AccessibleRole.ComboBox;
 
         _list = new DropdownList(_items);
+        _list.Font = Font;
+        _list.SearchKeyDown += (_, e) =>
+        {
+            if (e.KeyCode != Keys.Space) HandlePopupKeyDown(e);
+        };
         _list.Chosen += OnChosen;
-        _filter = new OutsideClickFilter(c => c == this || c == _list || c == _drop, ClosePopup);
+        _filter = new OutsideClickFilter(c => c == this ||
+            (c is not null && (IsDescendantOf(c, _list) || (_drop is not null && IsDescendantOf(c, _drop)))) ||
+            IsPointerInsidePopup(), ClosePopup);
 
         // AutoClose stays off on purpose: with it on, WinForms' menu machinery grabs the arrow/Enter
         // keys for the popup. We close it ourselves (outside click, Esc, focus lost, window deactivated).
@@ -61,6 +72,7 @@ internal sealed class Dropdown : Control, IRowControl
         });
         _drop.HandleCreated += (_, _) => Native.RoundCorners(_drop.Handle);
         _drop.Closed += (_, _) => EndOpen();
+        _list.PopupSizeChanged += (_, _) => ResizeOpenPopup();
     }
 
     private void ClosePopup()
@@ -68,7 +80,23 @@ internal sealed class Dropdown : Control, IRowControl
         if (_open) _drop.Close();
     }
 
-    private void OnFormDeactivate(object? sender, EventArgs e) => ClosePopup();
+    private void OnFormDeactivate(object? sender, EventArgs e)
+    {
+        if (!_searchable)
+        {
+            ClosePopup();
+            return;
+        }
+
+        // The hosted search edit may activate its own native window after the owner deactivates.
+        // Let that focus transition finish before deciding whether the popup should close.
+        if (IsHandleCreated && !IsDisposed)
+            BeginInvoke((Action)(() =>
+            {
+                if (_open && !_list.ContainsPopupFocus && !Focused && !IsPointerInsidePopup())
+                    ClosePopup();
+            }));
+    }
 
     private void EndOpen()
     {
@@ -113,10 +141,44 @@ internal sealed class Dropdown : Control, IRowControl
         set => _emptyText = value;
     }
 
+    [Browsable(false)]
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+    public string SearchPlaceholder
+    {
+        get => _searchPlaceholder;
+        set => _searchPlaceholder = value;
+    }
+
+    [Browsable(false)]
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+    public bool Searchable
+    {
+        get => _searchable;
+        set
+        {
+            _searchable = value;
+            _list.Searchable = value;
+        }
+    }
+
+    [Browsable(false)]
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+    public bool PreviewItemsInOwnFont
+    {
+        get => _previewItemsInOwnFont;
+        set
+        {
+            _previewItemsInOwnFont = value;
+            _list.PreviewItemsInOwnFont = value;
+            Invalidate();
+        }
+    }
+
     public void SetItems(IEnumerable<string> items)
     {
         _items.Clear();
         _items.AddRange(items);
+        _list.RefreshItems();
         Invalidate();
     }
 
@@ -129,16 +191,18 @@ internal sealed class Dropdown : Control, IRowControl
 
         int rows = Math.Clamp(_items.Count, 1, DropdownList.MaxVisible);
         int h = rows * DropdownList.RowHeightFor(s) + 2 * DropdownList.PadFor(s);
+        if (_searchable) h += DropdownList.SearchHeaderHeightFor(s);
         int w = Math.Max(Width, MeasureWidest(s));
         var size = new Size(w, h);
 
-        _list.Prepare(_value, _emptyText, size);
+        _list.Prepare(_value, _emptyText, _searchPlaceholder, size);
         _drop.Items[0].Size = size;
 
         int gap = (int)(2 * s);
         var work = Screen.FromControl(this).WorkingArea;
         int screenY = PointToScreen(Point.Empty).Y;
         bool flip = screenY + Height + gap + h > work.Bottom && screenY - gap - h > work.Top;
+        _popupFlipped = flip;
 
         _open = true;
         Invalidate();
@@ -146,6 +210,21 @@ internal sealed class Dropdown : Control, IRowControl
         _form = FindForm();
         if (_form is not null) _form.Deactivate += OnFormDeactivate;
         _drop.Show(this, new Point(0, flip ? -h - gap : Height + gap));
+    }
+
+    private void ResizeOpenPopup()
+    {
+        if (!_open) return;
+        float s = DeviceDpi / 96f;
+        var size = new Size(_list.Width, _list.GetPopupHeight(s));
+        _list.Size = size;
+        _drop.Items[0].Size = size;
+        _drop.Size = size;
+
+        int gap = (int)(2 * s);
+        int screenY = PointToScreen(Point.Empty).Y;
+        _drop.Location = new Point(_drop.Left,
+            _popupFlipped ? screenY - size.Height - gap : screenY + Height + gap);
     }
 
     private int MeasureWidest(float s)
@@ -178,7 +257,8 @@ internal sealed class Dropdown : Control, IRowControl
         bool empty = string.IsNullOrEmpty(_value);
         int padX = (int)(Metrics.FieldPadX * s);
         var text = new Rectangle(padX, 0, Width - padX - (int)(36 * s), Height);
-        TextRenderer.DrawText(g, empty ? _placeholder : _value!, Font, text,
+        using var previewFont = !empty && _previewItemsInOwnFont ? CreatePreviewFont(_value!) : null;
+        TextRenderer.DrawText(g, empty ? _placeholder : _value!, previewFont ?? Font, text,
             empty || !Enabled ? p.TextDim : p.Text, TextFlags);
 
         g.SmoothingMode = SmoothingMode.AntiAlias;
@@ -215,6 +295,11 @@ internal sealed class Dropdown : Control, IRowControl
     protected override void OnKeyDown(KeyEventArgs e)
     {
         base.OnKeyDown(e);
+        HandlePopupKeyDown(e);
+    }
+
+    private void HandlePopupKeyDown(KeyEventArgs e)
+    {
         switch (e.KeyCode)
         {
             case Keys.F4:
@@ -250,8 +335,24 @@ internal sealed class Dropdown : Control, IRowControl
     protected override void OnLostFocus(EventArgs e)
     {
         base.OnLostFocus(e);
-        ClosePopup();   // Tab away, or another control grabbed focus
+        if (_open && IsHandleCreated && !IsDisposed)
+        {
+            // Focus moves through the ToolStripControlHost asynchronously when a searchable
+            // popup transfers focus to its embedded TextBox. Check after WinForms finishes that
+            // transfer so the parent dropdown's LostFocus event doesn't close the popup first.
+            BeginInvoke((Action)(() =>
+            {
+                if (_open && !_list.ContainsPopupFocus && !Focused && !IsPointerInsidePopup())
+                    ClosePopup();
+            }));
+        }
         Invalidate();
+    }
+
+    protected override void OnFontChanged(EventArgs e)
+    {
+        base.OnFontChanged(e);
+        if (_list is not null) _list.Font = Font;
     }
 
     protected override void OnEnabledChanged(EventArgs e) { base.OnEnabledChanged(e); Invalidate(); }
@@ -267,7 +368,7 @@ internal sealed class Dropdown : Control, IRowControl
     }
 
     /// <summary>Closes the popup when the mouse goes down anywhere outside the dropdown and its list.</summary>
-    private sealed class OutsideClickFilter(Func<Control, bool> isInside, Action close) : IMessageFilter
+    private sealed class OutsideClickFilter(Func<Control?, bool> isInside, Action close) : IMessageFilter
     {
         public bool PreFilterMessage(ref Message m)
         {
@@ -279,11 +380,32 @@ internal sealed class Dropdown : Control, IRowControl
                 case 0x00A1: // WM_NCLBUTTONDOWN (title bar, borders)
                 case 0x00A4: // WM_NCRBUTTONDOWN
                     var target = Control.FromHandle(m.HWnd);
-                    if (target is null || !isInside(target)) close();
+                    if (!isInside(target)) close();
                     break;
             }
             return false;   // never swallow the click; it still reaches whatever was clicked
         }
+    }
+
+    private static bool IsDescendantOf(Control control, Control ancestor)
+    {
+        for (Control? current = control; current is not null; current = current.Parent)
+            if (current == ancestor) return true;
+        return false;
+    }
+
+    private bool IsPointerInsidePopup()
+    {
+        Point cursor = Cursor.Position;
+        if (_list.IsHandleCreated && _list.RectangleToScreen(_list.ClientRectangle).Contains(cursor))
+            return true;
+        return _drop is not null && _drop.Visible && _drop.Bounds.Contains(cursor);
+    }
+
+    private Font? CreatePreviewFont(string familyName)
+    {
+        try { return new Font(familyName, Font.SizeInPoints, GraphicsUnit.Point); }
+        catch { return null; }
     }
 
     /// <summary>Strips the stock border and background so only DropdownList's own painting shows.</summary>
