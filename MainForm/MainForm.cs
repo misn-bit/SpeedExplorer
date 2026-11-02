@@ -665,14 +665,19 @@ public partial class MainForm : Form, IFileOperationsHost, IShellActionsHost, IO
             {
                 t.Stop();
                 t.Dispose();
-                if (!_loadCompleted && !_preloadOnly)
-                {
-                    SendMessage(Handle, WM_SETREDRAW, 1, 0);
-                    Opacity = 1;
-                    if (_listView != null && !_listView.IsDisposed)
-                        _listView.Visible = true;
-                    base.Refresh();
-                }
+                if (IsDisposed || Disposing || !IsHandleCreated || _loadCompleted || _preloadOnly)
+                    return;
+
+                SendMessage(Handle, WM_SETREDRAW, 1, 0);
+                Opacity = 1;
+                if (_listView != null && !_listView.IsDisposed)
+                    _listView.Visible = true;
+                base.Refresh();
+            };
+            this.FormClosed += (s2, e2) =>
+            {
+                t.Stop();
+                t.Dispose();
             };
             t.Start();
         };
