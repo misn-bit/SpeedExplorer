@@ -11,6 +11,7 @@ public partial class MainForm
     {
         private readonly MainForm _owner;
         private Font? _statusBarDpiFont;
+        private bool _selectionCountUpdateQueued;
         private BrowserState State => _owner.State;
 
         public LayoutController(MainForm owner)
@@ -381,6 +382,34 @@ public partial class MainForm
             _owner._selectionCountLabel.Text = selectedCount > 0
                 ? string.Format(Localization.T("status_selected_items"), selectedCount)
                 : string.Empty;
+        }
+
+        public void QueueSelectionCountUpdate(ListView? listView = null)
+        {
+            if (_selectionCountUpdateQueued)
+                return;
+
+            if (_owner.IsDisposed || !_owner.IsHandleCreated)
+            {
+                UpdateSelectionCount(listView);
+                return;
+            }
+
+            _selectionCountUpdateQueued = true;
+            try
+            {
+                _owner.BeginInvoke((Action)(() =>
+                {
+                    _selectionCountUpdateQueued = false;
+                    UpdateSelectionCount(listView);
+                }));
+            }
+            catch (InvalidOperationException)
+            {
+                _selectionCountUpdateQueued = false;
+                if (!_owner.IsDisposed)
+                    UpdateSelectionCount(listView);
+            }
         }
 
         private Font CreateStatusBarDpiFont()

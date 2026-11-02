@@ -5,6 +5,7 @@ obj/
 # IDE / local tooling
 .vs/
 .agent/
+.agents/
 .dotnet_cli/
 skills/
 .opencode/

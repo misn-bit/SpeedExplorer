@@ -105,19 +105,11 @@ public partial class MainForm
     private void SelectAll()
     {
         if (_listView == null || State.Items.Count == 0) return;
-        _listView.BeginUpdate();
-        try
-        {
-            _listView.SelectedIndices.Clear();
-            for (int i = 0; i < State.Items.Count; i++)
-            {
-                _listView.SelectedIndices.Add(i);
-            }
-        }
-        finally
-        {
-            _listView.EndUpdate();
-        }
+        // Let the ListView process and repaint its native bulk state change
+        // directly. BeginUpdate/EndUpdate forces a full-client repaint, which
+        // can flash the owner-drawn name cells under the pointer.
+        SelectAllListViewItems(_listView);
+        _layoutController.QueueSelectionCountUpdate(_listView);
     }
 
     private void EditTags()

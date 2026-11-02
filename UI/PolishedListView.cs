@@ -116,15 +116,17 @@ namespace SpeedExplorer
                 int count = VirtualMode ? VirtualListSize : Items.Count;
                 if (count > 0)
                 {
-                    try
-                    {
-                        var lastRect = GetItemRect(count - 1, ItemBoundsPortion.Entire);
-                        tailTop = Math.Max(headerHeight, lastRect.Bottom);
-                    }
-                    catch
-                    {
-                        tailTop = headerHeight;
-                    }
+                    // This paint runs after the native ListView has finished
+                    // drawing. If the virtual row bounds are unavailable, do
+                    // not guess from the header: that could paint over rows.
+                    Rectangle lastRect;
+                    try { lastRect = GetItemRect(count - 1, ItemBoundsPortion.Entire); }
+                    catch { return; }
+
+                    if (lastRect.Height <= 0 || lastRect.Bottom <= headerHeight)
+                        return;
+
+                    tailTop = Math.Max(headerHeight, lastRect.Bottom);
                 }
 
                 if (tailTop < 0 || tailTop >= ClientSize.Height)

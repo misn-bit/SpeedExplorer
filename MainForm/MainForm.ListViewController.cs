@@ -106,7 +106,7 @@ public partial class MainForm
             _owner._dragDropController.AttachToListView(lv);
 
             lv.RetrieveVirtualItem += _owner.ListView_RetrieveVirtualItem;
-            lv.SelectedIndexChanged += (s, e) => _owner._layoutController.UpdateSelectionCount(lv);
+            lv.SelectedIndexChanged += (s, e) => _owner._layoutController.QueueSelectionCountUpdate(lv);
             lv.ColumnClick += _owner.ListView_ColumnClick;
             lv.MouseDoubleClick += _owner.ListView_MouseDoubleClick;
             lv.MouseDown += _owner.ListView_MouseDown;
@@ -177,14 +177,16 @@ public partial class MainForm
                     const int LVM_SETEXTENDEDLISTVIEWSTYLE = 0x1036;
                     const int LVM_GETEXTENDEDLISTVIEWSTYLE = 0x1037;
                     const int LVS_EX_GRIDLINES = 0x1;
-                    const int LVS_EX_MARQUEESELECTION = 0x8;
+                    const int LVS_EX_TRACKSELECT = 0x8;
                     const int LVS_EX_DOUBLEBUFFER = 0x10000;
 
                     try { lv.GridLines = false; } catch (Exception __ex) { System.Diagnostics.Debug.WriteLine(__ex); }
 
                     int ex = SendMessage(lv.Handle, LVM_GETEXTENDEDLISTVIEWSTYLE, 0, 0);
-                    ex &= ~LVS_EX_GRIDLINES;
-                    ex |= LVS_EX_MARQUEESELECTION;
+                    // 0x8 is LVS_EX_TRACKSELECT, which selects an item after
+                    // hovering. Hover highlighting is drawn by our owner-draw
+                    // path, so leave native hover selection disabled.
+                    ex &= ~(LVS_EX_GRIDLINES | LVS_EX_TRACKSELECT);
                     ex |= LVS_EX_DOUBLEBUFFER;
                     SendMessage(lv.Handle, LVM_SETEXTENDEDLISTVIEWSTYLE, 0, ex);
                 }

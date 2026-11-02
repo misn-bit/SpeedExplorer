@@ -290,22 +290,37 @@ public partial class MainForm
             if (drawItem == null)
                 return;
 
-            // Native virtual ListView hover paints can raise DrawItem without a
-            // matching DrawSubItem, so keep the name cell visible from this path.
-
+            // In Details view the native ListView can raise DrawItem during
+            // hover/drag without raising DrawSubItem. Keep the name visible,
+            // but constrain its paint to the name column so it cannot cover
+            // the other cells.
             bool isDriveView = State.CurrentPath == ThisPcPath && !_owner.IsSearchMode;
             int nameColumnIndex = isDriveView ? 1 : 0;
-            if (nameColumnIndex >= drawItem.SubItems.Count)
+            if (nameColumnIndex >= drawItem.SubItems.Count || nameColumnIndex >= _owner._listView.Columns.Count)
                 return;
 
-            var nameRect = new NativeRect { Left = LvirBounds, Top = nameColumnIndex };
-            if (SendMessageGetSubItemRect(
-                    _owner._listView.Handle,
-                    LvmGetSubItemRect,
-                    (IntPtr)e.ItemIndex,
-                    ref nameRect) == IntPtr.Zero)
-                return;
-            var nameBounds = Rectangle.FromLTRB(nameRect.Left, nameRect.Top, nameRect.Right, nameRect.Bottom);
+            Rectangle nameBounds;
+            if (nameColumnIndex == 0)
+            {
+                // LVM_GETSUBITEMRECT for subitem zero returns the parent
+                // item's bounds, which span the row in Details view.
+                nameBounds = new Rectangle(
+                    e.Bounds.X,
+                    e.Bounds.Y,
+                    _owner._listView.Columns[0].Width,
+                    e.Bounds.Height);
+            }
+            else
+            {
+                var nameRect = new NativeRect { Left = LvirBounds, Top = nameColumnIndex };
+                if (SendMessageGetSubItemRect(
+                        _owner._listView.Handle,
+                        LvmGetSubItemRect,
+                        (IntPtr)e.ItemIndex,
+                        ref nameRect) == IntPtr.Zero)
+                    return;
+                nameBounds = Rectangle.FromLTRB(nameRect.Left, nameRect.Top, nameRect.Right, nameRect.Bottom);
+            }
 
             bool isProgressRow = ReferenceEquals(drawItem.Tag, SearchProgressRowTag);
             Color rowBackColor = _owner.ListBackColor;
@@ -342,7 +357,7 @@ public partial class MainForm
             bool isProgressRow)
         {
             var brush = _gdi.Brush(rowBackColor);
-            g.FillRectangle(brush, new Rectangle(bounds.X, bounds.Y, bounds.Width + 1, bounds.Height));
+            g.FillRectangle(brush, bounds);
 
             var s = AppSettings.Current;
             var gap = 4;
@@ -462,9 +477,8 @@ public partial class MainForm
 
             if (isNameColumn)
             {
-                // DrawItem is the fallback for native hover paints without a
-                // matching DrawSubItem; when this event is present, its cell
-                // bounds keep the name background aligned with adjacent columns.
+                // Keep the name fill within this cell, just like the other
+                // columns, so it cannot extend beyond the final column.
                 DrawNameCell(
                     e.Graphics,
                     drawItem,
@@ -475,7 +489,7 @@ public partial class MainForm
                 return;
             }
 
-            var fillRect = new Rectangle(e.Bounds.X, e.Bounds.Y, e.Bounds.Width + 1, e.Bounds.Height);
+            var fillRect = e.Bounds;
 
             var b = _gdi.Brush(rowBackColor);
             e.Graphics.FillRectangle(b, fillRect);

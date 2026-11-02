@@ -66,6 +66,37 @@ public partial class MainForm
     private const int SB_HORZ = 0;
     private const int SB_VERT = 1;
     private const int LVM_GETHEADER = 0x101F;
+    private const int LVM_SETITEMSTATE = 0x102B;
+    private const uint LVIS_SELECTED = 0x0002;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct LVITEMSTATE
+    {
+        public uint Mask;
+        public int ItemIndex;
+        public int SubItemIndex;
+        public uint State;
+        public uint StateMask;
+    }
+
+    private static void SelectAllListViewItems(ListView listView)
+    {
+        var state = new LVITEMSTATE
+        {
+            State = LVIS_SELECTED,
+            StateMask = LVIS_SELECTED
+        };
+        IntPtr statePtr = Marshal.AllocHGlobal(Marshal.SizeOf<LVITEMSTATE>());
+        try
+        {
+            Marshal.StructureToPtr(state, statePtr, fDeleteOld: false);
+            SendMessagePtr(listView.Handle, LVM_SETITEMSTATE, new IntPtr(-1), statePtr);
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(statePtr);
+        }
+    }
 
     [DllImport("user32.dll")]
     private static extern short GetAsyncKeyState(int vKey);
