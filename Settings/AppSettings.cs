@@ -97,6 +97,7 @@ public class AppSettings
     public int SidebarSplitDistance { get; set; } = 180;
     public double SidebarSplitRatio { get; set; } = 0.0;
     public bool SidebarSplitAtMinimum { get; set; } = false;
+    public System.Collections.Generic.Dictionary<string, SidebarSplitProfile> SidebarSplitProfiles { get; set; } = new();
     public int EditTagsWidth { get; set; } = 400;
     public int EditTagsHeight { get; set; } = 310;
     public bool EditTagsMaximized { get; set; } = false;
@@ -361,4 +362,11 @@ public class AppSettings
             return "Light";
         return "Dark";
     }
+}
+
+public sealed class SidebarSplitProfile
+{
+    public int Distance { get; set; } = 180;
+    public double Ratio { get; set; }
+    public bool AtMinimum { get; set; }
 }

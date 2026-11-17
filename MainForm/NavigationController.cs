@@ -20,25 +20,29 @@ internal sealed class NavigationController
     public bool IsNavigating { get; set; }
     public string? PendingPath { get; private set; }
     public List<string>? PendingSelectPaths { get; private set; }
+    public bool PendingBackgroundRefresh { get; private set; }
 
     public NavigationController(INavigationHost host)
     {
         _host = host;
     }
 
-    public void QueuePending(string path, List<string>? selectPaths)
+    public void QueuePending(string path, List<string>? selectPaths, bool backgroundRefresh = false)
     {
         PendingPath = path;
         PendingSelectPaths = selectPaths;
+        PendingBackgroundRefresh = backgroundRefresh;
     }
 
-    public (string? path, List<string>? selectPaths) DequeuePending()
+    public (string? path, List<string>? selectPaths, bool backgroundRefresh) DequeuePending()
     {
         var p = PendingPath;
         var s = PendingSelectPaths;
+        var backgroundRefresh = PendingBackgroundRefresh;
         PendingPath = null;
         PendingSelectPaths = null;
-        return (p, s);
+        PendingBackgroundRefresh = false;
+        return (p, s, backgroundRefresh);
     }
 
     public void GoBack()

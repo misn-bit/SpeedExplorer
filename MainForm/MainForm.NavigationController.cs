@@ -237,7 +237,8 @@ public partial class MainForm
         List<string>? pathsToSelect = null,
         SortColumn? overrideSortColumn = null,
         SortDirection? overrideSortDirection = null,
-        bool? overrideTaggedFilesOnTop = null)
+        bool? overrideTaggedFilesOnTop = null,
+        bool backgroundRefresh = false)
     {
         long navTraceId = Interlocked.Increment(ref _navigationTraceSeq);
         var totalSw = Stopwatch.StartNew();
@@ -274,12 +275,12 @@ public partial class MainForm
             NavigationDebugLogger.Log($"NAV#{navTraceId} PATH missing; fallback to ThisPC");
             if (this.InvokeRequired)
             {
-                this.Invoke(new Action(() => ObserveTask(NavigateTo(ThisPcPath, pathsToSelect), $"NAV#{navTraceId} fallback-dispatch")));
+                this.Invoke(new Action(() => ObserveTask(NavigateTo(ThisPcPath, pathsToSelect, backgroundRefresh: backgroundRefresh), $"NAV#{navTraceId} fallback-dispatch")));
             }
             else
             {
                 _statusLabel.Text = Localization.T("status_path_unavailable");
-                ObserveTask(NavigateTo(ThisPcPath, pathsToSelect), $"NAV#{navTraceId} fallback");
+                ObserveTask(NavigateTo(ThisPcPath, pathsToSelect, backgroundRefresh: backgroundRefresh), $"NAV#{navTraceId} fallback");
             }
             return;
         }
@@ -289,7 +290,7 @@ public partial class MainForm
         {
             NavigationDebugLogger.Log($"NAV#{navTraceId} DISPATCH to UI thread");
             var swDispatch = Stopwatch.StartNew();
-            this.Invoke(new Action(() => ObserveTask(NavigateTo(path, pathsToSelect), $"NAV#{navTraceId} dispatch")));
+            this.Invoke(new Action(() => ObserveTask(NavigateTo(path, pathsToSelect, backgroundRefresh: backgroundRefresh), $"NAV#{navTraceId} dispatch")));
             if (AppSettings.Current.DebugNavigationUiQueue)
             {
                 NavigationDebugLogger.Log($"NAV#{navTraceId} DISPATCH_WAIT ms={swDispatch.ElapsedMilliseconds}");
@@ -301,7 +302,7 @@ public partial class MainForm
         if (_nav.IsNavigating)
         {
             NavigationDebugLogger.Log($"NAV#{navTraceId} QUEUED while navigating. pendingPath=\"{TraceText(path)}\"");
-            _nav.QueuePending(path, pathsToSelect);
+            _nav.QueuePending(path, pathsToSelect, backgroundRefresh);
 
             // Force the current load to cancel so we can proceed to the pending one
             _loadCts?.Cancel();
@@ -312,7 +313,7 @@ public partial class MainForm
         // This prevents a fast navigation from attaching the size to the destination.
         _iconZoomController.CommitPendingZoomForLocationChange();
 
-        bool shouldFocusListView = ShouldFocusListView();
+        bool shouldFocusListView = !backgroundRefresh && ShouldFocusListView();
         NavigationDebugLogger.Log($"NAV#{navTraceId} ENTER");
         _nav.IsNavigating = true;
         _loadCts?.Cancel();
@@ -500,7 +501,8 @@ public partial class MainForm
                 else
                     SetupFileColumns(_listView);
 
-                BindItemsToListView(navTraceId, cacheIsSearchSnapshot ? "NAVCACHE_SEARCH" : "NAVCACHE", path, pathsToSelect, totalSw, gcStart);
+                BindItemsToListView(navTraceId, cacheIsSearchSnapshot ? "NAVCACHE_SEARCH" : "NAVCACHE", path, pathsToSelect, totalSw, gcStart,
+                    backgroundRefresh: backgroundRefresh);
                 if (updateIconSize)
                 {
                     EndNavigationFreezeVisual();
@@ -662,7 +664,8 @@ public partial class MainForm
                 State.Items = sortedItems;
 
                 // Bind items to list view and restore selection
-                BindItemsToListView(navTraceId, "NAV", path, finalSelectionPaths, totalSw, gcStart, finalTopPath);
+                BindItemsToListView(navTraceId, "NAV", path, finalSelectionPaths, totalSw, gcStart, finalTopPath,
+                    backgroundRefresh: backgroundRefresh);
             }
             catch (OperationCanceledException)
             {
@@ -755,7 +758,7 @@ public partial class MainForm
     {
         _nav.IsNavigating = false;
 
-        var (pendingPath, pendingSelect) = _nav.DequeuePending();
+        var (pendingPath, pendingSelect, pendingBackgroundRefresh) = _nav.DequeuePending();
         if (!string.IsNullOrEmpty(pendingPath))
         {
             NavigationDebugLogger.Log($"NAV QUEUE-DEQUEUE next=\"{TraceText(pendingPath)}\" selectCount={pendingSelect?.Count ?? 0}");
@@ -763,7 +766,7 @@ public partial class MainForm
 
         if (!string.IsNullOrEmpty(pendingPath))
         {
-            ObserveTask(NavigateTo(pendingPath, pendingSelect), "NAV queue-next");
+            ObserveTask(NavigateTo(pendingPath, pendingSelect, backgroundRefresh: pendingBackgroundRefresh), "NAV queue-next");
         }
     }
 
@@ -839,7 +842,8 @@ public partial class MainForm
         List<string>? pathsToSelect,
         Stopwatch totalSw,
         (int, int, int, long)? gcStart,
-        string? preferredTopPath = null)
+        string? preferredTopPath = null,
+        bool backgroundRefresh = false)
     {
         var swBind = Stopwatch.StartNew();
         LogUiQueueDelayAsync(navTraceId, scope, "pre-bind");
@@ -959,7 +963,7 @@ public partial class MainForm
 
         bool preserveAiPanelFocus = _llmChatPanel != null && _llmChatPanel.IsExpanded;
         bool isRenaming = _renameTextBox != null && !_renameTextBox.IsDisposed;
-        if (ShouldFocusListView() && !preserveAiPanelFocus && !isRenaming)
+        if (!backgroundRefresh && ShouldFocusListView() && !preserveAiPanelFocus && !isRenaming)
             _listView.Focus();
         LogListViewState($"{scope}#{navTraceId}", "post-bind-pre-reset");
         swBind.Stop();
@@ -1076,18 +1080,18 @@ public partial class MainForm
         }
     }
 
-    public async Task RefreshCurrentAsync(List<string>? selectPaths = null)
+    public async Task RefreshCurrentAsync(List<string>? selectPaths = null, bool backgroundRefresh = false)
     {
         // Simple refresh logic
         if (IsShellPath(State.CurrentPath))
         {
-            await NavigateTo(State.CurrentPath, selectPaths);
+            await NavigateTo(State.CurrentPath, selectPaths, backgroundRefresh: backgroundRefresh);
             return;
         }
 
         if (string.IsNullOrEmpty(State.CurrentPath) || (State.CurrentPath != ThisPcPath && !Directory.Exists(State.CurrentPath)))
         {
-            await NavigateTo(ThisPcPath, selectPaths);
+            await NavigateTo(ThisPcPath, selectPaths, backgroundRefresh: backgroundRefresh);
             return;
         }
 
@@ -1097,11 +1101,11 @@ public partial class MainForm
             if (!string.IsNullOrEmpty(_searchBox.Text) && _searchBox.Text != Localization.T("search_placeholder"))
                 _searchController.StartSearch(_searchBox.Text);
             else
-                await NavigateTo(State.CurrentPath, selectPaths);
+                await NavigateTo(State.CurrentPath, selectPaths, backgroundRefresh: backgroundRefresh);
         }
         else
         {
-            await NavigateTo(State.CurrentPath, selectPaths);
+            await NavigateTo(State.CurrentPath, selectPaths, backgroundRefresh: backgroundRefresh);
         }
     }
 

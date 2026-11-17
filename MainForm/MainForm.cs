@@ -79,6 +79,10 @@ public partial class MainForm : Form, IFileOperationsHost, IShellActionsHost, IO
     // before the saved sidebar position has been restored.
     private bool _restoringSidebarSplit;
     private bool _sidebarSplitRestorePending;
+    private bool _sidebarSplitUserDragging;
+    private string? _sidebarSplitDisplayKey;
+    private int _sidebarSplitRestoreGeneration;
+    private System.Windows.Forms.Timer? _sidebarSplitDisplayMoveTimer;
     private bool _preloadOnly;
     private readonly SettingsLauncherController _settingsLauncherController;
     private readonly ThemeController _themeController;
@@ -446,12 +450,18 @@ public partial class MainForm : Form, IFileOperationsHost, IShellActionsHost, IO
         _restoringSidebarSplit = true;
         try
         {
-            if (AppSettings.Current.SidebarSplitAtMinimum)
+            var settings = AppSettings.Current;
+            var displayKey = GetSidebarSplitDisplayKey();
+            settings.SidebarSplitProfiles ??= new Dictionary<string, SidebarSplitProfile>();
+            settings.SidebarSplitProfiles.TryGetValue(displayKey, out var profile);
+
+            if (profile?.AtMinimum ?? settings.SidebarSplitAtMinimum)
             {
                 _splitContainer.SplitterDistance = _splitContainer.Panel1MinSize;
+                _sidebarSplitDisplayKey = displayKey;
                 return;
             }
-            var ratio = AppSettings.Current.SidebarSplitRatio;
+            var ratio = profile?.Ratio ?? settings.SidebarSplitRatio;
             int distance;
             if (ratio > 0.0 && ratio < 0.9)
             {
@@ -459,17 +469,136 @@ public partial class MainForm : Form, IFileOperationsHost, IShellActionsHost, IO
             }
             else
             {
-                distance = Scale(AppSettings.Current.SidebarSplitDistance);
+                distance = Scale(profile?.Distance ?? settings.SidebarSplitDistance);
             }
             var maxDistance = Math.Max(_splitContainer.Panel1MinSize,
                 _splitContainer.Width - _splitContainer.Panel2MinSize);
             distance = Math.Max(_splitContainer.Panel1MinSize, Math.Min(maxDistance, distance));
             _splitContainer.SplitterDistance = distance;
+            _sidebarSplitDisplayKey = displayKey;
         }
         finally
         {
             _restoringSidebarSplit = previousState;
         }
+    }
+
+    private string GetSidebarSplitDisplayKey()
+    {
+        Screen screen = IsHandleCreated ? Screen.FromHandle(Handle) : Screen.FromControl(this);
+        return $"{screen.Bounds.Width}x{screen.Bounds.Height}@{CurrentDpi}";
+    }
+
+    private void SaveSidebarSplitForCurrentDisplay()
+    {
+        if (_splitContainer == null || _splitContainer.Width <= 0 || _splitContainer.Panel1Collapsed ||
+            _restoringSidebarSplit || _sidebarSplitRestorePending)
+            return;
+
+        var settings = AppSettings.Current;
+        settings.SidebarSplitProfiles ??= new Dictionary<string, SidebarSplitProfile>();
+
+        int distance = _splitContainer.SplitterDistance;
+        int logicalDistance = Unscale(distance);
+        double minRatio = (double)_splitContainer.Panel1MinSize / _splitContainer.Width;
+        double rawRatio = (double)distance / _splitContainer.Width;
+        bool atMinimum = distance <= _splitContainer.Panel1MinSize + 1;
+        double ratio = Math.Max(minRatio, Math.Min(0.9, rawRatio));
+        string displayKey = GetSidebarSplitDisplayKey();
+
+        settings.SidebarSplitDistance = logicalDistance;
+        settings.SidebarSplitAtMinimum = atMinimum;
+        settings.SidebarSplitRatio = ratio;
+        settings.SidebarSplitProfiles[displayKey] = new SidebarSplitProfile
+        {
+            Distance = logicalDistance,
+            Ratio = ratio,
+            AtMinimum = atMinimum
+        };
+        settings.Save();
+        _sidebarSplitDisplayKey = displayKey;
+    }
+
+    private void QueueSidebarSplitRestore()
+    {
+        if (!IsHandleCreated || IsDisposed || Disposing || _splitContainer == null || _splitContainer.IsDisposed)
+            return;
+
+        _sidebarSplitRestorePending = true;
+        int generation = ++_sidebarSplitRestoreGeneration;
+
+        void ApplyAfterLayout()
+        {
+            if (generation != _sidebarSplitRestoreGeneration || IsDisposed || Disposing)
+                return;
+
+            try
+            {
+                ApplySidebarSplit();
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Sidebar split restore failed: {ex.Message}");
+            }
+            finally
+            {
+                _sidebarSplitRestorePending = false;
+            }
+        }
+
+        try
+        {
+            BeginInvoke((Action)(() =>
+            {
+                try
+                {
+                    BeginInvoke((Action)ApplyAfterLayout);
+                }
+                catch (Exception ex)
+                {
+                    if (generation == _sidebarSplitRestoreGeneration)
+                        _sidebarSplitRestorePending = false;
+                    Debug.WriteLine($"Sidebar split restore dispatch failed: {ex.Message}");
+                }
+            }));
+        }
+        catch (Exception ex)
+        {
+            if (generation == _sidebarSplitRestoreGeneration)
+                _sidebarSplitRestorePending = false;
+            Debug.WriteLine($"Sidebar split restore dispatch failed: {ex.Message}");
+        }
+    }
+
+    private void ScheduleSidebarSplitRestoreForDisplayMove()
+    {
+        if (!IsHandleCreated || IsDisposed || Disposing || _splitContainer == null || _splitContainer.IsDisposed)
+            return;
+
+        string displayKey;
+        try { displayKey = GetSidebarSplitDisplayKey(); }
+        catch { return; }
+
+        if (string.Equals(displayKey, _sidebarSplitDisplayKey, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        if (_sidebarSplitDisplayMoveTimer == null)
+        {
+            _sidebarSplitDisplayMoveTimer = new System.Windows.Forms.Timer { Interval = 300 };
+            _sidebarSplitDisplayMoveTimer.Tick += (s, e) =>
+            {
+                _sidebarSplitDisplayMoveTimer.Stop();
+                try
+                {
+                    if (!string.Equals(GetSidebarSplitDisplayKey(), _sidebarSplitDisplayKey, StringComparison.OrdinalIgnoreCase))
+                        QueueSidebarSplitRestore();
+                }
+                catch (Exception ex) { Debug.WriteLine($"Sidebar display profile check failed: {ex.Message}"); }
+            };
+        }
+
+        _sidebarSplitDisplayMoveTimer.Stop();
+        _sidebarSplitDisplayMoveTimer.Start();
     }
     private Padding Scale(Padding p) => new Padding(Scale(p.Left), Scale(p.Top), Scale(p.Right), Scale(p.Bottom));
 
@@ -493,6 +622,7 @@ public partial class MainForm : Form, IFileOperationsHost, IShellActionsHost, IO
         base.OnDpiChanged(e);
         UpdateScale();
         QueueMaximizedBoundsRefresh(forceFullscreenReapply: true);
+        QueueSidebarSplitRestore();
     }
 
     private void QueueMaximizedBoundsRefresh(bool forceFullscreenReapply = false)

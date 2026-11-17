@@ -554,19 +554,25 @@ public partial class MainForm
             _owner.Controls.Add(_owner._titleBar);
             _owner.Controls.Add(_owner._statusBar);
 
-            _owner._splitContainer.SplitterMoved += (s, e) =>
+            _owner._splitContainer.SplitterMoving += (s, e) =>
             {
                 if (_owner._restoringSidebarSplit || _owner._sidebarSplitRestorePending || _owner._splitContainer.Panel1Collapsed)
                     return;
-                AppSettings.Current.SidebarSplitDistance = _owner.Unscale(_owner._splitContainer.SplitterDistance);
-                if (_owner._splitContainer.Width > 0)
-                {
-                    var minRatio = (double)_owner._splitContainer.Panel1MinSize / _owner._splitContainer.Width;
-                    var rawRatio = (double)_owner._splitContainer.SplitterDistance / _owner._splitContainer.Width;
-                    AppSettings.Current.SidebarSplitAtMinimum = _owner._splitContainer.SplitterDistance <= _owner._splitContainer.Panel1MinSize + 1;
-                    AppSettings.Current.SidebarSplitRatio = Math.Max(minRatio, Math.Min(0.9, rawRatio));
-                }
-                AppSettings.Current.Save();
+                _owner._sidebarSplitUserDragging = true;
+            };
+            _owner._splitContainer.SplitterMoved += (s, e) =>
+            {
+                if (_owner._restoringSidebarSplit || _owner._sidebarSplitRestorePending ||
+                    !_owner._sidebarSplitUserDragging || _owner._splitContainer.Panel1Collapsed)
+                    return;
+                _owner.SaveSidebarSplitForCurrentDisplay();
+            };
+            _owner._splitContainer.MouseUp += (s, e) =>
+            {
+                if (!_owner._sidebarSplitUserDragging)
+                    return;
+                _owner.SaveSidebarSplitForCurrentDisplay();
+                _owner._sidebarSplitUserDragging = false;
             };
         }
 
@@ -698,40 +704,14 @@ public partial class MainForm
                 // A maximized borderless form gets its final client width only after the
                 // first show/layout pass. Restore the saved split after that pass so an
                 // early transient ratio cannot be carried into the visible layout.
-                try
-                {
-                    _owner.BeginInvoke((Action)(() =>
-                    {
-                        try
-                        {
-                            _owner.BeginInvoke((Action)(() =>
-                            {
-                                try
-                                {
-                                    _owner.ApplySidebarSplit();
-                                }
-                                finally
-                                {
-                                    _owner._sidebarSplitRestorePending = false;
-                                }
-                            }));
-                        }
-                        catch (Exception __ex)
-                        {
-                            _owner._sidebarSplitRestorePending = false;
-                            System.Diagnostics.Debug.WriteLine(__ex);
-                        }
-                    }));
-                }
-                catch (Exception __ex)
-                {
-                    _owner._sidebarSplitRestorePending = false;
-                    System.Diagnostics.Debug.WriteLine(__ex);
-                }
+                _owner.QueueSidebarSplitRestore();
             };
+
+            _owner.LocationChanged += (s, e) => _owner.ScheduleSidebarSplitRestoreForDisplayMove();
 
             _owner.FormClosing += (s, e) =>
             {
+                _owner.SaveSidebarSplitForCurrentDisplay();
                 _owner.SaveWindowStateForCurrentState();
 
                 _owner.SaveFolderSettings();
@@ -752,6 +732,9 @@ public partial class MainForm
             {
                 _statusBarDpiFont?.Dispose();
                 _statusBarDpiFont = null;
+                _owner._sidebarSplitDisplayMoveTimer?.Stop();
+                _owner._sidebarSplitDisplayMoveTimer?.Dispose();
+                _owner._sidebarSplitDisplayMoveTimer = null;
             };
         }
 

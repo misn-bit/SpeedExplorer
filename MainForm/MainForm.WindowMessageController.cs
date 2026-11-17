@@ -46,7 +46,10 @@ public partial class MainForm
 
         base.WndProc(ref m);
         if (m.Msg == WM_DISPLAYCHANGE)
+        {
             QueueMaximizedBoundsRefresh(forceFullscreenReapply: true);
+            QueueSidebarSplitRestore();
+        }
 
         if (m.Msg == WM_WINDOWPOSCHANGED && WindowState != previousWindowState && !_refreshingMaximizedBounds)
             SaveWindowStateForCurrentState();

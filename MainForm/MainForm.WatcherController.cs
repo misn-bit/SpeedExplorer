@@ -55,7 +55,7 @@ public partial class MainForm
                 _watcherTimer.Stop();
                 var batch = DrainPendingChanges();
                 if (!TryApplyLivePatch(batch))
-                    _owner.ObserveTask(_owner.RefreshCurrentAsync(), "WatcherController.TickRefresh");
+                    _owner.ObserveTask(_owner.RefreshCurrentAsync(backgroundRefresh: true), "WatcherController.TickRefresh");
             };
         }
 
