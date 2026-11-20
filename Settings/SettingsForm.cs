@@ -48,10 +48,12 @@ public class SettingsForm : Form
         General = 1,
         AppBehavior = 2,
         ManualActions = 4,
-        Llm = 8
+        Llm = 8,
+        Appearance = 16
     }
 
     private readonly GeneralSettingsControl _generalSection = new();
+    private readonly AppearanceSettingsControl _appearanceSection = new();
     private readonly AppBehaviorSettingsControl _appBehaviorSection = new();
     private readonly ManualContextActionsSettingsControl _manualActionsSection = new();
     private readonly LlmSettingsSectionControl _llmSettingsSection = new();
@@ -149,6 +151,7 @@ public class SettingsForm : Form
         ApplyTheme();
 
         HookSettingChanges(_generalSection, PendingSettingsSections.General);
+        HookSettingChanges(_appearanceSection, PendingSettingsSections.Appearance);
         HookSettingChanges(_appBehaviorSection, PendingSettingsSections.AppBehavior);
         _manualActionsSection.SettingsChanged += (sender, e) =>
             QueueSettingsCommit(PendingSettingsSections.ManualActions);
@@ -371,9 +374,11 @@ public class SettingsForm : Form
         {
             bool refreshMainWindow = section == PendingSettingsSections.Llm ||
                 (section == PendingSettingsSections.General &&
-                 _generalSection.RequiresMainWindowRefresh(child));
-            bool refreshMainTheme = section == PendingSettingsSections.General &&
-                _generalSection.RequiresMainThemeRefresh(child);
+                 _generalSection.RequiresMainWindowRefresh(child)) ||
+                (section == PendingSettingsSections.Appearance &&
+                 _appearanceSection.RequiresMainWindowRefresh(child));
+            bool refreshMainTheme = section == PendingSettingsSections.Appearance &&
+                _appearanceSection.RequiresMainThemeRefresh(child);
             switch (child)
             {
                 case ToggleSwitch toggle:
@@ -433,7 +438,7 @@ public class SettingsForm : Form
 
         _pageOrder = new Control[]
         {
-            _generalSection, _appBehaviorSection, _manualActionsSection,
+            _generalSection, _appearanceSection, _appBehaviorSection, _manualActionsSection,
             _windowsIntegrationSection, _llmSettingsSection, _hotkeysSection, _aboutSection
         };
 
@@ -445,6 +450,7 @@ public class SettingsForm : Form
         }
 
         _nav.Add(Localization.T("general_tab"), "");
+        _nav.Add(Localization.T("appearance_tab"), "");
         _nav.Add(Localization.T("app_behavior_tab"), "");
         _nav.Add(Localization.T("context_menu_tab"), "");
         _nav.Add(Localization.T("windows_integration_tab"), "");
@@ -843,6 +849,7 @@ public class SettingsForm : Form
         AppSettings.ReloadCurrent();
         var s = AppSettings.Current;
         _generalSection.LoadFromSettings(s);
+        _appearanceSection.LoadFromSettings(s);
         _appBehaviorSection.LoadFromSettings(s);
         _manualActionsSection.LoadFromSettings(s);
         _llmSettingsSection.LoadFromSettings(s);
@@ -980,6 +987,8 @@ public class SettingsForm : Form
             bool trayIconChanged = generalChanged && s.ShowTrayIcon != _generalSection.ShowTrayIcon;
             if (generalChanged)
                 _generalSection.ApplyToSettings(s);
+            if (_pendingSections.HasFlag(PendingSettingsSections.Appearance))
+                _appearanceSection.ApplyToSettings(s);
             if (_pendingSections.HasFlag(PendingSettingsSections.Llm))
                 _llmSettingsSection.ApplyToSettings(s);
             if (_pendingSections.HasFlag(PendingSettingsSections.AppBehavior))

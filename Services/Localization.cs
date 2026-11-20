@@ -11,6 +11,7 @@ public static class Localization
         {
             ["settings_title"] = "Settings",
             ["general_tab"] = "General",
+            ["appearance_tab"] = "Appearance",
             ["app_behavior_tab"] = "App Behaviour",
             ["hotkeys_tab"] = "Hotkeys",
             ["hotkeys_main_app_section"] = "Main App",
@@ -348,6 +349,7 @@ public static class Localization
         {
             ["settings_title"] = "Настройки",
             ["general_tab"] = "Общие",
+            ["appearance_tab"] = "Внешний вид",
             ["app_behavior_tab"] = "Поведение приложения",
             ["hotkeys_tab"] = "Горячие клавиши",
             ["hotkeys_main_app_section"] = "Основное приложение",

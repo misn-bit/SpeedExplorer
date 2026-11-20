@@ -19,6 +19,9 @@ internal sealed class AppBehaviorSettingsControl : SettingsPage
     private ToggleSwitch _useWindowsContextMenuChk = null!;
     private ToggleSwitch _enableShellContextMenuChk = null!;
 
+    private static readonly Color WarningOrange = Color.FromArgb(0xE6, 0x7E, 0x22);
+    private static readonly Font WarningFont = new("Segoe UI Semibold", 10f, GraphicsUnit.Point);
+
     public AppBehaviorSettingsControl() : base(Localization.T("app_behavior_tab"))
     {
         Font = new Font("Segoe UI", 10);
@@ -40,9 +43,23 @@ internal sealed class AppBehaviorSettingsControl : SettingsPage
         _useBuiltInImageViewerChk = behavior.AddToggle(Localization.T("use_builtin_image_viewer"), string.Empty, false, _ => { });
         _useWindowsContextMenuChk = behavior.AddToggle(Localization.T("use_windows_menu"), string.Empty, false, _ => { });
         _enableShellContextMenuChk = behavior.AddToggle(Localization.T("enable_shell_menu"), string.Empty, false, _ => { });
-        _permanentDeleteDefaultChk = behavior.AddToggle(Localization.T("permanent_delete_default"), string.Empty, false, _ => { });
 
         Controls.Add(behavior);
+
+        // Dangerous setting gets its own card, flagged with an orange warning.
+        Controls.Add(new Label
+        {
+            Text = Localization.T("dangerous_setting_warning"),
+            AutoSize = true,
+            Font = WarningFont,
+            ForeColor = WarningOrange,
+            Margin = new Padding(2, 16, 0, 6),
+            Tag = "danger-warning",
+        });
+
+        var dangerZone = new SettingsGroup();
+        _permanentDeleteDefaultChk = dangerZone.AddToggle(Localization.T("permanent_delete_default"), string.Empty, false, _ => { });
+        Controls.Add(dangerZone);
     }
 
     public void LoadFromSettings(AppSettings settings)
