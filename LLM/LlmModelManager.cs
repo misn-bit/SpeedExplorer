@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
@@ -19,6 +20,12 @@ public class LlmModelManager
 {
     internal static readonly HttpClient HttpClient = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
     public static bool IsLlamaCppProvider => LlmProviders.IsLlamaCpp(AppSettings.Current.LlmProvider);
+
+    private const string ModelCatalogCacheFileName = "llm-model-catalogs.json";
+    private static readonly object _catalogCacheLock = new();
+    private static readonly SemaphoreSlim _catalogFetchLock = new(1, 1);
+    private static string? _catalogCachePath;
+    private static Dictionary<string, List<LlmModelInfo>>? _catalogCache;
 
     private static readonly object _sessionModelLock = new();
     private static readonly Dictionary<string, string> _sessionResolvedModels = new(StringComparer.OrdinalIgnoreCase);
@@ -89,13 +96,43 @@ public class LlmModelManager
     // ─── Model Discovery ─────────────────────────────────────────────
 
     /// <summary>
-    /// Fetches models from the selected local provider and annotates loaded/vision capabilities where possible.
+    /// Uses the saved catalog when available, fetching from the selected provider when missing or explicitly refreshed.
     /// </summary>
-    public async Task<LlmModelCatalog> GetModelCatalogAsync(string apiUrl, CancellationToken cancellationToken = default, string? provider = null)
+    public async Task<LlmModelCatalog> GetModelCatalogAsync(
+        string apiUrl,
+        CancellationToken cancellationToken = default,
+        string? provider = null,
+        bool forceRefresh = false)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         string baseUrl = GetServerBaseUrl(apiUrl).TrimEnd('/');
         bool isLlamaCpp = LlmProviders.IsLlamaCpp(provider ?? AppSettings.Current.LlmProvider);
+        string providerName = isLlamaCpp ? LlmProviders.LlamaCpp : LlmProviders.LmStudio;
+        string cacheKey = BuildCatalogCacheKey(providerName, baseUrl);
 
+        if (!forceRefresh && TryGetCachedCatalog(cacheKey, out var cached))
+            return cached;
+
+        await _catalogFetchLock.WaitAsync(cancellationToken);
+        try
+        {
+            if (!forceRefresh && TryGetCachedCatalog(cacheKey, out cached))
+                return cached;
+
+            var catalog = await FetchModelCatalogAsync(baseUrl, isLlamaCpp, cancellationToken);
+            if (catalog.AvailableModels.Count > 0)
+                SaveCachedCatalog(cacheKey, catalog);
+
+            return catalog;
+        }
+        finally
+        {
+            _catalogFetchLock.Release();
+        }
+    }
+
+    private async Task<LlmModelCatalog> FetchModelCatalogAsync(string baseUrl, bool isLlamaCpp, CancellationToken cancellationToken)
+    {
         var merged = new Dictionary<string, LlmModelInfo>(StringComparer.OrdinalIgnoreCase);
         void Merge(List<LlmModelInfo> source)
         {
@@ -150,12 +187,86 @@ public class LlmModelManager
         return new LlmModelCatalog { AvailableModels = list };
     }
 
+    private static string BuildCatalogCacheKey(string provider, string baseUrl) =>
+        $"{provider.Trim().ToLowerInvariant()}|{baseUrl.TrimEnd('/').ToLowerInvariant()}";
+
+    private static bool TryGetCachedCatalog(string cacheKey, out LlmModelCatalog catalog)
+    {
+        lock (_catalogCacheLock)
+        {
+            var cache = GetCatalogCache();
+            if (cache.TryGetValue(cacheKey, out var models) && models is { Count: > 0 })
+            {
+                catalog = new LlmModelCatalog { AvailableModels = CloneModels(models) };
+                return true;
+            }
+        }
+
+        catalog = new LlmModelCatalog();
+        return false;
+    }
+
+    private static void SaveCachedCatalog(string cacheKey, LlmModelCatalog catalog)
+    {
+        lock (_catalogCacheLock)
+        {
+            var cache = GetCatalogCache();
+            cache[cacheKey] = CloneModels(catalog.AvailableModels);
+
+            try
+            {
+                string json = JsonSerializer.Serialize(cache, new JsonSerializerOptions { WriteIndented = true });
+                string currentPath = _catalogCachePath ?? AppStorage.GetPath(ModelCatalogCacheFileName);
+                _catalogCachePath = AppStorage.WriteText(currentPath, ModelCatalogCacheFileName, json);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Failed to save LLM model catalog cache: {ex.Message}");
+            }
+        }
+    }
+
+    private static Dictionary<string, List<LlmModelInfo>> GetCatalogCache()
+    {
+        if (_catalogCache != null)
+            return _catalogCache;
+
+        _catalogCache = new Dictionary<string, List<LlmModelInfo>>(StringComparer.OrdinalIgnoreCase);
+        _catalogCachePath = AppStorage.GetPath(ModelCatalogCacheFileName);
+        if (!File.Exists(_catalogCachePath))
+            return _catalogCache;
+
+        try
+        {
+            var saved = JsonSerializer.Deserialize<Dictionary<string, List<LlmModelInfo>>>(File.ReadAllText(_catalogCachePath));
+            if (saved != null)
+                _catalogCache = new Dictionary<string, List<LlmModelInfo>>(saved, StringComparer.OrdinalIgnoreCase);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"Failed to load LLM model catalog cache: {ex.Message}");
+        }
+
+        return _catalogCache;
+    }
+
+    private static List<LlmModelInfo> CloneModels(IEnumerable<LlmModelInfo> models) => models
+        .Where(model => model != null)
+        .Select(model => new LlmModelInfo
+        {
+            Id = model.Id,
+            IsLoaded = model.IsLoaded,
+            IsVision = model.IsVision,
+            LoadedInstanceIds = new List<string>(model.LoadedInstanceIds ?? new List<string>())
+        })
+        .ToList();
+
     /// <summary>
     /// Legacy compatibility for settings fetch button.
     /// </summary>
     public async Task<List<string>> GetAvailableModelsAsync(string apiUrl)
     {
-        var catalog = await GetModelCatalogAsync(apiUrl);
+        var catalog = await GetModelCatalogAsync(apiUrl, forceRefresh: true);
         return catalog.AvailableModels.Select(m => m.Id).ToList();
     }
 
@@ -404,7 +515,7 @@ public class LlmModelManager
 
         try
         {
-            var catalog = await GetModelCatalogAsync(apiUrl, cancellationToken);
+            var catalog = await GetModelCatalogAsync(apiUrl, cancellationToken, forceRefresh: true);
             target = catalog.AvailableModels.FirstOrDefault(m => string.Equals(m.Id, modelId, StringComparison.OrdinalIgnoreCase));
             modelAppearsLoaded = target?.IsLoaded == true;
             loadedInstanceCount = target?.LoadedInstanceIds?.Count ?? 0;

@@ -134,7 +134,8 @@ internal sealed class LlmSettingsSectionControl : SettingsPage
         {
             var service = new LlmService { ApiUrl = _llmApiUrlBox.Value.Trim() };
             bool isLlamaCpp = LlmProviders.IsLlamaCpp(_llmProviderDropdown.Value);
-            var catalog = await service.GetModelCatalogAsync(_llmApiUrlBox.Value.Trim(), _llmProviderDropdown.Value);
+            var catalog = await service.GetModelCatalogAsync(
+                _llmApiUrlBox.Value.Trim(), _llmProviderDropdown.Value, forceRefresh: true);
             var models = catalog.AvailableModels.Select(m => m.Id).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
             var visionModels = catalog.AvailableModels
                 .Where(m => m.IsVision)

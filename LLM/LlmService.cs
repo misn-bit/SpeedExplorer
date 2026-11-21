@@ -94,73 +94,17 @@ public class LlmService
     }
 
     /// <summary>
-    /// Fetches models from the selected local provider and annotates loaded/vision capabilities where possible.
+    /// Uses the saved catalog when available, fetching from the selected provider when missing or explicitly refreshed.
     /// </summary>
-    public async Task<LlmModelCatalog> GetModelCatalogAsync(string apiUrl, string? provider = null)
-    {
-        string baseUrl = GetServerBaseUrl(apiUrl).TrimEnd('/');
-        bool isLlamaCpp = LlmProviders.IsLlamaCpp(provider ?? AppSettings.Current.LlmProvider);
-
-        var merged = new Dictionary<string, LlmModelInfo>(StringComparer.OrdinalIgnoreCase);
-        void Merge(List<LlmModelInfo> source)
-        {
-            foreach (var model in source)
-            {
-                if (string.IsNullOrWhiteSpace(model.Id))
-                    continue;
-
-                if (!merged.TryGetValue(model.Id, out var existing))
-                {
-                    merged[model.Id] = new LlmModelInfo
-                    {
-                        Id = model.Id,
-                        IsLoaded = model.IsLoaded,
-                        IsVision = model.IsVision,
-                        LoadedInstanceIds = new List<string>(model.LoadedInstanceIds)
-                    };
-                }
-                else
-                {
-                    existing.IsLoaded |= model.IsLoaded;
-                    existing.IsVision |= model.IsVision;
-                    foreach (var instanceId in model.LoadedInstanceIds)
-                    {
-                        if (!existing.LoadedInstanceIds.Contains(instanceId, StringComparer.OrdinalIgnoreCase))
-                            existing.LoadedInstanceIds.Add(instanceId);
-                    }
-                }
-            }
-        }
-
-        if (isLlamaCpp)
-        {
-            // llama-server serves the model chosen at process startup and reports it here.
-            Merge(await TryGetModelsFromEndpointAsync($"{baseUrl}/v1/models", assumeLoaded: true));
-        }
-        else
-        {
-            // LM Studio native endpoints (downloaded + loaded state)
-            Merge(await TryGetModelsFromEndpointAsync($"{baseUrl}/api/v0/models", assumeLoaded: false));
-            Merge(await TryGetModelsFromEndpointAsync($"{baseUrl}/api/v1/models", assumeLoaded: false));
-            // OpenAI-compatible endpoint (do NOT assume loaded state).
-            Merge(await TryGetModelsFromEndpointAsync($"{baseUrl}/v1/models", assumeLoaded: false));
-        }
-
-        var list = merged.Values
-            .OrderByDescending(m => m.IsLoaded)
-            .ThenByDescending(m => m.IsVision)
-            .ThenBy(m => m.Id, StringComparer.OrdinalIgnoreCase)
-            .ToList();
-
-        return new LlmModelCatalog { AvailableModels = list };
-    }
+    public Task<LlmModelCatalog> GetModelCatalogAsync(string apiUrl, string? provider = null, bool forceRefresh = false) =>
+        _modelManager.GetModelCatalogAsync(apiUrl, provider: provider, forceRefresh: forceRefresh);
 
     /// <summary>
     /// Legacy compatibility for settings fetch button.
     /// </summary>
     public async Task<List<string>> GetAvailableModelsAsync(string apiUrl)
     {
-        var catalog = await GetModelCatalogAsync(apiUrl);
+        var catalog = await GetModelCatalogAsync(apiUrl, forceRefresh: true);
         return catalog.AvailableModels.Select(m => m.Id).ToList();
     }
 
@@ -393,7 +337,7 @@ public class LlmService
 
         try
         {
-            var catalog = await GetModelCatalogAsync(apiUrl);
+            var catalog = await GetModelCatalogAsync(apiUrl, forceRefresh: true);
             target = catalog.AvailableModels.FirstOrDefault(m => string.Equals(m.Id, modelId, StringComparison.OrdinalIgnoreCase));
             modelAppearsLoaded = target?.IsLoaded == true;
             loadedInstanceCount = target?.LoadedInstanceIds?.Count ?? 0;

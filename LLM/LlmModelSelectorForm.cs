@@ -130,7 +130,7 @@ public sealed class LlmModelSelectorForm : Form
         _loadButton.Click += async (s, e) => await LoadSelectedAsync();
 
         _refreshButton = new Button { Text = "Refresh", Width = 90 };
-        _refreshButton.Click += async (s, e) => await RefreshModelsAsync();
+        _refreshButton.Click += async (s, e) => await RefreshModelsAsync(forceRefresh: true);
 
         _setDefaultCheckBox = new CheckBox
         {
@@ -176,7 +176,10 @@ public sealed class LlmModelSelectorForm : Form
         }
     }
 
-    private async Task RefreshModelsAsync(string? preferredSelection = null, bool skipBusyGuard = false)
+    private async Task RefreshModelsAsync(
+        string? preferredSelection = null,
+        bool skipBusyGuard = false,
+        bool forceRefresh = false)
     {
         if (_busy && !skipBusyGuard)
             return;
@@ -185,7 +188,7 @@ public sealed class LlmModelSelectorForm : Form
             SetBusy(true, "Fetching models...");
         try
         {
-            var catalog = await _service.GetModelCatalogAsync(_apiUrl);
+            var catalog = await _service.GetModelCatalogAsync(_apiUrl, forceRefresh: forceRefresh);
             _models = catalog.AvailableModels
                 .Where(m => _taskKind != LlmTaskKind.Vision || m.IsVision)
                 .OrderByDescending(m => m.IsLoaded)
@@ -271,7 +274,7 @@ public sealed class LlmModelSelectorForm : Form
         {
             await _service.LoadModelAsync(_apiUrl, model.Id);
             await WaitForModelLoadedStateAsync(model.Id, expectedLoaded: true, timeoutMs: 10000);
-            await RefreshModelsAsync(model.Id, skipBusyGuard: true);
+            await RefreshModelsAsync(model.Id, skipBusyGuard: true, forceRefresh: true);
         }
         catch (Exception ex)
         {
@@ -318,7 +321,7 @@ public sealed class LlmModelSelectorForm : Form
             }
 
             await WaitForModelLoadedStateAsync(model.Id, expectedLoaded: false, timeoutMs: 8000);
-            await RefreshModelsAsync(model.Id, skipBusyGuard: true);
+            await RefreshModelsAsync(model.Id, skipBusyGuard: true, forceRefresh: true);
         }
         catch (Exception ex)
         {
@@ -424,7 +427,7 @@ public sealed class LlmModelSelectorForm : Form
         {
             try
             {
-                var catalog = await _service.GetModelCatalogAsync(_apiUrl);
+                var catalog = await _service.GetModelCatalogAsync(_apiUrl, forceRefresh: true);
                 var model = catalog.AvailableModels.FirstOrDefault(m => string.Equals(m.Id, modelId, StringComparison.OrdinalIgnoreCase));
                 bool isLoaded = model?.IsLoaded == true;
                 if (isLoaded == expectedLoaded)

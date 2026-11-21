@@ -17,6 +17,7 @@ old_versions/
 
 # Runtime/local data
 folder_settings.json
+llm-model-catalogs.json
 debug_*.log
 build_warnings*.log
 build_*.txt
