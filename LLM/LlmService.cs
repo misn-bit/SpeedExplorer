@@ -811,8 +811,6 @@ public class LlmService
             {
                 { "model", model },
                 { "input", input },
-                { "temperature", settings.LlmTemperature },
-                { "max_output_tokens", settings.LlmMaxTokens },
                 { "store", true }
             };
 
@@ -840,8 +838,6 @@ public class LlmService
                 model = model,
                 messages = messages,
                 response_format = LlmPromptBuilder.GetChatResponseJsonSchema(taggingEnabled),
-                temperature = settings.LlmTemperature,
-                max_tokens = settings.LlmMaxTokens,
                 stream = false
             };
         }
@@ -976,8 +972,6 @@ public class LlmService
             model = model,
             messages = messages,
             response_format = LlmPromptBuilder.GetAgentCoordinatorJsonSchema(taggingEnabled, searchEnabled),
-            temperature = Math.Min(settings.LlmTemperature, 0.3),
-            max_tokens = Math.Max(256, Math.Min(settings.LlmMaxTokens, 2200)),
             stream = false
         };
 
@@ -1000,8 +994,6 @@ public class LlmService
                         model = model,
                         messages = messages,
                         response_format = new { type = "text" },
-                        temperature = Math.Min(settings.LlmTemperature, 0.3),
-                        max_tokens = Math.Max(256, Math.Min(settings.LlmMaxTokens, 1600)),
                         stream = false
                     };
                     string retryJson = JsonSerializer.Serialize(retryData, new JsonSerializerOptions { WriteIndented = true });
@@ -1181,8 +1173,6 @@ public class LlmService
                         }
                     }
                 },
-                temperature = 0.2,
-                max_tokens = Math.Min(300, AppSettings.Current.LlmMaxTokens),
                 stream = false
             };
 
@@ -1327,8 +1317,6 @@ public class LlmService
                 model = model,
                 messages = requestMessages,
                 response_format = LlmPromptBuilder.GetJsonSchema(taggingEnabled, searchEnabled, fullContext, thinkingEnabled),
-                temperature = settings.LlmTemperature,
-                max_tokens = settings.LlmMaxTokens,
                 stream = false
             };
 
@@ -1356,8 +1344,6 @@ public class LlmService
                 model = model,
                 messages = messages,
                 response_format = LlmPromptBuilder.GetJsonSchema(taggingEnabled, searchEnabled, fullContext, thinkingEnabled),
-                temperature = settings.LlmTemperature, 
-                max_tokens = settings.LlmMaxTokens, 
                 stream = false
             };
 

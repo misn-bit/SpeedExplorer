@@ -44,10 +44,6 @@ public class LlmAgentRunner
         int maxLoops = Math.Clamp(settings.LlmAgentMaxLoops, 1, 100);
         string model = string.IsNullOrWhiteSpace(modelOverride) ? settings.LlmModelName : modelOverride;
         string requestUrl = LlmModelManager.GetCompletionsApiUrl(settings.LlmChatApiUrl, apiUrl);
-        double agentTemperature = Math.Min(settings.LlmTemperature, 0.3);
-        int agentMaxTokens = Math.Max(256, settings.LlmMaxTokens);
-        int retryTextMaxTokens = Math.Max(256, (int)Math.Round(agentMaxTokens * 0.8));
-        int retryNoSchemaMaxTokens = Math.Max(256, (int)Math.Round(agentMaxTokens * 0.6));
         int loopCount = 0;
         LastAgentFinalResponse = "";
         LastAgentRunReport = null;
@@ -131,8 +127,6 @@ public class LlmAgentRunner
                 model = model,
                 messages = loopMessages,
                 response_format = LlmPromptBuilder.GetAgenticJsonSchema(taggingEnabled, searchEnabled),
-                temperature = agentTemperature,
-                max_tokens = agentMaxTokens,
                 stream = false
             };
 
@@ -158,8 +152,6 @@ public class LlmAgentRunner
                             model = model,
                             messages = loopMessages,
                             response_format = new { type = "text" },
-                            temperature = agentTemperature,
-                            max_tokens = retryTextMaxTokens,
                             stream = false
                         };
                         string retryJson = JsonSerializer.Serialize(retryRequestData, new JsonSerializerOptions { WriteIndented = true });
@@ -179,8 +171,6 @@ public class LlmAgentRunner
                             {
                                 model = model,
                                 messages = loopMessages,
-                                temperature = agentTemperature,
-                                max_tokens = retryNoSchemaMaxTokens,
                                 stream = false
                             };
                             string retry2Json = JsonSerializer.Serialize(retry2RequestData, new JsonSerializerOptions { WriteIndented = true });
@@ -238,8 +228,6 @@ public class LlmAgentRunner
                     contentStr,
                     taggingEnabled,
                     searchEnabled,
-                    agentTemperature,
-                    Math.Max(256, Math.Min(agentMaxTokens, 1400)),
                     cancellationToken);
                 if (repaired != null)
                 {
@@ -480,8 +468,6 @@ public class LlmAgentRunner
                 model = model,
                 messages = closureMessages,
                 response_format = LlmPromptBuilder.GetAgenticJsonSchema(taggingEnabled, searchEnabled),
-                temperature = agentTemperature,
-                max_tokens = agentMaxTokens,
                 stream = false
             };
 
@@ -662,8 +648,6 @@ public class LlmAgentRunner
                         }
                     }
                 },
-                temperature = 0.2,
-                max_tokens = Math.Min(300, AppSettings.Current.LlmMaxTokens),
                 stream = false
             };
 
@@ -1395,8 +1379,6 @@ public class LlmAgentRunner
         string rawAssistantContent,
         bool taggingEnabled,
         bool searchEnabled,
-        double temperature,
-        int maxTokens,
         CancellationToken cancellationToken)
     {
         try
@@ -1416,8 +1398,6 @@ public class LlmAgentRunner
                 model = model,
                 messages = repairMessages,
                 response_format = LlmPromptBuilder.GetAgenticJsonSchema(taggingEnabled, searchEnabled),
-                temperature = temperature,
-                max_tokens = maxTokens,
                 stream = false
             };
 

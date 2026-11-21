@@ -91,8 +91,6 @@ public class LlmVisionService
             model = model,
             messages = messages,
             response_format = LlmPromptBuilder.GetTaggingJsonSchema(),
-            temperature = settings.LlmTemperature, 
-            max_tokens = Math.Max(settings.LlmMaxTokens, 2048), // Allow more for tags if setting is low
             stream = false
         };
 
@@ -139,8 +137,6 @@ public class LlmVisionService
                     model = model,
                     messages = retryMessages,
                     response_format = LlmPromptBuilder.GetTaggingJsonSchema(),
-                    temperature = settings.LlmTemperature,
-                    max_tokens = settings.LlmMaxTokens,
                     stream = false
                 };
 
