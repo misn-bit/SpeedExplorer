@@ -14,24 +14,30 @@ namespace SpeedExplorer.LLM;
 internal sealed class LlmSettingsSectionControl : SettingsPage
 {
     private readonly ToggleSwitch _llmEnabledChk, _llmBatchProcessingChk, _llmChatEnabledChk, _llmDebugLogChk;
+    private readonly Dropdown _llmProviderDropdown;
     private readonly TextField _llmApiUrlBox, _llmChatApiUrlBox;
     private readonly Dropdown _llmModelComboBox, _llmBatchVisionModelComboBox;
     private readonly TextField _llmVisionMaxMpBox;
     private readonly SliderField _llmAgentMaxLoopsSlider;
     private readonly FlatButton _fetchModelsBtn;
     private float _llmVisionMaxMp = 2f;
+    private bool _loadingSettings;
 
     public LlmSettingsSectionControl() : base(Localization.T("llm_tab"))
     {
         Font = new Font("Segoe UI", 10);
 
         var group = new SettingsGroup();
+        _llmProviderDropdown = group.AddDropdown(
+            Localization.T("llm_provider"), Localization.T("llm_provider_description"), LlmProviders.LmStudio,
+            "Select a provider…", "No providers available.", ProviderChanged);
+        _llmProviderDropdown.SetItems(new[] { LlmProviders.LmStudio, LlmProviders.LlamaCpp });
         _llmEnabledChk = group.AddToggle(Localization.T("llm_enable"), string.Empty, false, _ => { });
         _llmBatchProcessingChk = group.AddToggle(Localization.T("llm_batch_enable"), string.Empty, false, _ => { });
         _llmChatEnabledChk = group.AddToggle(Localization.T("chat_enable"), string.Empty, false, _ => { });
         _llmDebugLogChk = group.AddToggle(Localization.T("debug_llm_log"), string.Empty, false, _ => { });
 
-        _llmApiUrlBox = group.AddText(Localization.T("api_url"), string.Empty, string.Empty, "http://host:port/v1");
+        _llmApiUrlBox = group.AddText(Localization.T("api_url"), string.Empty, string.Empty, "http://localhost:8080/v1/chat/completions");
         _llmChatApiUrlBox = group.AddText(Localization.T("chat_api_url"), string.Empty, string.Empty, "http://host:port/v1");
 
         _llmModelComboBox = group.AddDropdown(
@@ -59,21 +65,35 @@ internal sealed class LlmSettingsSectionControl : SettingsPage
 
     public void LoadFromSettings(AppSettings settings)
     {
-        _llmEnabledChk.Checked = settings.LlmEnabled;
-        _llmBatchProcessingChk.Checked = settings.LlmBatchProcessingEnabled;
-        _llmApiUrlBox.Value = settings.LlmApiUrl;
-        _llmChatEnabledChk.Checked = settings.ChatModeEnabled;
-        _llmChatApiUrlBox.Value = settings.LlmChatApiUrl;
-        _llmModelComboBox.Value = settings.LlmModelName;
-        _llmBatchVisionModelComboBox.Value = settings.LlmBatchVisionModelName;
-        _llmVisionMaxMp = (float)Math.Clamp((double)Math.Max(settings.LlmVisionMaxPixels, 256 * 256) / 1_000_000.0, 0.25, 32.0);
-        _llmVisionMaxMpBox.Value = _llmVisionMaxMp.ToString(CultureInfo.InvariantCulture);
-        _llmAgentMaxLoopsSlider.Value = Math.Clamp(settings.LlmAgentMaxLoops, 1, 100);
-        _llmDebugLogChk.Checked = settings.DebugLlmLogging;
+        _loadingSettings = true;
+        try
+        {
+            _llmProviderDropdown.Value = LlmProviders.IsLlamaCpp(settings.LlmProvider)
+                ? LlmProviders.LlamaCpp
+                : LlmProviders.LmStudio;
+            _llmEnabledChk.Checked = settings.LlmEnabled;
+            _llmBatchProcessingChk.Checked = settings.LlmBatchProcessingEnabled;
+            _llmApiUrlBox.Value = settings.LlmApiUrl;
+            _llmChatEnabledChk.Checked = settings.ChatModeEnabled;
+            _llmChatApiUrlBox.Value = settings.LlmChatApiUrl;
+            _llmModelComboBox.Value = settings.LlmModelName;
+            _llmBatchVisionModelComboBox.Value = settings.LlmBatchVisionModelName;
+            _llmVisionMaxMp = (float)Math.Clamp((double)Math.Max(settings.LlmVisionMaxPixels, 256 * 256) / 1_000_000.0, 0.25, 32.0);
+            _llmVisionMaxMpBox.Value = _llmVisionMaxMp.ToString(CultureInfo.InvariantCulture);
+            _llmAgentMaxLoopsSlider.Value = Math.Clamp(settings.LlmAgentMaxLoops, 1, 100);
+            _llmDebugLogChk.Checked = settings.DebugLlmLogging;
+        }
+        finally
+        {
+            _loadingSettings = false;
+        }
     }
 
     public void ApplyToSettings(AppSettings settings)
     {
+        settings.LlmProvider = LlmProviders.IsLlamaCpp(_llmProviderDropdown.Value)
+            ? LlmProviders.LlamaCpp
+            : LlmProviders.LmStudio;
         settings.LlmEnabled = _llmEnabledChk.Checked;
         settings.LlmBatchProcessingEnabled = _llmBatchProcessingChk.Checked;
         settings.LlmApiUrl = _llmApiUrlBox.Value.Trim();
@@ -81,10 +101,28 @@ internal sealed class LlmSettingsSectionControl : SettingsPage
         settings.LlmChatApiUrl = _llmChatApiUrlBox.Value.Trim();
         settings.LlmModelName = _llmModelComboBox.Value?.Trim() ?? string.Empty;
         settings.LlmBatchVisionModelName = _llmBatchVisionModelComboBox.Value?.Trim() ?? string.Empty;
-        // max tokens / temperature are intentionally not exposed here — they're controlled by the LM Studio server.
+        // max tokens / temperature are intentionally not exposed here — they're controlled by the selected server.
         settings.LlmVisionMaxPixels = Math.Max(256 * 256, (int)Math.Round(_llmVisionMaxMp * 1_000_000.0));
         settings.LlmAgentMaxLoops = _llmAgentMaxLoopsSlider.Value;
         settings.DebugLlmLogging = _llmDebugLogChk.Checked;
+    }
+
+    private void ProviderChanged(string? provider)
+    {
+        if (_loadingSettings)
+            return;
+
+        string currentUrl = _llmApiUrlBox.Value.Trim();
+        if (LlmProviders.IsLlamaCpp(provider) &&
+            string.Equals(currentUrl, "http://localhost:1234/v1/chat/completions", StringComparison.OrdinalIgnoreCase))
+        {
+            _llmApiUrlBox.Value = "http://localhost:8080/v1/chat/completions";
+        }
+        else if (!LlmProviders.IsLlamaCpp(provider) &&
+                 string.Equals(currentUrl, "http://localhost:8080/v1/chat/completions", StringComparison.OrdinalIgnoreCase))
+        {
+            _llmApiUrlBox.Value = "http://localhost:1234/v1/chat/completions";
+        }
     }
 
     private async void FetchModels_Click()
@@ -95,7 +133,8 @@ internal sealed class LlmSettingsSectionControl : SettingsPage
         try
         {
             var service = new LlmService { ApiUrl = _llmApiUrlBox.Value.Trim() };
-            var catalog = await service.GetModelCatalogAsync(_llmApiUrlBox.Value.Trim());
+            bool isLlamaCpp = LlmProviders.IsLlamaCpp(_llmProviderDropdown.Value);
+            var catalog = await service.GetModelCatalogAsync(_llmApiUrlBox.Value.Trim(), _llmProviderDropdown.Value);
             var models = catalog.AvailableModels.Select(m => m.Id).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
             var visionModels = catalog.AvailableModels
                 .Where(m => m.IsVision)
@@ -109,22 +148,36 @@ internal sealed class LlmSettingsSectionControl : SettingsPage
             if (models.Count > 0)
             {
                 var items = new System.Collections.Generic.List<string>(models);
-                if (!string.IsNullOrWhiteSpace(currentAssistant) &&
+                if (!isLlamaCpp && !string.IsNullOrWhiteSpace(currentAssistant) &&
                     !models.Contains(currentAssistant, StringComparer.OrdinalIgnoreCase))
                     items.Add(currentAssistant);
                 _llmModelComboBox.SetItems(items);
-                _llmModelComboBox.Value = string.IsNullOrWhiteSpace(currentAssistant) ? models[0] : currentAssistant;
+                _llmModelComboBox.Value = string.IsNullOrWhiteSpace(currentAssistant) ||
+                    (isLlamaCpp && !models.Contains(currentAssistant, StringComparer.OrdinalIgnoreCase))
+                    ? models[0]
+                    : currentAssistant;
 
                 if (visionModels.Count > 0)
                 {
                     var visionItems = new System.Collections.Generic.List<string>(visionModels);
-                    if (!string.IsNullOrWhiteSpace(currentBatchVision) &&
+                    if (!isLlamaCpp && !string.IsNullOrWhiteSpace(currentBatchVision) &&
                         !visionModels.Contains(currentBatchVision, StringComparer.OrdinalIgnoreCase))
                         visionItems.Add(currentBatchVision);
                     _llmBatchVisionModelComboBox.SetItems(visionItems);
+                    _llmBatchVisionModelComboBox.Value = string.IsNullOrWhiteSpace(currentBatchVision) ||
+                        (isLlamaCpp && !visionModels.Contains(currentBatchVision, StringComparer.OrdinalIgnoreCase))
+                        ? visionModels[0]
+                        : currentBatchVision;
                 }
-                _llmBatchVisionModelComboBox.Value =
-                    string.IsNullOrWhiteSpace(currentBatchVision) ? null : currentBatchVision;
+                else if (isLlamaCpp)
+                {
+                    _llmBatchVisionModelComboBox.Value = null;
+                }
+                else
+                {
+                    _llmBatchVisionModelComboBox.Value =
+                        string.IsNullOrWhiteSpace(currentBatchVision) ? null : currentBatchVision;
+                }
             }
         }
         catch

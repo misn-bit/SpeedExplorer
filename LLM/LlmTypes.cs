@@ -3,6 +3,15 @@ using System.Linq;
 
 namespace SpeedExplorer;
 
+public static class LlmProviders
+{
+    public const string LmStudio = "LM Studio";
+    public const string LlamaCpp = "llama.cpp";
+
+    public static bool IsLlamaCpp(string? provider) =>
+        string.Equals(provider, LlamaCpp, System.StringComparison.OrdinalIgnoreCase);
+}
+
 public struct LlmImageStats
 {
     public string Path;

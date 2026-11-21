@@ -18,6 +18,7 @@ namespace SpeedExplorer;
 public class LlmModelManager
 {
     internal static readonly HttpClient HttpClient = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
+    public static bool IsLlamaCppProvider => LlmProviders.IsLlamaCpp(AppSettings.Current.LlmProvider);
 
     private static readonly object _sessionModelLock = new();
     private static readonly Dictionary<string, string> _sessionResolvedModels = new(StringComparer.OrdinalIgnoreCase);
@@ -72,6 +73,8 @@ public class LlmModelManager
             string normalizedPath = path.TrimEnd('/');
             if (string.IsNullOrEmpty(path) || path == "/")
                 return $"{uri.Scheme}://{uri.Host}:{uri.Port}/v1/chat/completions";
+            if (normalizedPath.Equals("/v1", StringComparison.OrdinalIgnoreCase))
+                return $"{uri.Scheme}://{uri.Host}:{uri.Port}/v1/chat/completions";
             if (normalizedPath.Equals("/v1/responses", StringComparison.OrdinalIgnoreCase) ||
                 normalizedPath.Equals("/responses", StringComparison.OrdinalIgnoreCase) ||
                 normalizedPath.Equals("/api/v1/responses", StringComparison.OrdinalIgnoreCase))
@@ -86,11 +89,12 @@ public class LlmModelManager
     // ─── Model Discovery ─────────────────────────────────────────────
 
     /// <summary>
-    /// Fetches known models from LM Studio and annotates loaded/vision capabilities where possible.
+    /// Fetches models from the selected local provider and annotates loaded/vision capabilities where possible.
     /// </summary>
-    public async Task<LlmModelCatalog> GetModelCatalogAsync(string apiUrl, CancellationToken cancellationToken = default)
+    public async Task<LlmModelCatalog> GetModelCatalogAsync(string apiUrl, CancellationToken cancellationToken = default, string? provider = null)
     {
         string baseUrl = GetServerBaseUrl(apiUrl).TrimEnd('/');
+        bool isLlamaCpp = LlmProviders.IsLlamaCpp(provider ?? AppSettings.Current.LlmProvider);
 
         var merged = new Dictionary<string, LlmModelInfo>(StringComparer.OrdinalIgnoreCase);
         void Merge(List<LlmModelInfo> source)
@@ -123,11 +127,19 @@ public class LlmModelManager
             }
         }
 
-        // LM Studio native endpoints (downloaded + loaded state)
-        Merge(await TryGetModelsFromEndpointAsync($"{baseUrl}/api/v0/models", assumeLoaded: false, cancellationToken));
-        Merge(await TryGetModelsFromEndpointAsync($"{baseUrl}/api/v1/models", assumeLoaded: false, cancellationToken));
-        // OpenAI-compatible endpoint (do NOT assume loaded state).
-        Merge(await TryGetModelsFromEndpointAsync($"{baseUrl}/v1/models", assumeLoaded: false, cancellationToken));
+        if (isLlamaCpp)
+        {
+            // llama-server serves the model chosen at process startup and reports it here.
+            Merge(await TryGetModelsFromEndpointAsync($"{baseUrl}/v1/models", assumeLoaded: true, cancellationToken));
+        }
+        else
+        {
+            // LM Studio native endpoints (downloaded + loaded state)
+            Merge(await TryGetModelsFromEndpointAsync($"{baseUrl}/api/v0/models", assumeLoaded: false, cancellationToken));
+            Merge(await TryGetModelsFromEndpointAsync($"{baseUrl}/api/v1/models", assumeLoaded: false, cancellationToken));
+            // OpenAI-compatible endpoint (do NOT assume loaded state).
+            Merge(await TryGetModelsFromEndpointAsync($"{baseUrl}/v1/models", assumeLoaded: false, cancellationToken));
+        }
 
         var list = merged.Values
             .OrderByDescending(m => m.IsLoaded)
@@ -169,7 +181,7 @@ public class LlmModelManager
 
         if (candidates.Count == 0)
         {
-            MessageBox.Show(owner, BuildNoModelMessage(taskKind), "LM Studio Model", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show(owner, BuildNoModelMessage(taskKind), "AI Model", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return null;
         }
 
@@ -225,7 +237,9 @@ public class LlmModelManager
                 : "Select a model to use for this task.";
         }
 
-        using var selector = new LlmModelSelectorForm(this, serverApiUrl, usage, taskKind, preferredModel, title, infoText);
+        using var selector = new LlmModelSelectorForm(
+            this, serverApiUrl, usage, taskKind, preferredModel, title, infoText,
+            showLoadUnloadControls: !IsLlamaCppProvider);
         var result = owner != null ? selector.ShowDialog(owner) : selector.ShowDialog();
         if (result != DialogResult.OK || string.IsNullOrWhiteSpace(selector.SelectedModelId))
             return null;
@@ -238,6 +252,9 @@ public class LlmModelManager
 
     public async Task LoadModelAsync(string apiUrl, string modelId, CancellationToken cancellationToken = default)
     {
+        if (IsLlamaCppProvider)
+            throw new InvalidOperationException("llama.cpp serves the model loaded when its server starts. Restart the server to change models.");
+
         string baseUrl = GetServerBaseUrl(apiUrl).TrimEnd('/');
         var body = JsonSerializer.Serialize(new { model = modelId });
         var contentType = "application/json";
@@ -279,6 +296,9 @@ public class LlmModelManager
 
     public async Task UnloadModelInstanceAsync(string apiUrl, string instanceId, CancellationToken cancellationToken = default)
     {
+        if (IsLlamaCppProvider)
+            throw new InvalidOperationException("llama.cpp model instances are managed by the server process.");
+
         string baseUrl = GetServerBaseUrl(apiUrl).TrimEnd('/');
         var body = JsonSerializer.Serialize(new { instance_id = instanceId });
         var contentType = "application/json";
@@ -320,6 +340,9 @@ public class LlmModelManager
 
     public async Task UnloadModelByIdAsync(string apiUrl, string modelId, CancellationToken cancellationToken = default)
     {
+        if (IsLlamaCppProvider)
+            throw new InvalidOperationException("llama.cpp model instances are managed by the server process.");
+
         string baseUrl = GetServerBaseUrl(apiUrl).TrimEnd('/');
         string contentType = "application/json";
         var endpoints = new[]
@@ -371,6 +394,9 @@ public class LlmModelManager
 
     public async Task<bool> TryRecoverVisionModelAsync(string apiUrl, string modelId, string stage, CancellationToken cancellationToken = default)
     {
+        if (IsLlamaCppProvider)
+            return false;
+
         cancellationToken.ThrowIfCancellationRequested();
         LlmModelInfo? target = null;
         bool modelAppearsLoaded = false;
@@ -823,10 +849,11 @@ public class LlmModelManager
 
     private static string BuildNoModelMessage(LlmTaskKind taskKind)
     {
+        string provider = IsLlamaCppProvider ? "llama.cpp" : "LM Studio";
         if (taskKind == LlmTaskKind.Vision)
-            return "No vision-capable models were found in LM Studio.\nLoad a vision model and try again.";
+            return $"No vision-capable models were found in {provider}.\nLoad a vision model and try again.";
 
-        return "No models were found in LM Studio.\nLoad a model and try again.";
+        return $"No models were found in {provider}.\nLoad a model and try again.";
     }
 
     // ─── JSON Helpers ────────────────────────────────────────────────

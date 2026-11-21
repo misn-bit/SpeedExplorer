@@ -7,8 +7,10 @@
 
 **SpeedExplorer** is a purely vibe-coded Windows file manager replacement. As in, it’s fully written by AI agents under my guidance.
 
-It's a file manager with a built-in image viewer that has OCR+Translation capabilities using locally run AI in LM Studio through the LM Studio server.
+It's a file manager with a built-in image viewer that has OCR+Translation capabilities using a local AI server. LM Studio and llama.cpp are supported.
 The image viewer can show OCR'd text and translation right on top of the image, and it saves the OCR'd text and the translation in a separate text file.
+
+Choose the provider in Settings → AI Assistant (LLM). For llama.cpp, start `llama serve` separately with the GGUF model and optional `--mmproj`, then set the API URL to `http://localhost:8080/v1/chat/completions` (the default when switching from LM Studio). Use **Fetch Models** to select the model alias reported by the running server. SpeedExplorer connects to the server; llama.cpp loads the model files.
 
 
 For good quality OCR, i recommend using Gemma-4-31B or better. 

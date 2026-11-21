@@ -135,6 +135,7 @@ public class AppSettings
     };
 
     // LLM Settings
+    public string LlmProvider { get; set; } = LlmProviders.LmStudio;
     public bool LlmEnabled { get; set; } = false;
     public bool LlmBatchProcessingEnabled { get; set; } = false;
     public string LlmApiUrl { get; set; } = "http://localhost:1234/v1/chat/completions";
