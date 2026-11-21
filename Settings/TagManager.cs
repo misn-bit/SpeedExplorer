@@ -21,7 +21,7 @@ public class TagManager
 
     private TagManager()
     {
-        // Store in the same folder as the executable
+        // Store tags in the per-user application data folder.
         _tagsFilePath = AppStorage.GetPath("tags.json");
         LoadTags();
     }
@@ -411,7 +411,7 @@ public class TagManager
                 // Pretty print for user readability since they might edit it manually
                 var options = new JsonSerializerOptions { WriteIndented = true };
                 string json = JsonSerializer.Serialize(_tags, options);
-                _tagsFilePath = AppStorage.WriteText(_tagsFilePath, "tags.json", json);
+                _tagsFilePath = AppStorage.WriteText("tags.json", json);
                 _isDirty = false;
             }
             catch

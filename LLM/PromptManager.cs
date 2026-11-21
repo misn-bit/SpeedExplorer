@@ -17,25 +17,7 @@ public class PromptManager
 
     private static string ResolveSettingsPath()
     {
-        string userDataPath = AppStorage.GetUserDataPath("prompts.json");
-        string portablePath = Path.Combine(AppContext.BaseDirectory, "prompts.json");
-
-        // Carry forward a user's existing portable prompt file once. The copy
-        // never overwrites per-user data, so future app updates cannot replace it.
-        if (!File.Exists(userDataPath) && File.Exists(portablePath) &&
-            !string.Equals(Path.GetFullPath(userDataPath), Path.GetFullPath(portablePath), StringComparison.OrdinalIgnoreCase))
-        {
-            try
-            {
-                File.Copy(portablePath, userDataPath);
-            }
-            catch (Exception ex)
-            {
-                LlmDebugLogger.LogError($"Failed to migrate portable prompts.json: {ex.Message}");
-            }
-        }
-
-        return userDataPath;
+        return AppStorage.GetPath("prompts.json");
     }
 
     private PromptManager()
@@ -119,7 +101,7 @@ public class PromptManager
         {
             var data = new PromptData { BatchPrompts = BatchPrompts, BatchPromptModes = BatchPromptModes };
             var json = JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true });
-            _settingsPath = AppStorage.WriteText(_settingsPath, "prompts.json", json);
+            _settingsPath = AppStorage.WriteText("prompts.json", json);
             return true;
         }
         catch (Exception ex)

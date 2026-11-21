@@ -152,7 +152,7 @@ public partial class MainForm
                 }
 
                 var json = System.Text.Json.JsonSerializer.Serialize(settings);
-                FolderSettingsPath = AppStorage.WriteText(FolderSettingsPath, "folder_settings.json", json);
+                FolderSettingsPath = AppStorage.WriteText("folder_settings.json", json);
                 NavigationDebugLogger.Log($"ICON_SIZE_SETTINGS_SAVE file=\"{FolderSettingsPath}\" paths={paths.Count} overrides={_owner._nav.FolderIconSizeOverrides.Count}");
             }
             catch (Exception ex)

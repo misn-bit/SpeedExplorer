@@ -597,15 +597,6 @@ public class SettingsForm : Form
         try
         {
             string licensePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "LICENSE");
-            if (!File.Exists(licensePath))
-            {
-                // Fallback for development: check parent directories
-                var dir = new DirectoryInfo(AppDomain.CurrentDomain.BaseDirectory);
-                while (dir != null && !File.Exists(Path.Combine(dir.FullName, "LICENSE")))
-                    dir = dir.Parent;
-
-                if (dir != null) licensePath = Path.Combine(dir.FullName, "LICENSE");
-            }
 
             if (File.Exists(licensePath))
                 Process.Start(new ProcessStartInfo(licensePath) { UseShellExecute = true });

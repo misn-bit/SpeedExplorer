@@ -249,7 +249,7 @@ public class AppSettings
         try
         {
             var json = JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true });
-            SettingsPath = AppStorage.WriteText(SettingsPath, "settings.json", json);
+            SettingsPath = AppStorage.WriteText("settings.json", json);
         }
         catch (Exception ex)
         {

@@ -216,8 +216,7 @@ public class LlmModelManager
             try
             {
                 string json = JsonSerializer.Serialize(cache, new JsonSerializerOptions { WriteIndented = true });
-                string currentPath = _catalogCachePath ?? AppStorage.GetPath(ModelCatalogCacheFileName);
-                _catalogCachePath = AppStorage.WriteText(currentPath, ModelCatalogCacheFileName, json);
+                _catalogCachePath = AppStorage.WriteText(ModelCatalogCacheFileName, json);
             }
             catch (Exception ex)
             {

@@ -4,9 +4,9 @@ using System.IO;
 namespace SpeedExplorer;
 
 /// <summary>
-/// Resolves application-owned data while preserving the portable-app behavior
-/// for files that use GetPath. Files that must survive application replacement
-/// can use the persistent per-user path returned by GetUserDataPath.
+/// Resolves application-owned persisted data under the current user's local
+/// application data directory. Existing portable settings are migrated there
+/// once when first encountered.
 /// </summary>
 internal static class AppStorage
 {
@@ -18,37 +18,16 @@ internal static class AppStorage
         if (string.IsNullOrWhiteSpace(fileName))
             throw new ArgumentException("A file name is required.", nameof(fileName));
 
-        string portablePath = Path.Combine(AppContext.BaseDirectory, fileName);
-        string userDataPath = Path.Combine(GetUserDataDirectory(create: false), fileName);
-
-        // Prefer the location that already contains the user's data. This avoids
-        // silently switching between portable and fallback storage on each run.
-        if (File.Exists(portablePath))
-            return portablePath;
-        if (File.Exists(userDataPath))
-            return userDataPath;
-
-        return CanWriteDirectory(Path.GetDirectoryName(portablePath)!)
-            ? portablePath
-            : Path.Combine(GetUserDataDirectory(create: true), fileName);
+        string userDataPath = Path.Combine(GetUserDataDirectory(), fileName);
+        string legacyPortablePath = Path.Combine(AppContext.BaseDirectory, fileName);
+        MigrateLegacyPortableFile(legacyPortablePath, userDataPath);
+        return userDataPath;
     }
 
-    public static string GetUserDataPath(string fileName)
+    public static string WriteText(string fileName, string contents)
     {
-        if (string.IsNullOrWhiteSpace(fileName))
-            throw new ArgumentException("A file name is required.", nameof(fileName));
-
-        return Path.Combine(GetUserDataDirectory(create: true), fileName);
-    }
-
-    public static string WriteText(string currentPath, string fileName, string contents)
-    {
-        string targetPath = currentPath;
+        string targetPath = GetPath(fileName);
         string? directory = Path.GetDirectoryName(targetPath);
-        if (string.IsNullOrWhiteSpace(directory) || !CanWriteDirectory(directory))
-            targetPath = Path.Combine(GetUserDataDirectory(create: true), fileName);
-
-        directory = Path.GetDirectoryName(targetPath);
         if (string.IsNullOrWhiteSpace(directory))
             throw new IOException($"Could not determine a storage directory for '{fileName}'.");
 
@@ -77,33 +56,65 @@ internal static class AppStorage
         }
     }
 
-    private static string GetUserDataDirectory(bool create)
+    private static string GetUserDataDirectory()
     {
         string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         if (string.IsNullOrWhiteSpace(localAppData))
             localAppData = Path.GetTempPath();
 
         string directory = Path.Combine(localAppData, AppFolderName);
-        if (create)
-            Directory.CreateDirectory(directory);
+        Directory.CreateDirectory(directory);
         return directory;
     }
 
-    private static bool CanWriteDirectory(string directory)
+    private static void MigrateLegacyPortableFile(string legacyPath, string userDataPath)
     {
+        if (string.Equals(Path.GetFullPath(legacyPath), Path.GetFullPath(userDataPath), StringComparison.OrdinalIgnoreCase))
+            return;
+
         lock (Sync)
         {
+            if (File.Exists(userDataPath) || !File.Exists(legacyPath))
+                return;
+
+            string? directory = Path.GetDirectoryName(userDataPath);
+            if (string.IsNullOrWhiteSpace(directory))
+                return;
+
+            string temporaryPath = Path.Combine(
+                directory,
+                $".{Path.GetFileName(userDataPath)}.{Guid.NewGuid():N}.migration.tmp");
+
             try
             {
-                Directory.CreateDirectory(directory);
-                string probePath = Path.Combine(directory, $".{Guid.NewGuid():N}.write-test");
-                File.WriteAllText(probePath, "ok");
-                File.Delete(probePath);
-                return true;
+                File.Copy(legacyPath, temporaryPath);
+                File.Move(temporaryPath, userDataPath);
+                try
+                {
+                    File.Delete(legacyPath);
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine(
+                        $"Migrated settings file but could not remove its old copy '{legacyPath}': {ex}");
+                }
             }
-            catch
+            catch (Exception ex)
             {
-                return false;
+                System.Diagnostics.Debug.WriteLine(
+                    $"Failed to migrate portable settings file '{legacyPath}' to '{userDataPath}': {ex}");
+            }
+            finally
+            {
+                try
+                {
+                    if (File.Exists(temporaryPath))
+                        File.Delete(temporaryPath);
+                }
+                catch
+                {
+                    // Migration succeeded if the destination was already moved.
+                }
             }
         }
     }
