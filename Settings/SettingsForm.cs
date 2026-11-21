@@ -373,8 +373,6 @@ public class SettingsForm : Form
         foreach (Control child in parent.Controls)
         {
             bool refreshMainWindow = section == PendingSettingsSections.Llm ||
-                (section == PendingSettingsSections.General &&
-                 _generalSection.RequiresMainWindowRefresh(child)) ||
                 (section == PendingSettingsSections.Appearance &&
                  _appearanceSection.RequiresMainWindowRefresh(child));
             bool refreshMainTheme = section == PendingSettingsSections.Appearance &&
