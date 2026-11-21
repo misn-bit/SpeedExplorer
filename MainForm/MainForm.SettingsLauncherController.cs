@@ -131,6 +131,12 @@ public partial class MainForm
             form.Show(_owner.OwnerWindow);
         }
 
+        public void CloseSettings()
+        {
+            if (_form is { IsDisposed: false } form)
+                form.Close();
+        }
+
         private sealed class SettingsDimOverlayForm : Form
         {
             private const int WsExTransparent = 0x00000020;

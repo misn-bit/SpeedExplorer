@@ -711,6 +711,10 @@ public partial class MainForm
 
             _owner.FormClosing += (s, e) =>
             {
+                // Close the settings window and its owned overlays before WinForms
+                // raises FormClosed for the main window's owned forms.
+                _owner._settingsLauncherController.CloseSettings();
+
                 _owner.SaveSidebarSplitForCurrentDisplay();
                 _owner.SaveWindowStateForCurrentState();
 
